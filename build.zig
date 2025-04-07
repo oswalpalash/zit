@@ -178,4 +178,37 @@ pub fn build(b: *std.Build) void {
     // Add a separate step to run the widget test
     const widget_test_step = b.step("widget-test", "Run the widget test example");
     widget_test_step.dependOn(&run_widget_test.step);
+
+    // Add widget examples
+    const widget_examples = [_]struct {
+        name: []const u8,
+        description: []const u8,
+        path: []const u8,
+        step_name: []const u8,
+    }{
+        .{ .name = "button", .description = "Run the button widget example", .path = "examples/widget_examples/button_example.zig", .step_name = "button-example" },
+    };
+
+    for (widget_examples) |example| {
+        const exe = b.addExecutable(.{
+            .name = example.name,
+            .root_source_file = b.path(example.path),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        // Link the library to the example
+        exe.root_module.addImport("zit", zit_module);
+
+        // Install the example binary
+        b.installArtifact(exe);
+
+        // Create a run step for the example
+        const run_exe = b.addRunArtifact(exe);
+        run_exe.step.dependOn(b.getInstallStep());
+
+        // Add a separate step to run the example
+        const exe_step = b.step(example.step_name, example.description);
+        exe_step.dependOn(&run_exe.step);
+    }
 }

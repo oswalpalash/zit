@@ -80,7 +80,7 @@ pub const Container = struct {
     
     /// Draw implementation for Container
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Container, @ptrCast(widget_ptr));
+        const self = @as(*Container, @alignCast(@ptrCast(widget_ptr)));
         
         if (!self.widget.visible) {
             return;
@@ -98,13 +98,13 @@ pub const Container = struct {
         
         // Draw children
         for (self.children.items) |child| {
-            try child.draw(renderer);
+            try child.*.draw(renderer);
         }
     }
     
     /// Event handling implementation for Container
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Container, @ptrCast(widget_ptr));
+        const self = @as(*Container, @alignCast(@ptrCast(widget_ptr)));
         
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -115,7 +115,7 @@ pub const Container = struct {
         while (i > 0) {
             i -= 1;
             const child = self.children.items[i];
-            if (try child.handle_event(event)) {
+            if (try child.*.handleEvent(event)) {
                 return true;
             }
         }
@@ -125,7 +125,7 @@ pub const Container = struct {
     
     /// Layout implementation for Container
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Container, @ptrCast(widget_ptr));
+        const self = @as(*Container, @alignCast(@ptrCast(widget_ptr)));
         self.widget.rect = rect;
         
         // Simple layout: just give each child the full container area
@@ -139,13 +139,13 @@ pub const Container = struct {
         );
         
         for (self.children.items) |child| {
-            try child.layout(inner_rect);
+            try child.*.layout(inner_rect);
         }
     }
     
     /// Get preferred size implementation for Container
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Container, @ptrCast(widget_ptr));
+        const self = @as(*Container, @alignCast(@ptrCast(widget_ptr)));
         
         // Start with minimum size
         var width: u16 = 0;
@@ -153,7 +153,7 @@ pub const Container = struct {
         
         // Calculate maximum size of all children
         for (self.children.items) |child| {
-            const child_size = try child.get_preferred_size();
+            const child_size = try child.*.getPreferredSize();
             width = @max(width, child_size.width);
             height = @max(height, child_size.height);
         }
@@ -168,7 +168,7 @@ pub const Container = struct {
     
     /// Can focus implementation for Container
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Container, @ptrCast(widget_ptr));
+        const self = @as(*Container, @alignCast(@ptrCast(widget_ptr)));
         
         if (!self.widget.enabled) {
             return false;
@@ -176,7 +176,7 @@ pub const Container = struct {
         
         // Container can be focused if any child can be focused
         for (self.children.items) |child| {
-            if (child.can_focus()) {
+            if (child.*.canFocus()) {
                 return true;
             }
         }
