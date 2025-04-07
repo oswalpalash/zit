@@ -1,18 +1,22 @@
 const std = @import("std");
 const zit = @import("zit");
+const memory = zit.memory;
 
 pub fn main() !void {
-    // Initialize allocator
+    // Initialize memory manager
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Initialize terminal
-    var term = try zit.terminal.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
+    defer memory_manager.deinit();
+
+    // Initialize terminal with memory manager
+    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
-    // Initialize input handler
-    var input_handler = zit.input.InputHandler.init(allocator, &term);
+    // Initialize input handler with memory manager
+    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
     // Enable raw mode and mouse tracking
     try term.enableRawMode();
@@ -67,16 +71,16 @@ pub fn main() !void {
 
                     // Display key information
                     if (key.isSpecialKey()) {
-                        const key_name = try key.getName(allocator);
-                        defer allocator.free(key_name);
+                        const key_name = try key.getName(memory_manager.getArenaAllocator());
+                        defer memory_manager.resetArena();
 
-                        const modifiers = try key.modifiers.toString(allocator);
-                        defer allocator.free(modifiers);
+                        const modifiers = try key.modifiers.toString(memory_manager.getArenaAllocator());
+                        defer memory_manager.resetArena();
 
                         try writer.print("Key: {s}{s}", .{ modifiers, key_name });
                     } else {
-                        const modifiers = try key.modifiers.toString(allocator);
-                        defer allocator.free(modifiers);
+                        const modifiers = try key.modifiers.toString(memory_manager.getArenaAllocator());
+                        defer memory_manager.resetArena();
 
                         if (key.isPrintable()) {
                             try writer.print("Key: {s}'{c}' (ASCII: {d})", .{ modifiers, @as(u8, @intCast(key.key)), key.key });

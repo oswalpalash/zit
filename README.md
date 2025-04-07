@@ -15,6 +15,156 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
   - Lists
 - **Input handling**: Keyboard and mouse event processing
 - **Event system**: Basic event handling for widgets
+- **Modern and intuitive API**
+- **Efficient memory management**
+- **Thread-safe components**
+- **Rich widget set**
+- **Cross-platform support**
+- **Zero dependencies**
+
+## Memory Management
+
+Zit provides a sophisticated memory management system designed for optimal performance and safety in TUI applications. The system includes:
+
+### MemoryManager
+
+The core memory management component that coordinates different allocators:
+
+```zig
+var memory_manager = try memory.MemoryManager.init(allocator, arena_size, widget_pool_size);
+defer memory_manager.deinit();
+
+// Get the arena allocator for temporary allocations
+const arena = memory_manager.getArenaAllocator();
+
+// Get the widget pool allocator for widget instances
+const widget_pool = memory_manager.getWidgetPoolAllocator();
+```
+
+### ArenaAllocator
+
+A fast allocator for temporary allocations with automatic cleanup:
+
+```zig
+var arena = try memory.ArenaAllocator.init(parent_allocator, size, is_thread_safe);
+defer arena.deinit();
+
+// Reset the arena to free all allocations
+arena.reset();
+```
+
+### PoolAllocator
+
+An efficient allocator for widget instances with object reuse:
+
+```zig
+var pool = try memory.PoolAllocator.init(parent_allocator, node_size, initial_capacity);
+defer pool.deinit();
+
+// Get statistics about pool usage
+const stats = pool.getStats();
+```
+
+### Memory Safety
+
+Built-in safety features to prevent common memory issues:
+
+```zig
+var safety = try memory.MemorySafety.init(allocator);
+defer safety.deinit();
+
+// Validate pointer access
+if (safety.validatePointer(ptr, len)) {
+    // Safe to use the pointer
+}
+
+// Check for buffer overflows
+try safety.checkAllocations();
+```
+
+### Memory Debugging
+
+Tools for tracking memory usage and detecting leaks:
+
+```zig
+var debugger = try memory.MemoryDebugger.init(allocator);
+defer debugger.deinit();
+
+// Track allocations
+const ptr = try debugger.allocator().alloc(u8, 100);
+defer debugger.allocator().free(ptr);
+
+// Dump memory leaks
+try debugger.dumpLeaks(std.io.getStdErr().writer());
+```
+
+### Memory Optimization
+
+Performance optimizations for memory-intensive operations:
+
+```zig
+var optimizer = try memory.MemoryOptimizer.init(allocator);
+defer optimizer.deinit();
+
+// Pre-allocate cache lines
+optimizer.optimize(256);
+
+// Get optimization statistics
+const stats = optimizer.getStats();
+```
+
+## Usage Example
+
+```zig
+const std = @import("std");
+const zit = @import("zit");
+const memory = zit.memory;
+
+pub fn main() !void {
+    // Initialize memory manager
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
+    defer memory_manager.deinit();
+
+    // Initialize terminal with memory manager
+    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    defer term.deinit() catch {};
+
+    // Create widgets using the widget pool allocator
+    var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Click Me!");
+    defer button.deinit();
+
+    // ... rest of the application code
+}
+```
+
+## Best Practices
+
+1. Use the `MemoryManager` as the primary interface for memory management
+2. Use the arena allocator for temporary allocations that can be freed together
+3. Use the widget pool allocator for widget instances
+4. Enable memory safety checks in development builds
+5. Use the memory debugger to track down leaks
+6. Consider using the memory optimizer for performance-critical sections
+
+## Thread Safety
+
+All memory management components are thread-safe by default. The `ArenaAllocator` can be configured for thread safety:
+
+```zig
+// Create a thread-safe arena
+var arena = try memory.ArenaAllocator.init(allocator, size, true);
+```
+
+## Performance Considerations
+
+- The arena allocator is extremely fast for temporary allocations
+- The pool allocator reduces fragmentation for widget instances
+- The memory optimizer can significantly improve performance for repeated allocations
+- Memory safety checks have minimal overhead in release builds
 
 ## Installation
 

@@ -1,36 +1,40 @@
 const std = @import("std");
 const zit = @import("zit");
+const memory = zit.memory;
 
 pub fn main() !void {
-    // Initialize allocator
+    // Initialize memory manager
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Initialize terminal
-    var term = try zit.terminal.init(allocator);
+    var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
+    defer memory_manager.deinit();
+
+    // Initialize terminal with memory manager
+    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
     // Get terminal size
     const width = term.width;
     const height = term.height;
 
-    // Initialize renderer
-    var renderer = try zit.render.Renderer.init(allocator, width, height);
+    // Initialize renderer with memory manager
+    var renderer = try zit.render.Renderer.init(memory_manager.getArenaAllocator(), width, height);
     defer renderer.deinit();
 
     // Enable raw mode
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
 
-    // Initialize input handler
-    var input_handler = zit.input.InputHandler.init(allocator, &term);
+    // Initialize input handler with memory manager
+    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
     // Clear screen
     try term.clear();
 
     // Create layout example
-    var layout_example = try createLayoutExample(allocator);
+    var layout_example = try createLayoutExample(memory_manager.getWidgetPoolAllocator());
     defer destroyLayoutExample(layout_example);
 
     // Main event loop
@@ -50,13 +54,17 @@ pub fn main() !void {
         renderer.drawStr(title_x, 0, title, zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.blue), zit.render.Style.init(true, false, false));
         
         // Draw instructions
-        renderer.drawStr(2, height - 2, "Press 'q' to quit", 
-            zit.render.Color.named(zit.render.NamedColor.bright_white), 
-            zit.render.Color.named(zit.render.NamedColor.default), 
-            zit.render.Style{});
+        if (height > 2) {
+            const instruction_y = if (height > 2) height - 2 else 0;
+            renderer.drawStr(2, instruction_y, "Press 'q' to quit", 
+                zit.render.Color.named(zit.render.NamedColor.bright_white), 
+                zit.render.Color.named(zit.render.NamedColor.default), 
+                zit.render.Style{});
+        }
 
         // Layout and render the example
-        const layout_rect = zit.layout.Rect.init(0, 1, width, height - 3);
+        const layout_height = if (height > 3) height - 3 else 0;
+        const layout_rect = zit.layout.Rect.init(0, 1, width, layout_height);
         layout_example.render(&renderer, layout_rect);
         
         // Render to screen
@@ -110,6 +118,8 @@ const LayoutExample = struct {
     centers: std.ArrayList(*zit.layout.Center),
     // Flex layouts
     flex_layouts: std.ArrayList(*zit.layout.FlexLayout),
+    // Grid layouts
+    grid_layouts: std.ArrayList(*zit.layout.GridLayout),
 
     pub fn render(self: *LayoutExample, renderer: *zit.render.Renderer, rect: zit.layout.Rect) void {
         // Layout and render the element
@@ -242,254 +252,131 @@ fn createLayoutExample(allocator: std.mem.Allocator) !*LayoutExample {
         .paddings = std.ArrayList(*zit.layout.Padding).init(allocator),
         .centers = std.ArrayList(*zit.layout.Center).init(allocator),
         .flex_layouts = std.ArrayList(*zit.layout.FlexLayout).init(allocator),
+        .grid_layouts = std.ArrayList(*zit.layout.GridLayout).init(allocator),
     };
     
     // Create a main flex layout (vertical)
     example.flex_layout = try zit.layout.FlexLayout.init(allocator, .column);
     try example.flex_layouts.append(example.flex_layout);
-    _ = example.flex_layout.padding(zit.layout.EdgeInsets.all(1))
-                       .gap(1);
-    _ = example.flex_layout.mainAlignment(.center);
-    _ = example.flex_layout.crossAlignment(.center);
-    
-    // Create text elements for headers
-    const header1 = try TextElement.init(allocator, "Flex Layout Example (Row)", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style.init(true, false, false));
-    try example.text_elements.append(header1);
-    
-    const header2 = try TextElement.init(allocator, "Grid Layout Example (2x2)", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style.init(true, false, false));
-    try example.text_elements.append(header2);
-    
-    const header3 = try TextElement.init(allocator, "Nested Layout Example", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style.init(true, false, false));
-    try example.text_elements.append(header3);
-    
-    // Create a row flex layout for the first example
-    const row_flex = try zit.layout.FlexLayout.init(allocator, .row);
-    try example.flex_layouts.append(row_flex);
-    _ = row_flex.padding(zit.layout.EdgeInsets.all(1))
-           .gap(2)
-           .mainAlignment(.space_between)
-           .crossAlignment(.center);
-    
-    // Create box elements for the row flex
-    const box1 = try BoxElement.init(allocator, .single, 
-        zit.render.Color.named(zit.render.NamedColor.red),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, ' ');
-    try example.box_elements.append(box1);
-    
-    const box2 = try BoxElement.init(allocator, .double, 
-        zit.render.Color.named(zit.render.NamedColor.green),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, ' ');
-    try example.box_elements.append(box2);
-    
-    const box3 = try BoxElement.init(allocator, .rounded, 
-        zit.render.Color.named(zit.render.NamedColor.blue),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, ' ');
-    try example.box_elements.append(box3);
-    
-    // Add boxes to row flex
-    const sized_box1 = try zit.layout.SizedBox.init(allocator, box1.asElement(), 10, 5);
-    try example.sized_boxes.append(sized_box1);
-    const sized_box2 = try zit.layout.SizedBox.init(allocator, box2.asElement(), 10, 5);
-    try example.sized_boxes.append(sized_box2);
-    const sized_box3 = try zit.layout.SizedBox.init(allocator, box3.asElement(), 10, 5);
-    try example.sized_boxes.append(sized_box3);
-    
-    try row_flex.addChild(zit.layout.FlexChild.init(sized_box1.asElement(), 0));
-    try row_flex.addChild(zit.layout.FlexChild.init(sized_box2.asElement(), 0));
-    try row_flex.addChild(zit.layout.FlexChild.init(sized_box3.asElement(), 0));
-    
-    // Create a grid layout for the second example
+    _ = example.flex_layout.padding(zit.layout.EdgeInsets.all(1));
+
+    // Create a grid layout
     example.grid_layout = try zit.layout.GridLayout.init(allocator, 2, 2);
-    _ = example.grid_layout.padding(zit.layout.EdgeInsets.all(1))
-                       .gap(1);
-    
-    // Create box elements for the grid
-    const grid_box1 = try BoxElement.init(allocator, .single, 
-        zit.render.Color.named(zit.render.NamedColor.yellow),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, '░');
-    try example.box_elements.append(grid_box1);
-    
-    const grid_box2 = try BoxElement.init(allocator, .double, 
-        zit.render.Color.named(zit.render.NamedColor.magenta),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, '▒');
-    try example.box_elements.append(grid_box2);
-    
-    const grid_box3 = try BoxElement.init(allocator, .rounded, 
-        zit.render.Color.named(zit.render.NamedColor.cyan),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, '▓');
-    try example.box_elements.append(grid_box3);
-    
-    const grid_box4 = try BoxElement.init(allocator, .thick, 
-        zit.render.Color.named(zit.render.NamedColor.white),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, '█');
-    try example.box_elements.append(grid_box4);
-    
-    // Add boxes to grid
-    try example.grid_layout.addChild(grid_box1.asElement(), 0, 0);
-    try example.grid_layout.addChild(grid_box2.asElement(), 1, 0);
-    try example.grid_layout.addChild(grid_box3.asElement(), 0, 1);
-    try example.grid_layout.addChild(grid_box4.asElement(), 1, 1);
-    
-    // Create a nested layout for the third example
+    _ = example.grid_layout.padding(zit.layout.EdgeInsets.all(1));
+    try example.grid_layouts.append(example.grid_layout);
+
+    // Create nested layouts
     example.nested_layout = try zit.layout.FlexLayout.init(allocator, .row);
     try example.flex_layouts.append(example.nested_layout);
-    _ = example.nested_layout.padding(zit.layout.EdgeInsets.all(1))
-                         .gap(1)
-                         .mainAlignment(.center)
-                         .crossAlignment(.center);
-    
-    // Create a nested column layout
-    const nested_column = try zit.layout.FlexLayout.init(allocator, .column);
-    try example.flex_layouts.append(nested_column);
-    _ = nested_column.padding(zit.layout.EdgeInsets.all(0))
-                .gap(1)
-                .mainAlignment(.center)
-                .crossAlignment(.center);
-    
-    // Create text elements for the nested layout
-    const text1 = try TextElement.init(allocator, "Top", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.red),
-        zit.render.Style{});
-    try example.text_elements.append(text1);
-    
-    const text2 = try TextElement.init(allocator, "Middle", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.green),
-        zit.render.Style{});
-    try example.text_elements.append(text2);
-    
-    const text3 = try TextElement.init(allocator, "Bottom", 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.blue),
-        zit.render.Style{});
-    try example.text_elements.append(text3);
-    
-    // Create padding elements for the text
-    const padded_text1 = try zit.layout.Padding.init(allocator, text1.asElement(), 
-        zit.layout.EdgeInsets.all(1));
-    try example.paddings.append(padded_text1);
-    const padded_text2 = try zit.layout.Padding.init(allocator, text2.asElement(), 
-        zit.layout.EdgeInsets.all(1));
-    try example.paddings.append(padded_text2);
-    const padded_text3 = try zit.layout.Padding.init(allocator, text3.asElement(), 
-        zit.layout.EdgeInsets.all(1));
-    try example.paddings.append(padded_text3);
-    
-    // Add text to nested column
-    try nested_column.addChild(zit.layout.FlexChild.init(padded_text1.asElement(), 0));
-    try nested_column.addChild(zit.layout.FlexChild.init(padded_text2.asElement(), 0));
-    try nested_column.addChild(zit.layout.FlexChild.init(padded_text3.asElement(), 0));
-    
-    // Create a box for the right side
-    const nested_box = try BoxElement.init(allocator, .double, 
-        zit.render.Color.named(zit.render.NamedColor.bright_white),
-        zit.render.Color.named(zit.render.NamedColor.default),
-        zit.render.Style{}, ' ');
-    try example.box_elements.append(nested_box);
-    
-    // Create a centered text element for the box
-    const centered_text = try TextElement.init(allocator, "Centered", 
+    _ = example.nested_layout.padding(zit.layout.EdgeInsets.all(1));
+
+    // Create text elements
+    const title = try TextElement.init(allocator, "Layout Test", 
         zit.render.Color.named(zit.render.NamedColor.bright_white),
         zit.render.Color.named(zit.render.NamedColor.blue),
         zit.render.Style.init(true, false, false));
-    try example.text_elements.append(centered_text);
-    
-    // Create a center element
-    const center_element = try zit.layout.Center.init(allocator, centered_text.asElement(), true, true);
-    try example.centers.append(center_element);
-    
-    // Create a sized box for the nested box
-    const nested_sized_box = try zit.layout.SizedBox.init(allocator, nested_box.asElement(), 20, 10);
-    try example.sized_boxes.append(nested_sized_box);
-    
-    // Create a padding element for the center element
-    const padded_center = try zit.layout.Padding.init(allocator, center_element.asElement(), 
-        zit.layout.EdgeInsets.all(1));
-    try example.paddings.append(padded_center);
-    
-    // Create a container for the centered text
-    const center_container = try zit.layout.FlexLayout.init(allocator, .column);
-    try example.flex_layouts.append(center_container);
-    try center_container.addChild(zit.layout.FlexChild.init(nested_sized_box.asElement(), 0));
-    try center_container.addChild(zit.layout.FlexChild.init(padded_center.asElement(), 0));
-    
-    // Add elements to nested layout
-    try example.nested_layout.addChild(zit.layout.FlexChild.init(nested_column.asElement(), 1));
-    try example.nested_layout.addChild(zit.layout.FlexChild.init(center_container.asElement(), 2));
-    
-    // Add all sections to main layout
-    try example.flex_layout.addChild(zit.layout.FlexChild.init(row_flex.asElement(), 0));
+    try example.text_elements.append(title);
+
+    const subtitle = try TextElement.init(allocator, "Nested Layouts", 
+        zit.render.Color.named(zit.render.NamedColor.white),
+        zit.render.Color.named(zit.render.NamedColor.blue),
+        zit.render.Style{});
+    try example.text_elements.append(subtitle);
+
+    // Create box elements
+    const box1 = try BoxElement.init(allocator, 
+        zit.render.BorderStyle.single,
+        zit.render.Color.named(zit.render.NamedColor.bright_white),
+        zit.render.Color.named(zit.render.NamedColor.blue),
+        zit.render.Style{},
+        ' ');
+    try example.box_elements.append(box1);
+
+    const box2 = try BoxElement.init(allocator, 
+        zit.render.BorderStyle.double,
+        zit.render.Color.named(zit.render.NamedColor.bright_white),
+        zit.render.Color.named(zit.render.NamedColor.green),
+        zit.render.Style{},
+        ' ');
+    try example.box_elements.append(box2);
+
+    // Create sized boxes
+    const sized_box1 = try zit.layout.SizedBox.init(allocator, box1.asElement(), 10, 5);
+    try example.sized_boxes.append(sized_box1);
+
+    const sized_box2 = try zit.layout.SizedBox.init(allocator, box2.asElement(), 15, 3);
+    try example.sized_boxes.append(sized_box2);
+
+    // Create paddings
+    const padding1 = try zit.layout.Padding.init(allocator, box1.asElement(), zit.layout.EdgeInsets.all(2));
+    try example.paddings.append(padding1);
+
+    const padding2 = try zit.layout.Padding.init(allocator, box2.asElement(), zit.layout.EdgeInsets.symmetric(1, 3));
+    try example.paddings.append(padding2);
+
+    // Create centers
+    const center1 = try zit.layout.Center.init(allocator, example.flex_layout.asElement(), true, true);
+    try example.centers.append(center1);
+
+    const center2 = try zit.layout.Center.init(allocator, example.grid_layout.asElement(), true, true);
+    try example.centers.append(center2);
+
+    // Build the layout hierarchy
+    try example.flex_layout.addChild(zit.layout.FlexChild.init(title.asElement(), 0));
     try example.flex_layout.addChild(zit.layout.FlexChild.init(example.grid_layout.asElement(), 1));
-    try example.flex_layout.addChild(zit.layout.FlexChild.init(example.nested_layout.asElement(), 2));
-    
+    try example.flex_layout.addChild(zit.layout.FlexChild.init(subtitle.asElement(), 0));
+    try example.flex_layout.addChild(zit.layout.FlexChild.init(example.nested_layout.asElement(), 1));
+
+    try example.grid_layout.addChild(box1.asElement(), 0, 0);
+    try example.grid_layout.addChild(box2.asElement(), 1, 1);
+
+    try example.nested_layout.addChild(zit.layout.FlexChild.init(sized_box1.asElement(), 1));
+    try example.nested_layout.addChild(zit.layout.FlexChild.init(padding1.asElement(), 0));
+    try example.nested_layout.addChild(zit.layout.FlexChild.init(sized_box2.asElement(), 1));
+    try example.nested_layout.addChild(zit.layout.FlexChild.init(padding2.asElement(), 0));
+
+    // Set the root element to be the flex layout
+    example.element = example.flex_layout.asElement();
+
     return example;
 }
 
-fn destroyLayoutExample(layout_example: *LayoutExample) void {
-    // Clean up in reverse order of creation
-    
-    // Free all size boxes
-    for (layout_example.sized_boxes.items) |sized_box| {
-        sized_box.deinit();
+// Destroy the layout example
+fn destroyLayoutExample(example: *LayoutExample) void {
+    // First deinitialize the ArrayLists that don't own their elements
+    example.flex_layouts.deinit();
+    example.grid_layouts.deinit();
+
+    // Destroy all elements that we own directly
+    for (example.text_elements.items) |element| {
+        element.deinit();
     }
-    layout_example.sized_boxes.deinit();
-    
-    // Free all padding elements
-    for (layout_example.paddings.items) |padding| {
-        padding.deinit();
+    example.text_elements.deinit();
+
+    for (example.box_elements.items) |element| {
+        element.deinit();
     }
-    layout_example.paddings.deinit();
-    
-    // Free all center elements
-    for (layout_example.centers.items) |center| {
-        center.deinit();
+    example.box_elements.deinit();
+
+    for (example.sized_boxes.items) |element| {
+        element.deinit();
     }
-    layout_example.centers.deinit();
-    
-    // Free all flex layouts
-    for (layout_example.flex_layouts.items) |flex_layout| {
-        // Don't free the main layouts again as they're included in the list
-        if (flex_layout != layout_example.flex_layout and 
-            flex_layout != layout_example.nested_layout) {
-            flex_layout.deinit();
-        }
+    example.sized_boxes.deinit();
+
+    for (example.paddings.items) |element| {
+        element.deinit();
     }
-    layout_example.flex_layouts.deinit();
-    
-    // Free main layouts
-    layout_example.grid_layout.deinit();
-    layout_example.nested_layout.deinit();
-    layout_example.flex_layout.deinit();
-    
-    // Free box elements
-    for (layout_example.box_elements.items) |box_element| {
-        box_element.deinit();
+    example.paddings.deinit();
+
+    for (example.centers.items) |element| {
+        element.deinit();
     }
-    layout_example.box_elements.deinit();
-    
-    // Free text elements
-    for (layout_example.text_elements.items) |text_element| {
-        text_element.deinit();
-    }
-    layout_example.text_elements.deinit();
-    
-    // Free the example itself
-    layout_example.allocator.destroy(layout_example);
+    example.centers.deinit();
+
+    // Finally deinitialize the layouts themselves
+    example.flex_layout.deinit();
+    example.grid_layout.deinit();
+    example.nested_layout.deinit();
+
+    example.allocator.destroy(example);
 }
