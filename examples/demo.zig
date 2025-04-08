@@ -117,45 +117,9 @@ pub fn main() !void {
             zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
             zit.render.Style{});
 
-        // Draw simple ASCII border instead of using drawBox
-        // Top and bottom borders
-        for (0..width) |x| {
-            renderer.drawChar(@intCast(x), 0, '-', 
-                zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-                zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-                zit.render.Style{});
-            renderer.drawChar(@intCast(x), @intCast(height-1), '-', 
-                zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-                zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-                zit.render.Style{});
-        }
-        
-        // Left and right borders
-        for (0..height) |y| {
-            renderer.drawChar(0, @intCast(y), '|', 
-                zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-                zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-                zit.render.Style{});
-            renderer.drawChar(@intCast(width-1), @intCast(y), '|', 
-                zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-                zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-                zit.render.Style{});
-        }
-        
-        // Corners
-        renderer.drawChar(0, 0, '+', 
-            zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-            zit.render.Style{});
-        renderer.drawChar(@intCast(width-1), 0, '+', 
-            zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-            zit.render.Style{});
-        renderer.drawChar(0, @intCast(height-1), '+', 
-            zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-            zit.render.Style{});
-        renderer.drawChar(@intCast(width-1), @intCast(height-1), '+', 
+        // Draw border
+        renderer.drawBox(0, 0, width, height, 
+            zit.render.BorderStyle.single, 
             zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
             zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
             zit.render.Style{});

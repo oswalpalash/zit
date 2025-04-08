@@ -112,63 +112,31 @@ pub const ProgressBar = struct {
         // Fill background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
         
-        // Draw border if enabled - use ASCII characters for compatibility
-        if (self.border != .none) {
-            // Draw top and bottom borders
-            for (0..rect.width) |i| {
-                const x = rect.x + @as(u16, @intCast(i));
-                renderer.drawChar(x, rect.y, '-', self.fg, self.bg, render.Style{});
-                renderer.drawChar(x, rect.y + rect.height - 1, '-', self.fg, self.bg, render.Style{});
-            }
-            
-            // Draw left and right borders
-            for (0..rect.height) |i| {
-                const y = rect.y + @as(u16, @intCast(i));
-                renderer.drawChar(rect.x, y, '|', self.fg, self.bg, render.Style{});
-                renderer.drawChar(rect.x + rect.width - 1, y, '|', self.fg, self.bg, render.Style{});
-            }
-            
-            // Draw corners
-            renderer.drawChar(rect.x, rect.y, '+', self.fg, self.bg, render.Style{});
-            renderer.drawChar(rect.x + rect.width - 1, rect.y, '+', self.fg, self.bg, render.Style{});
-            renderer.drawChar(rect.x, rect.y + rect.height - 1, '+', self.fg, self.bg, render.Style{});
-            renderer.drawChar(rect.x + rect.width - 1, rect.y + rect.height - 1, '+', self.fg, self.bg, render.Style{});
-        }
-        
-        // Calculate content area
-        const border_offset: u16 = if (self.border != .none) 1 else 0;
-        const border_double_offset: u16 = if (self.border != .none) 2 else 0;
-        
-        const content_x = rect.x + border_offset;
-        const content_y = rect.y + border_offset;
-        const content_width = rect.width - border_double_offset;
-        const content_height = rect.height - border_double_offset;
-        
         // Draw progress
         if (self.direction == .horizontal) {
-            const progress_width = @as(u16, @intFromFloat(@as(f32, @floatFromInt(content_width)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
+            const progress_width = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.width)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
             
             if (progress_width > 0) {
-                renderer.fillRect(content_x, content_y, progress_width, content_height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
+                renderer.fillRect(rect.x, rect.y, progress_width, rect.height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
             }
             
             // Show percentage text
-            if (self.show_text and content_width >= 5) {
+            if (self.show_text and rect.width >= 5) {
                 var buffer: [5]u8 = undefined;
                 const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{self.progress}) catch "";
                 
-                const half_width = @divTrunc(content_width, 2);
+                const half_width = @divTrunc(rect.width, 2);
                 const text_len = @as(u16, @intCast(text.len));
                 const half_text_len = @divTrunc(text_len, 2);
-                const text_x = content_x + @as(u16, @intCast(@max(0, half_width - half_text_len)));
-                const text_y = content_y + @divTrunc(content_height, 2);
+                const text_x = rect.x + @as(u16, @intCast(@max(0, half_width - half_text_len)));
+                const text_y = rect.y + @divTrunc(rect.height, 2);
                 
                 for (text, 0..) |char, i| {
                     const x = text_x + @as(u16, @intCast(i));
                     const y = text_y;
                     
                     // Choose text color based on position (in progress area or not)
-                    const is_in_progress_area = x < content_x + progress_width;
+                    const is_in_progress_area = x < rect.x + progress_width;
                     const text_fg = if (is_in_progress_area) self.bg else self.fg;
                     const text_bg = if (is_in_progress_area) self.fill_fg else self.bg;
                     
@@ -176,20 +144,20 @@ pub const ProgressBar = struct {
                 }
             }
         } else {
-            const progress_height = @as(u16, @intFromFloat(@as(f32, @floatFromInt(content_height)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
-            const start_y = content_y + @as(u16, @intCast(@max(0, @as(i16, @intCast(content_height)) - @as(i16, @intCast(progress_height)))));
+            const progress_height = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.height)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
+            const start_y = rect.y + @as(u16, @intCast(@max(0, @as(i16, @intCast(rect.height)) - @as(i16, @intCast(progress_height)))));
             
             if (progress_height > 0) {
-                renderer.fillRect(content_x, start_y, content_width, progress_height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
+                renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
             }
             
             // Show percentage text
-            if (self.show_text and content_height >= 1 and content_width >= 4) {
+            if (self.show_text and rect.height >= 1 and rect.width >= 4) {
                 var buffer: [5]u8 = undefined;
                 const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{self.progress}) catch "";
                 
-                const text_x = content_x + @as(u16, @intCast(@divTrunc(@as(i16, @intCast(content_width)), 2) - @divTrunc(@as(i16, @intCast(text.len)), 2)));
-                const text_y = content_y + @divTrunc(content_height, 2);
+                const text_x = rect.x + @as(u16, @intCast(@divTrunc(@as(i16, @intCast(rect.width)), 2) - @divTrunc(@as(i16, @intCast(text.len)), 2)));
+                const text_y = rect.y + @divTrunc(rect.height, 2);
                 
                 for (text, 0..) |char, i| {
                     const x = text_x + @as(u16, @intCast(i));
