@@ -180,8 +180,39 @@ pub const List = struct {
         // Fill list background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
         
-        // Calculate visible items
-        self.visible_items_count = @intCast(@as(usize, rect.height));
+        // Draw border if enabled - use ASCII characters for compatibility
+        if (self.border != .none) {
+            // Draw top and bottom borders
+            for (0..rect.width) |i| {
+                const x = rect.x + @as(u16, @intCast(i));
+                renderer.drawChar(x, rect.y, '-', self.fg, self.bg, render.Style{});
+                renderer.drawChar(x, rect.y + rect.height - 1, '-', self.fg, self.bg, render.Style{});
+            }
+            
+            // Draw left and right borders
+            for (0..rect.height) |i| {
+                const y = rect.y + @as(u16, @intCast(i));
+                renderer.drawChar(rect.x, y, '|', self.fg, self.bg, render.Style{});
+                renderer.drawChar(rect.x + rect.width - 1, y, '|', self.fg, self.bg, render.Style{});
+            }
+            
+            // Draw corners
+            renderer.drawChar(rect.x, rect.y, '+', self.fg, self.bg, render.Style{});
+            renderer.drawChar(rect.x + rect.width - 1, rect.y, '+', self.fg, self.bg, render.Style{});
+            renderer.drawChar(rect.x, rect.y + rect.height - 1, '+', self.fg, self.bg, render.Style{});
+            renderer.drawChar(rect.x + rect.width - 1, rect.y + rect.height - 1, '+', self.fg, self.bg, render.Style{});
+        }
+        
+        // Calculate visible items - adjust for border if present
+        const border_offset: u16 = if (self.border != .none) 1 else 0;
+        const border_double_offset: u16 = if (self.border != .none) 2 else 0;
+        
+        const content_y = rect.y + border_offset;
+        const content_height = rect.height - border_double_offset;
+        const content_x = rect.x + border_offset;
+        const content_width = rect.width - border_double_offset;
+        
+        self.visible_items_count = @max(1, @as(usize, @intCast(content_height)));
         if (self.visible_items_count == 0) {
             return;
         }
@@ -197,7 +228,7 @@ pub const List = struct {
         // Draw visible items
         const last_visible_index = @min(self.first_visible_index + self.visible_items_count, self.items.items.len);
         
-        var y = rect.y;
+        var y = content_y;
         var i = self.first_visible_index;
         while (i < last_visible_index) : (i += 1) {
             const item = self.items.items[i];
@@ -215,12 +246,12 @@ pub const List = struct {
                 self.bg;
             
             // Draw item background
-            renderer.fillRect(rect.x, y, rect.width, 1, ' ', item_fg, item_bg, render.Style{});
+            renderer.fillRect(content_x, y, content_width, 1, ' ', item_fg, item_bg, render.Style{});
             
             // Draw item text
-            var x = rect.x;
+            var x = content_x;
             for (item) |char| {
-                if (x - rect.x >= rect.width) {
+                if (x - content_x >= content_width) {
                     break;
                 }
                 

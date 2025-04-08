@@ -343,7 +343,13 @@ pub const Buffer = struct {
     /// Clear the buffer
     pub fn clear(self: *Buffer) void {
         for (self.cells) |*cell| {
-            cell.* = Cell{};
+            // Always set a space character with explicit default colors
+            cell.* = Cell{
+                .char = ' ',
+                .fg = Color{ .named_color = NamedColor.default },
+                .bg = Color{ .named_color = NamedColor.default },
+                .style = Style{},
+            };
         }
     }
 
@@ -688,7 +694,7 @@ pub const Renderer = struct {
         const horizontal = chars[4];
         const horizontal_bottom = chars[5];
         const vertical = chars[6];
-        const vertical_right = chars[7];
+        const vertical_right = chars[6]; // Use the same character for both sides
         
         // Draw corners
         self.drawChar(x, y, top_left, fg, bg, style);
@@ -698,14 +704,16 @@ pub const Renderer = struct {
         
         // Draw horizontal edges
         for (1..width - 1) |i| {
-            self.drawChar(x + @as(u16, @intCast(i)), y, horizontal, fg, bg, style);
-            self.drawChar(x + @as(u16, @intCast(i)), y + height - 1, horizontal_bottom, fg, bg, style);
+            const xi = x + @as(u16, @intCast(i));
+            self.drawChar(xi, y, horizontal, fg, bg, style);
+            self.drawChar(xi, y + height - 1, horizontal_bottom, fg, bg, style);
         }
         
         // Draw vertical edges
         for (1..height - 1) |i| {
-            self.drawChar(x, y + @as(u16, @intCast(i)), vertical, fg, bg, style);
-            self.drawChar(x + width - 1, y + @as(u16, @intCast(i)), vertical_right, fg, bg, style);
+            const yi = y + @as(u16, @intCast(i));
+            self.drawChar(x, yi, vertical, fg, bg, style);
+            self.drawChar(x + width - 1, yi, vertical_right, fg, bg, style);
         }
     }
 
@@ -752,7 +760,9 @@ pub const Renderer = struct {
         defer style_buf.deinit();
         
         // Hide cursor during rendering to prevent flicker
-        try writer.writeAll("\x1b[?25l");
+        writer.writeAll("\x1b[?25l") catch |err| {
+            if (err != error.WouldBlock) return err;
+        };
         
         // Buffer for batched writes to reduce syscalls
         var output_buffer = std.ArrayList(u8).init(self.allocator);
@@ -775,7 +785,9 @@ pub const Renderer = struct {
                 if (front_cell.eql(back_cell.*)) continue;
                 
                 // Position cursor
-                try std.fmt.format(output_buffer.writer(), "\x1b[{};{}H", .{ y + 1, x + 1 });
+                std.fmt.format(output_buffer.writer(), "\x1b[{};{}H", .{ y + 1, x + 1 }) catch |err| {
+                    return err;
+                };
                 
                 // Update styles if needed
                 var need_style_update = false;
@@ -803,36 +815,59 @@ pub const Renderer = struct {
                     style_buf.clearRetainingCapacity();
                     
                     // Start SGR sequence
-                    try style_buf.appendSlice("\x1b[");
+                    style_buf.appendSlice("\x1b[") catch |err| {
+                        return err;
+                    };
                     
                     // Get style attributes
                     if (style_str_owned) {
                         self.allocator.free(style_str);
                         style_str_owned = false;
                     }
-                    style_str = try back_cell.style.toAnsi(self.allocator);
+                    style_str = back_cell.style.toAnsi(self.allocator) catch |err| {
+                        style_str = "0";
+                        return err;
+                    };
                     style_str_owned = true;
-                    try style_buf.appendSlice(style_str);
+                    style_buf.appendSlice(style_str) catch |err| {
+                        return err;
+                    };
                     
                     // Add foreground color
-                    try style_buf.appendSlice(";");
-                    try style_buf.appendSlice(back_cell.fg.toFg());
+                    style_buf.appendSlice(";") catch |err| {
+                        return err;
+                    };
+                    style_buf.appendSlice(back_cell.fg.toFg()) catch |err| {
+                        return err;
+                    };
                     
                     // Add background color
-                    try style_buf.appendSlice(";");
-                    try style_buf.appendSlice(back_cell.bg.toBg());
+                    style_buf.appendSlice(";") catch |err| {
+                        return err;
+                    };
+                    style_buf.appendSlice(back_cell.bg.toBg()) catch |err| {
+                        return err;
+                    };
                     
                     // End SGR sequence
-                    try style_buf.appendSlice("m");
+                    style_buf.appendSlice("m") catch |err| {
+                        return err;
+                    };
                     
                     // Add to output buffer
-                    try output_buffer.appendSlice(style_buf.items);
+                    output_buffer.appendSlice(style_buf.items) catch |err| {
+                        return err;
+                    };
                 }
                 
                 // Write the character (supporting Unicode)
                 var char_buf: [4]u8 = undefined;
-                const len = try std.unicode.utf8Encode(back_cell.char, &char_buf);
-                try output_buffer.appendSlice(char_buf[0..len]);
+                const len = std.unicode.utf8Encode(back_cell.char, &char_buf) catch |err| {
+                    return err;
+                };
+                output_buffer.appendSlice(char_buf[0..len]) catch |err| {
+                    return err;
+                };
                 
                 // If buffer is getting large, flush it to reduce memory usage
                 if (output_buffer.items.len > 1024) {
