@@ -192,10 +192,13 @@ pub const Button = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
         
+        // Calculate the preferred height based on text length
+        const height: u16 = if (self.button_text.len > 30) 5 else 3; // Use taller button for longer text
+        
         // Button size should accommodate text plus borders
         return layout_module.Size.init(
             @as(u16, @intCast(@min(self.button_text.len + 4, 40))), // Cap width at 40 chars
-            3 // Default height of 3 rows
+            height // Adjustable height
         );
     }
     

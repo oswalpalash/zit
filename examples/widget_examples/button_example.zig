@@ -46,8 +46,9 @@ const LayoutWidget = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout.Size {
-        _ = widget_ptr;
-        return layout.Size.init(60, 3); // Default size for now
+        const self = @as(*LayoutWidget, @ptrCast(@alignCast(widget_ptr)));
+        // Use loose constraints to get the preferred size
+        return self.layout_element.layout(layout.Constraints.loose(65535, 65535));
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -120,14 +121,12 @@ pub fn main() !void {
             std.debug.print("Standard button pressed\n", .{});
         }
     }.callback);
-    try standard_button.widget.layout(layout.Rect.init(0, 0, 60, 5));
     try flex_layout.addChild(layout.FlexChild.init(standard_button.widget.asLayoutElement(), 0));
 
     // Disabled button
     const disabled_button = try Button.init(memory_manager.getWidgetPoolAllocator(), "Disabled Button");
     defer disabled_button.deinit();
     disabled_button.widget.setEnabled(false);
-    try disabled_button.widget.layout(layout.Rect.init(0, 0, 60, 3));
     try flex_layout.addChild(layout.FlexChild.init(disabled_button.widget.asLayoutElement(), 0));
 
     // Section 2: Styled Buttons
@@ -153,7 +152,6 @@ pub fn main() !void {
             std.debug.print("Colored button pressed\n", .{});
         }
     }.callback);
-    try colored_button.widget.layout(layout.Rect.init(0, 0, 60, 3));
     try flex_layout.addChild(layout.FlexChild.init(colored_button.widget.asLayoutElement(), 0));
 
     // Highlighted button
@@ -170,7 +168,6 @@ pub fn main() !void {
             std.debug.print("Highlight button pressed\n", .{});
         }
     }.callback);
-    try highlight_button.widget.layout(layout.Rect.init(0, 0, 60, 3));
     try flex_layout.addChild(layout.FlexChild.init(highlight_button.widget.asLayoutElement(), 0));
 
     // Section 3: Interactive Buttons
@@ -197,7 +194,6 @@ pub fn main() !void {
             counter_data.button.setText(std.fmt.allocPrint(counter_data.alloc, "Counter: {}", .{counter_state}) catch unreachable) catch unreachable;
         }
     }.callback);
-    try counter_button.widget.layout(layout.Rect.init(0, 0, 60, 3));
     try flex_layout.addChild(layout.FlexChild.init(counter_button.widget.asLayoutElement(), 0));
 
     // Toggle button
@@ -216,7 +212,6 @@ pub fn main() !void {
             toggle_data.button.setText(std.fmt.allocPrint(toggle_data.alloc, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch unreachable) catch unreachable;
         }
     }.callback);
-    try toggle_button.widget.layout(layout.Rect.init(0, 0, 60, 3));
     try flex_layout.addChild(layout.FlexChild.init(toggle_button.widget.asLayoutElement(), 0));
 
     // Create a layout widget for the flex layout
