@@ -64,7 +64,7 @@ pub fn main() !void {
 
         // Layout and render the example
         const layout_height = if (height > 3) height - 3 else 0;
-        const layout_rect = zit.layout.Rect.init(0, 1, width, layout_height);
+        const layout_rect = zit.layout.Rect.init(0, 1, layout_height/3, width/2);
         layout_example.render(&renderer, layout_rect);
         
         // Render to screen
