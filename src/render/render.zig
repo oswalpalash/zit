@@ -501,7 +501,7 @@ pub const TerminalCapabilities = struct {
                     if (r == g and g == b) {
                         // Grayscale
                         const gray = r;
-                        if (gray == 0) return Color.named(NamedColor.black);
+                        if (gray == 0) return Color.named(NamedColor.default); // Changed from .black to .default
                         if (gray == 5) return Color.named(NamedColor.white);
                         return Color.named(NamedColor.default); // Fallback
                     }
@@ -528,7 +528,8 @@ pub const TerminalCapabilities = struct {
                     if (r > 200 and g < 100 and b > 200) return Color.named(NamedColor.magenta);
                     if (r < 100 and g > 200 and b > 200) return Color.named(NamedColor.cyan);
                     if (r > 200 and g > 200 and b > 200) return Color.named(NamedColor.white);
-                    if (r < 100 and g < 100 and b < 100) return Color.named(NamedColor.black);
+                    // For very dark colors, use default instead of black
+                    if (r < 100 and g < 100 and b < 100) return Color.named(NamedColor.default); // Changed from .black to .default
                     
                     return Color.named(NamedColor.default); // Fallback
                 }
