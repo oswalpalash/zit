@@ -34,7 +34,13 @@ pub const RgbColor = struct {
             &result,
             "{s};2;{d};{d};{d}",
             .{ prefix, self.r, self.g, self.b }
-        ) catch return "0";
+        ) catch {
+            if (is_bg) {
+                return NamedColor.default.toBg();
+            } else {
+                return NamedColor.default.toFg();
+            }
+        };
         
         return result[0..len.len];
     }
