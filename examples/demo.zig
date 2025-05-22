@@ -112,13 +112,13 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, width, height, ' ', 
+        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', 
             zit.render.Color{ .named_color = zit.render.NamedColor.white }, 
             zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
             zit.render.Style{});
 
         // Draw border
-        renderer.drawBox(0, 0, width, height, 
+        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, 
             zit.render.BorderStyle.single, 
             zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
             zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
