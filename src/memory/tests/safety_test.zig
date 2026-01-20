@@ -114,10 +114,10 @@ test "MemorySafety zero memory bounds" {
     defer safe_allocator.free(ptr);
 
     // This should panic due to out of bounds
-    testing.expectPanic(@panic, "Attempt to zero memory beyond allocation!", struct {
+    try testing.expectPanic("Attempt to zero memory beyond allocation!", struct {
         fn panicFn() void {
             var safety_ = safety;
             safety_.zeroMemory(ptr, 101);
         }
     }.panicFn);
-} 
+}
