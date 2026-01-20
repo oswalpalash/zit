@@ -474,6 +474,7 @@ pub const FlexLayout = struct {
 
         const metrics = self.measureChildren(available_main, available_cross);
         const child_count = self.children.items.len;
+        const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
         if (child_count == 0) return;
 
         const main_limit_u32: u32 = available_main;
@@ -486,17 +487,17 @@ pub const FlexLayout = struct {
             .start => {},
             .center => start_offset = @intCast(@min(free_space / 2, @as(u32, std.math.maxInt(u16)))),
             .end => start_offset = @intCast(@min(free_space, @as(u32, std.math.maxInt(u16)))),
-            .space_between => if (child_count > 1) {
-                const extra_gap = free_space / @as(u32, child_count - 1);
+            .space_between => if (child_count_u32 > 1) {
+                const extra_gap = free_space / (child_count_u32 - 1);
                 gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
             },
-            .space_around => if (child_count > 0) {
-                const extra_gap = free_space / @as(u32, child_count);
+            .space_around => if (child_count_u32 > 0) {
+                const extra_gap = free_space / child_count_u32;
                 gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
                 start_offset = @intCast(@min(@divFloor(@as(u32, gap_value), 2), @as(u32, std.math.maxInt(u16))));
             },
-            .space_evenly => if (child_count > 0) {
-                const extra_gap = free_space / @as(u32, child_count + 1);
+            .space_evenly => if (child_count_u32 > 0) {
+                const extra_gap = free_space / (child_count_u32 + 1);
                 gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
                 start_offset = gap_value;
             },
@@ -562,8 +563,9 @@ pub const FlexLayout = struct {
 
     fn measureChildren(self: *FlexLayout, main_limit: u16, cross_limit: u16) LayoutMetrics {
         const child_count = self.children.items.len;
-        const base_gap_total: u32 = if (child_count > 1)
-            @as(u32, (child_count - 1)) * @as(u32, self.gap_size)
+        const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
+        const base_gap_total: u32 = if (child_count_u32 > 1)
+            (child_count_u32 - 1) * @as(u32, self.gap_size)
         else
             0;
 
@@ -1295,8 +1297,8 @@ test "flex layout distributes space and aligns children" {
 
         fn layout(ctx: *anyopaque, constraints: Constraints) Size {
             const self = @as(*Self, @ptrCast(@alignCast(ctx)));
-            const width = @min(self.size.width, constraints.max_width);
-            const height = @min(self.size.height, constraints.max_height);
+            const width = std.math.clamp(self.size.width, constraints.min_width, constraints.max_width);
+            const height = std.math.clamp(self.size.height, constraints.min_height, constraints.max_height);
             return Size.init(width, height);
         }
 
@@ -1307,8 +1309,8 @@ test "flex layout distributes space and aligns children" {
 
         fn asElement(self: *Self) LayoutElement {
             return LayoutElement{
-                .layoutFn = DummyElement.layout,
-                .renderFn = DummyElement.render,
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
                 .ctx = @ptrCast(@alignCast(self)),
             };
         }
@@ -1380,8 +1382,8 @@ test "grid layout resolves fixed and flexible tracks" {
 
         fn asElement(self: *Self) LayoutElement {
             return LayoutElement{
-                .layoutFn = Probe.layout,
-                .renderFn = Probe.render,
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
                 .ctx = @ptrCast(@alignCast(self)),
             };
         }
@@ -1390,12 +1392,12 @@ test "grid layout resolves fixed and flexible tracks" {
     var grid = try GridLayout.init(allocator, 3, 2);
     defer grid.deinit();
     _ = grid.gap(1);
-    try grid.setColumns(&[_]GridTrack{
+    _ = try grid.setColumns(&[_]GridTrack{
         GridTrack{ .fixed = 5 },
         GridTrack{ .flex = 1 },
         GridTrack{ .flex = 2 },
     });
-    try grid.setRows(&[_]GridTrack{
+    _ = try grid.setRows(&[_]GridTrack{
         GridTrack{ .flex = 1 },
         GridTrack{ .fixed = 2 },
     });
