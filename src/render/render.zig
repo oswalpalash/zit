@@ -1123,6 +1123,9 @@ test "fillGradient paints interpolated colors" {
         GradientStop{ .position = 1.0, .color = Color.rgb(255, 0, 0) },
     };
 
+    renderer.capabilities.rgb_colors = true;
+    renderer.capabilities.colors_256 = true;
+    renderer.capabilities.unicode = true;
     renderer.fillGradient(0, 0, 4, 1, &stops, GradientDirection.horizontal, Style{});
 
     const first = renderer.back.getCell(0, 0).bg;
@@ -1137,6 +1140,9 @@ test "fillGradient paints interpolated colors" {
 
     var vertical_renderer = try Renderer.init(alloc, 1, 2);
     defer vertical_renderer.deinit();
+    vertical_renderer.capabilities.rgb_colors = true;
+    vertical_renderer.capabilities.colors_256 = true;
+    vertical_renderer.capabilities.unicode = true;
     vertical_renderer.fillGradient(0, 0, 1, 2, &stops, GradientDirection.vertical, Style{});
 
     const top = vertical_renderer.back.getCell(0, 0).bg;
