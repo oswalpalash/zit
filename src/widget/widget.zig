@@ -1,4 +1,5 @@
 const std = @import("std");
+const render = @import("../render/render.zig");
 
 /// Widget library module
 ///
@@ -39,6 +40,7 @@ pub const ToastManager = @import("widgets/toast.zig").ToastManager;
 pub const ToastLevel = @import("widgets/toast.zig").ToastLevel;
 pub const MenuBar = @import("widgets/menubar.zig").MenuBar;
 pub const Canvas = @import("widgets/canvas.zig").Canvas;
+pub const ColorPicker = @import("widgets/color_picker.zig").ColorPicker;
 pub const animation = @import("animation.zig");
 pub const Animator = animation.Animator;
 pub const AnimationSpec = animation.AnimationSpec;
@@ -161,6 +163,11 @@ pub fn createMenuBar(allocator: std.mem.Allocator) !*MenuBar {
 /// Create a new canvas
 pub fn createCanvas(allocator: std.mem.Allocator, width: u16, height: u16) !*Canvas {
     return Canvas.init(allocator, width, height);
+}
+
+/// Create a new color picker
+pub fn createColorPicker(allocator: std.mem.Allocator, palette: []const render.Color) !*ColorPicker {
+    return ColorPicker.init(allocator, palette);
 }
 
 /// Convenience function to focus a widget
