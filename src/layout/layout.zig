@@ -1325,6 +1325,306 @@ pub const GridLayout = struct {
     }
 };
 
+/// Constraints for positioning a child within a constraint layout
+pub const ConstraintSpec = struct {
+    left: ?u16 = null,
+    right: ?u16 = null,
+    top: ?u16 = null,
+    bottom: ?u16 = null,
+    center_x: bool = false,
+    center_y: bool = false,
+    width: ?u16 = null,
+    height: ?u16 = null,
+    min_width: ?u16 = null,
+    max_width: ?u16 = null,
+    min_height: ?u16 = null,
+    max_height: ?u16 = null,
+
+    /// Create a spec pinned to the top-left with optional size
+    pub fn topLeft(x: u16, y: u16, width: ?u16, height: ?u16) ConstraintSpec {
+        return ConstraintSpec{
+            .left = x,
+            .top = y,
+            .width = width,
+            .height = height,
+        };
+    }
+
+    /// Create a spec centered in both axes with optional size
+    pub fn centered(width: ?u16, height: ?u16) ConstraintSpec {
+        return ConstraintSpec{
+            .center_x = true,
+            .center_y = true,
+            .width = width,
+            .height = height,
+        };
+    }
+};
+
+/// Child entry for constraint layout
+pub const ConstraintChild = struct {
+    element: LayoutElement,
+    spec: ConstraintSpec,
+    resolved_rect: Rect = Rect.init(0, 0, 0, 0),
+};
+
+/// Absolute/constraint-based layout manager. Children are positioned using anchors or explicit sizes.
+pub const ConstraintLayout = struct {
+    base: Layout,
+    children: std.ArrayList(ConstraintChild),
+    padding_insets: EdgeInsets,
+
+    /// Initialize a new constraint layout
+    pub fn init(allocator: std.mem.Allocator) !*ConstraintLayout {
+        const layout = try allocator.create(ConstraintLayout);
+        layout.* = ConstraintLayout{
+            .base = Layout.init(allocator),
+            .children = std.ArrayList(ConstraintChild).empty,
+            .padding_insets = EdgeInsets.all(0),
+        };
+        return layout;
+    }
+
+    /// Clean up resources
+    pub fn deinit(self: *ConstraintLayout) void {
+        self.children.deinit(self.base.allocator);
+        self.base.allocator.destroy(self);
+    }
+
+    /// Set padding around the content area
+    pub fn padding(self: *ConstraintLayout, padding_value: EdgeInsets) *ConstraintLayout {
+        self.padding_insets = padding_value;
+        return self;
+    }
+
+    /// Add a child with positioning constraints
+    pub fn addChild(self: *ConstraintLayout, element: LayoutElement, spec: ConstraintSpec) !void {
+        try self.children.append(self.base.allocator, ConstraintChild{
+            .element = element,
+            .spec = spec,
+        });
+    }
+
+    /// Layout callback for LayoutElement
+    pub fn layoutFn(ctx: *anyopaque, constraints: Constraints) Size {
+        const self = @as(*ConstraintLayout, @ptrCast(@alignCast(ctx)));
+        return self.calculateLayout(constraints);
+    }
+
+    /// Render callback for LayoutElement
+    pub fn renderFn(ctx: *anyopaque, renderer: *renderer_mod.Renderer, rect: Rect) void {
+        const self = @as(*ConstraintLayout, @ptrCast(@alignCast(ctx)));
+        self.renderLayout(renderer, rect);
+    }
+
+    /// Calculate layout and remember child rectangles
+    pub fn calculateLayout(self: *ConstraintLayout, constraints: Constraints) Size {
+        const width = constraints.max_width;
+        const height = constraints.max_height;
+
+        const available_width = if (width > self.padding_insets.left + self.padding_insets.right)
+            width - self.padding_insets.left - self.padding_insets.right
+        else
+            0;
+        const available_height = if (height > self.padding_insets.top + self.padding_insets.bottom)
+            height - self.padding_insets.top - self.padding_insets.bottom
+        else
+            0;
+
+        for (self.children.items) |*child| {
+            self.layoutChild(child, available_width, available_height);
+        }
+
+        return Size.init(width, height);
+    }
+
+    /// Render children at their resolved rectangles
+    pub fn renderLayout(self: *ConstraintLayout, renderer: *renderer_mod.Renderer, rect: Rect) void {
+        const width = rect.width;
+        const height = rect.height;
+
+        const available_width = if (width > self.padding_insets.left + self.padding_insets.right)
+            width - self.padding_insets.left - self.padding_insets.right
+        else
+            0;
+        const available_height = if (height > self.padding_insets.top + self.padding_insets.bottom)
+            height - self.padding_insets.top - self.padding_insets.bottom
+        else
+            0;
+
+        // Ensure layout data is up to date relative to this rect
+        for (self.children.items) |*child| {
+            self.layoutChild(child, available_width, available_height);
+
+            const adjusted_rect = Rect{
+                .x = rect.x + child.resolved_rect.x,
+                .y = rect.y + child.resolved_rect.y,
+                .width = child.resolved_rect.width,
+                .height = child.resolved_rect.height,
+            };
+            child.element.render(renderer, adjusted_rect);
+        }
+    }
+
+    /// Convert to LayoutElement
+    pub fn asElement(self: *ConstraintLayout) LayoutElement {
+        return LayoutElement{
+            .layoutFn = ConstraintLayout.layoutFn,
+            .renderFn = ConstraintLayout.renderFn,
+            .ctx = @ptrCast(@alignCast(self)),
+        };
+    }
+
+    fn layoutChild(self: *ConstraintLayout, child: *ConstraintChild, available_width: u16, available_height: u16) void {
+        const spec = child.spec;
+
+        const max_width = spec.max_width orelse available_width;
+        const max_height = spec.max_height orelse available_height;
+
+        const range_min_width = if (spec.min_width) |mw| @min(mw, max_width) else 0;
+        const range_min_height = if (spec.min_height) |mh| @min(mh, max_height) else 0;
+
+        const target_width = blk: {
+            if (spec.width) |fixed| break :blk fixed;
+            if (spec.left != null and spec.right != null and available_width > spec.left.? + spec.right.?) {
+                break :blk available_width - spec.left.? - spec.right.?;
+            }
+            break :blk max_width;
+        };
+
+        const target_height = blk: {
+            if (spec.height) |fixed| break :blk fixed;
+            if (spec.top != null and spec.bottom != null and available_height > spec.top.? + spec.bottom.?) {
+                break :blk available_height - spec.top.? - spec.bottom.?;
+            }
+            break :blk max_height;
+        };
+
+        const child_constraints = Constraints{
+            .min_width = @min(target_width, range_min_width),
+            .max_width = @min(target_width, max_width),
+            .min_height = @min(target_height, range_min_height),
+            .max_height = @min(target_height, max_height),
+        };
+
+        const measured = child.element.layout(child_constraints);
+
+        const natural_width = blk: {
+            if (spec.width) |w| break :blk w;
+            if (spec.left != null and spec.right != null) break :blk target_width;
+            break :blk measured.width;
+        };
+
+        const natural_height = blk: {
+            if (spec.height) |h| break :blk h;
+            if (spec.top != null and spec.bottom != null) break :blk target_height;
+            break :blk measured.height;
+        };
+
+        const resolved_width = std.math.clamp(natural_width, range_min_width, max_width);
+        const resolved_height = std.math.clamp(natural_height, range_min_height, max_height);
+
+        const x = blk: {
+            if (spec.center_x) {
+                if (available_width > resolved_width) break :blk self.padding_insets.left + (available_width - resolved_width) / 2;
+                break :blk self.padding_insets.left;
+            }
+            if (spec.left) |left_offset| break :blk self.padding_insets.left + left_offset;
+            if (spec.right) |right_offset| {
+                if (available_width > resolved_width + right_offset) {
+                    break :blk self.padding_insets.left + available_width - resolved_width - right_offset;
+                }
+                break :blk self.padding_insets.left;
+            }
+            break :blk self.padding_insets.left;
+        };
+
+        const y = blk: {
+            if (spec.center_y) {
+                if (available_height > resolved_height) break :blk self.padding_insets.top + (available_height - resolved_height) / 2;
+                break :blk self.padding_insets.top;
+            }
+            if (spec.top) |top_offset| break :blk self.padding_insets.top + top_offset;
+            if (spec.bottom) |bottom_offset| {
+                if (available_height > resolved_height + bottom_offset) {
+                    break :blk self.padding_insets.top + available_height - resolved_height - bottom_offset;
+                }
+                break :blk self.padding_insets.top;
+            }
+            break :blk self.padding_insets.top;
+        };
+
+        child.resolved_rect = Rect{
+            .x = x,
+            .y = y,
+            .width = resolved_width,
+            .height = resolved_height,
+        };
+    }
+};
+
+test "constraint layout resolves anchored and centered children" {
+    const allocator = std.testing.allocator;
+
+    const DummyElement = struct {
+        const Self = @This();
+        size: Size,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            _ = constraints;
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            return self.size;
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var layout = try ConstraintLayout.init(allocator);
+    defer layout.deinit();
+    _ = layout.padding(EdgeInsets.all(1));
+
+    var top_left = DummyElement{ .size = Size.init(5, 3) };
+    try layout.addChild(top_left.asElement(), ConstraintSpec.topLeft(2, 1, 5, 3));
+
+    var centered = DummyElement{ .size = Size.init(4, 2) };
+    try layout.addChild(centered.asElement(), ConstraintSpec.centered(4, 2));
+
+    var stretched = DummyElement{ .size = Size.init(1, 1) };
+    try layout.addChild(stretched.asElement(), ConstraintSpec{
+        .left = 0,
+        .right = 0,
+        .top = 5,
+        .height = 1,
+    });
+
+    const result_size = layout.calculateLayout(Constraints.tight(40, 20));
+    try std.testing.expectEqual(@as(u16, 40), result_size.width);
+    try std.testing.expectEqual(@as(u16, 20), result_size.height);
+
+    try std.testing.expectEqual(@as(u16, 3), layout.children.items[0].resolved_rect.x);
+    try std.testing.expectEqual(@as(u16, 2), layout.children.items[0].resolved_rect.y);
+    try std.testing.expectEqual(@as(u16, 5), layout.children.items[0].resolved_rect.width);
+    try std.testing.expectEqual(@as(u16, 3), layout.children.items[0].resolved_rect.height);
+
+    try std.testing.expectEqual(@as(u16, 18), layout.children.items[1].resolved_rect.x);
+    try std.testing.expectEqual(@as(u16, 9), layout.children.items[1].resolved_rect.y);
+    try std.testing.expectEqual(@as(u16, 4), layout.children.items[1].resolved_rect.width);
+    try std.testing.expectEqual(@as(u16, 2), layout.children.items[1].resolved_rect.height);
+
+    try std.testing.expectEqual(@as(u16, 1), layout.children.items[2].resolved_rect.x);
+    try std.testing.expectEqual(@as(u16, 6), layout.children.items[2].resolved_rect.y);
+    try std.testing.expectEqual(@as(u16, 38), layout.children.items[2].resolved_rect.width);
+    try std.testing.expectEqual(@as(u16, 1), layout.children.items[2].resolved_rect.height);
+}
+
 /// Reflow manager for handling terminal resize events
 pub const ReflowManager = struct {
     /// Root layout element
