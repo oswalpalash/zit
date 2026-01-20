@@ -1667,3 +1667,18 @@ pub const ReflowManager = struct {
         }
     }
 };
+
+test "rect shrink and expand respect bounds" {
+    const rect = Rect.init(2, 3, 10, 5);
+    const shrunk = rect.shrink(EdgeInsets.all(2));
+    try std.testing.expectEqual(@as(u16, 6), shrunk.width);
+    try std.testing.expectEqual(@as(u16, 1), shrunk.height);
+    try std.testing.expectEqual(@as(u16, 4), shrunk.x);
+    try std.testing.expectEqual(@as(u16, 5), shrunk.y);
+
+    const expanded = shrunk.expand(EdgeInsets.symmetric(1, 2));
+    try std.testing.expectEqual(@as(u16, 8), expanded.width);
+    try std.testing.expectEqual(@as(u16, 5), expanded.height);
+    try std.testing.expectEqual(@as(u16, 3), expanded.x);
+    try std.testing.expectEqual(@as(u16, 3), expanded.y);
+}
