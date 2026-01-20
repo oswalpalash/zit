@@ -46,6 +46,7 @@ pub const ColorPicker = @import("widgets/color_picker.zig").ColorPicker;
 pub const FileBrowser = @import("widgets/file_browser.zig").FileBrowser;
 pub const DateTimePicker = @import("widgets/date_time_picker.zig").DateTimePicker;
 pub const RichText = @import("widgets/rich_text.zig").RichText;
+pub const ImageWidget = @import("widgets/image.zig").ImageWidget;
 pub const SyntaxHighlighter = @import("widgets/syntax_highlighter.zig").SyntaxHighlighter;
 pub const animation = @import("animation.zig");
 pub const Animator = animation.Animator;
