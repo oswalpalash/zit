@@ -14,6 +14,7 @@ pub const FocusDirection = @import("widgets/base_widget.zig").FocusDirection;
 pub const theme = @import("theme.zig");
 pub const Theme = @import("theme.zig").Theme;
 pub const ThemeRole = @import("theme.zig").ThemeRole;
+pub const css = @import("css.zig");
 
 // Re-export widgets
 pub const Label = @import("widgets/label.zig").Label;
