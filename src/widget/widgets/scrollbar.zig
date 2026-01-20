@@ -175,12 +175,11 @@ pub const Scrollbar = struct {
                     return true;
                 }
                 // Mouse wheel scrolls
-                else if (mouse_event.action == .scroll) {
-                    if (mouse_event.scroll_y < 0) {
-                        self.setValue(self.value + 0.1);
-                    } else if (mouse_event.scroll_y > 0) {
-                        self.setValue(self.value - 0.1);
-                    }
+                else if (mouse_event.action == .scroll_up) {
+                    self.setValue(self.value - 0.1);
+                    return true;
+                } else if (mouse_event.action == .scroll_down) {
+                    self.setValue(self.value + 0.1);
                     return true;
                 }
             }
@@ -192,7 +191,7 @@ pub const Scrollbar = struct {
             }
 
             // Handle mouse movement while dragging
-            if (self.dragging and mouse_event.action == .motion) {
+            if (self.dragging and mouse_event.action == .move) {
                 if (self.orientation == .vertical) {
                     const track_height = @as(f32, @floatFromInt(rect.height));
                     const delta = @as(f32, @floatFromInt(mouse_event.y - self.drag_start_pos));
@@ -221,42 +220,42 @@ pub const Scrollbar = struct {
             const key_event = event.key;
 
             if (self.orientation == .vertical) {
-                if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == input.KeyCode.down) { // Down
+                if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == input.KeyCode.DOWN) { // Down
                     self.setValue(self.value + 0.1);
                     return true;
-                } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == input.KeyCode.up) { // Up
+                } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == input.KeyCode.UP) { // Up
                     self.setValue(self.value - 0.1);
                     return true;
-                } else if (key_event.key == input.KeyCode.page_down) { // Page down
+                } else if (key_event.key == input.KeyCode.PAGE_DOWN) { // Page down
                     self.setValue(self.value + 0.25);
                     return true;
-                } else if (key_event.key == input.KeyCode.page_up) { // Page up
+                } else if (key_event.key == input.KeyCode.PAGE_UP) { // Page up
                     self.setValue(self.value - 0.25);
                     return true;
-                } else if (key_event.key == input.KeyCode.home) { // Home
+                } else if (key_event.key == input.KeyCode.HOME) { // Home
                     self.setValue(0);
                     return true;
-                } else if (key_event.key == input.KeyCode.end) { // End
+                } else if (key_event.key == input.KeyCode.END) { // End
                     self.setValue(1);
                     return true;
                 }
             } else {
-                if (key_event.key == 'l' or key_event.key == 'L' or key_event.key == input.KeyCode.right) { // Right
+                if (key_event.key == 'l' or key_event.key == 'L' or key_event.key == input.KeyCode.RIGHT) { // Right
                     self.setValue(self.value + 0.1);
                     return true;
-                } else if (key_event.key == 'h' or key_event.key == 'H' or key_event.key == input.KeyCode.left) { // Left
+                } else if (key_event.key == 'h' or key_event.key == 'H' or key_event.key == input.KeyCode.LEFT) { // Left
                     self.setValue(self.value - 0.1);
                     return true;
-                } else if (key_event.key == input.KeyCode.page_right) { // Page right
+                } else if (key_event.key == input.KeyCode.PAGE_DOWN) { // Page right
                     self.setValue(self.value + 0.25);
                     return true;
-                } else if (key_event.key == input.KeyCode.page_left) { // Page left
+                } else if (key_event.key == input.KeyCode.PAGE_UP) { // Page left
                     self.setValue(self.value - 0.25);
                     return true;
-                } else if (key_event.key == input.KeyCode.home) { // Home
+                } else if (key_event.key == input.KeyCode.HOME) { // Home
                     self.setValue(0);
                     return true;
-                } else if (key_event.key == input.KeyCode.end) { // End
+                } else if (key_event.key == input.KeyCode.END) { // End
                     self.setValue(1);
                     return true;
                 }

@@ -530,6 +530,17 @@ pub const BoxStyle = struct {
     shadow: ?ShadowStyle = null,
 };
 
+/// Visual treatment for focused widgets.
+pub const FocusRingStyle = struct {
+    color: Color = Color.named(NamedColor.cyan),
+    style: Style = Style{ .bold = true },
+    border: BorderStyle = .rounded,
+    /// Shrink the ring inward by this amount on each edge.
+    inset: u16 = 0,
+    /// Optional highlight fill behind the ring.
+    fill: ?Color = null,
+};
+
 /// Terminal capabilities that may not be available on all terminals
 pub const TerminalCapabilities = struct {
     /// Support for RGB colors

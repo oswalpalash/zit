@@ -343,39 +343,59 @@ pub const DropdownMenu = struct {
         // Handle key events
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
 
             if (self.is_open) {
                 // Navigation within open dropdown
-                if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == 2) { // Down
-                    var index = self.selected_index;
-                    while (index < self.items.items.len - 1) {
-                        index += 1;
-                        if (self.items.items[index].enabled) {
-                            self.setSelectedIndex(index);
-                            break;
-                        }
+                if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                    switch (action) {
+                        .cursor_down => {
+                            var index = self.selected_index;
+                            while (index < self.items.items.len - 1) {
+                                index += 1;
+                                if (self.items.items[index].enabled) {
+                                    self.setSelectedIndex(index);
+                                    break;
+                                }
+                            }
+                            return true;
+                        },
+                        .cursor_up => {
+                            var index = self.selected_index;
+                            while (index > 0) {
+                                index -= 1;
+                                if (self.items.items[index].enabled) {
+                                    self.setSelectedIndex(index);
+                                    break;
+                                }
+                            }
+                            return true;
+                        },
+                        else => {},
                     }
-                    return true;
-                } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 1) { // Up
-                    var index = self.selected_index;
-                    while (index > 0) {
-                        index -= 1;
-                        if (self.items.items[index].enabled) {
-                            self.setSelectedIndex(index);
-                            break;
-                        }
-                    }
-                    return true;
-                } else if (key_event.key == '\r' or key_event.key == '\n' or key_event.key == ' ' or key_event.key == 2) { // Enter, space, or down
+                }
+
+                if (key_event.key == input.KeyCode.ENTER or key_event.key == input.KeyCode.SPACE) {
                     self.close();
                     return true;
-                } else if (key_event.key == 27) { // Escape
+                } else if (key_event.key == input.KeyCode.ESCAPE) {
                     self.close();
                     return true;
                 }
             } else {
                 // Open dropdown on Enter, Space, or Down arrow
-                if (key_event.key == '\r' or key_event.key == '\n' or key_event.key == ' ' or key_event.key == 2) {
+                if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                    if (action == .cursor_down or action == .cursor_up) {
+                        self.open();
+                        return true;
+                    }
+                }
+
+                if (key_event.key == input.KeyCode.ENTER or key_event.key == input.KeyCode.SPACE) {
                     self.open();
                     return true;
                 }

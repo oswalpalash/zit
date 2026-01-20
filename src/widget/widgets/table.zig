@@ -492,6 +492,7 @@ pub const Table = struct {
             if (mouse_event.action == .press and mouse_event.button == 4 and
                 rect.contains(mouse_event.x, mouse_event.y))
             {
+                // kept for backward compatibility with terminals sending button codes
                 if (self.first_visible_row > 0) {
                     self.first_visible_row -= 1;
                     return true;
@@ -503,62 +504,89 @@ pub const Table = struct {
                     self.first_visible_row += 1;
                     return true;
                 }
+            } else if ((mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) and rect.contains(mouse_event.x, mouse_event.y)) {
+                if (mouse_event.action == .scroll_up) {
+                    if (self.first_visible_row > 0) {
+                        self.first_visible_row -= 1;
+                        return true;
+                    }
+                } else if (self.first_visible_row + self.getVisibleRowCount() < self.rows.items.len) {
+                    self.first_visible_row += 1;
+                    return true;
+                }
             }
         }
 
         // Handle key events
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
 
-            if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == 2) { // Down
-                if (self.selected_row == null) {
-                    self.setSelectedRow(0);
-                } else if (self.selected_row.? < self.rows.items.len - 1) {
-                    self.setSelectedRow(self.selected_row.? + 1);
-                }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 1) { // Up
-                if (self.selected_row == null) {
-                    self.setSelectedRow(0);
-                } else if (self.selected_row.? > 0) {
-                    self.setSelectedRow(self.selected_row.? - 1);
-                }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 6) { // Page down
-                const visible_rows = self.getVisibleRowCount();
+            if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                switch (action) {
+                    .cursor_down => {
+                        if (self.selected_row == null) {
+                            self.setSelectedRow(0);
+                        } else if (self.selected_row.? < self.rows.items.len - 1) {
+                            self.setSelectedRow(self.selected_row.? + 1);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .cursor_up => {
+                        if (self.selected_row == null) {
+                            self.setSelectedRow(0);
+                        } else if (self.selected_row.? > 0) {
+                            self.setSelectedRow(self.selected_row.? - 1);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .page_down => {
+                        const visible_rows = self.getVisibleRowCount();
 
-                if (self.selected_row == null) {
-                    self.setSelectedRow(0);
-                } else {
-                    const new_row = @min(self.selected_row.? + visible_rows, self.rows.items.len - 1);
-                    self.setSelectedRow(new_row);
+                        if (self.selected_row == null) {
+                            self.setSelectedRow(0);
+                        } else {
+                            const new_row = @min(self.selected_row.? + visible_rows, self.rows.items.len - 1);
+                            self.setSelectedRow(new_row);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .page_up => {
+                        if (self.selected_row == null) {
+                            self.setSelectedRow(0);
+                        } else {
+                            const visible_rows = self.getVisibleRowCount();
+                            const new_row = if (self.selected_row.? > visible_rows)
+                                self.selected_row.? - visible_rows
+                            else
+                                0;
+                            self.setSelectedRow(new_row);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .line_start => {
+                        self.setSelectedRow(0);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .line_end => {
+                        self.setSelectedRow(self.rows.items.len - 1);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    else => {},
                 }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 5) { // Page up
-                if (self.selected_row == null) {
-                    self.setSelectedRow(0);
-                } else {
-                    const visible_rows = self.getVisibleRowCount();
-                    const new_row = if (self.selected_row.? > visible_rows)
-                        self.selected_row.? - visible_rows
-                    else
-                        0;
-                    self.setSelectedRow(new_row);
-                }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 7) { // Home
-                self.setSelectedRow(0);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 8) { // End
-                self.setSelectedRow(self.rows.items.len - 1);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == input.KeyCode.ESCAPE) {
+            }
+
+            if (key_event.key == input.KeyCode.ESCAPE) {
                 self.resetTypeahead();
                 return false;
             } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {

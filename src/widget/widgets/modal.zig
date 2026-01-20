@@ -193,7 +193,7 @@ pub const Modal = struct {
         if (event == .key and self.close_on_escape) {
             const key_event = event.key;
 
-            if (key_event.key == 27) { // Escape key
+            if (key_event.key == input.KeyCode.ESCAPE) {
                 self.close();
                 return true;
             }
