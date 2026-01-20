@@ -12,6 +12,7 @@ pub const RichText = struct {
     border: render.BorderStyle = .none,
     background: render.Color = render.Color{ .named_color = render.NamedColor.default },
     wrap: bool = true,
+    box_style: ?render.BoxStyle = null,
 
     pub const Span = struct {
         text: []u8,
@@ -73,6 +74,10 @@ pub const RichText = struct {
         self.background = color;
     }
 
+    pub fn setBoxStyle(self: *RichText, style: render.BoxStyle) void {
+        self.box_style = style;
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*RichText, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.visible) return;
@@ -80,12 +85,21 @@ pub const RichText = struct {
         const rect = self.widget.rect;
         if (rect.width == 0 or rect.height == 0) return;
 
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color{ .named_color = render.NamedColor.default }, self.background, render.Style{});
+        var inset: u16 = 0;
+        var active_border = self.border;
 
-        const has_border = self.border != .none and rect.width >= 2 and rect.height >= 2;
-        const inset: u16 = if (has_border) 1 else 0;
-        if (has_border) {
-            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, render.Color{ .named_color = render.NamedColor.default }, self.background, render.Style{});
+        if (self.box_style) |style| {
+            renderer.drawStyledBox(rect.x, rect.y, rect.width, rect.height, style);
+            active_border = style.border;
+            if (active_border != .none and rect.width >= 2 and rect.height >= 2) {
+                inset = 1;
+            }
+        } else {
+            renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color{ .named_color = render.NamedColor.default }, self.background, render.Style{});
+            if (active_border != .none and rect.width >= 2 and rect.height >= 2) {
+                renderer.drawBox(rect.x, rect.y, rect.width, rect.height, active_border, render.Color{ .named_color = render.NamedColor.default }, self.background, render.Style{});
+                inset = 1;
+            }
         }
 
         const content_width = if (rect.width > inset * 2) rect.width - inset * 2 else 0;
