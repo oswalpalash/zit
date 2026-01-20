@@ -2,6 +2,8 @@ const std = @import("std");
 const input = @import("../input/input.zig");
 pub const widget = @import("../widget/widget.zig");
 const animation = @import("../widget/animation.zig");
+const timer = @import("timer.zig");
+const accessibility = @import("../widget/accessibility.zig");
 
 /// Event system module
 ///
@@ -558,6 +560,8 @@ pub const FocusManager = struct {
     allocator: std.mem.Allocator,
     /// Whether focus stealing is allowed
     allow_focus_stealing: bool = false,
+    /// Accessibility manager (optional)
+    accessibility: ?*accessibility.Manager = null,
 
     /// Initialize a new focus manager
     pub fn init(allocator: std.mem.Allocator, event_queue: *EventQueue) FocusManager {
@@ -566,6 +570,7 @@ pub const FocusManager = struct {
             .focus_history = std.ArrayList(*widget.Widget).empty,
             .event_queue = event_queue,
             .allocator = allocator,
+            .accessibility = null,
         };
     }
 
@@ -604,6 +609,10 @@ pub const FocusManager = struct {
         try self.focus_history.append(self.allocator, target_widget);
         if (self.focus_history.items.len > 10) {
             _ = self.focus_history.orderedRemove(0);
+        }
+
+        if (self.accessibility) |acc| {
+            _ = acc.announceFocus(target_widget) catch {};
         }
 
         // Send focus change events
@@ -660,6 +669,10 @@ pub const Application = struct {
     animator: animation.Animator,
     /// Last frame timestamp for animation deltas
     last_frame_ms: u64 = 0,
+    /// Timer manager for async tasks
+    timer_manager: timer.TimerManager,
+    /// Accessibility manager (optional)
+    accessibility: ?*accessibility.Manager = null,
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -668,6 +681,7 @@ pub const Application = struct {
             .allocator = allocator,
             .focus_manager = undefined,
             .animator = animation.Animator.init(allocator),
+            .timer_manager = timer.TimerManager.init(allocator),
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
@@ -682,7 +696,13 @@ pub const Application = struct {
             self.allocator.destroy(manager);
         }
 
+        if (self.accessibility) |manager| {
+            manager.deinit();
+            self.allocator.destroy(manager);
+        }
+
         self.animator.deinit();
+        self.timer_manager.deinit();
         self.focus_manager.deinit();
         self.event_queue.deinit();
     }
@@ -741,6 +761,7 @@ pub const Application = struct {
             const now_ms: u64 = @intCast(std.time.milliTimestamp());
             const delta = if (self.last_frame_ms == 0) 0 else now_ms - self.last_frame_ms;
             self.animator.tick(delta);
+            self.timer_manager.tick(now_ms);
             self.last_frame_ms = now_ms;
 
             // Yield to allow other tasks to run
@@ -768,6 +789,7 @@ pub const Application = struct {
                     const now_ms: u64 = @intCast(std.time.milliTimestamp());
                     const delta = if (last == 0) 0 else now_ms - last;
                     app.animator.tick(delta);
+                    app.timer_manager.tick(now_ms);
                     last = now_ms;
 
                     // Yield to allow other tasks to run
@@ -811,6 +833,51 @@ pub const Application = struct {
     /// Cancel an animation by handle
     pub fn cancelAnimation(self: *Application, handle: animation.AnimationHandle) bool {
         return self.animator.cancel(handle);
+    }
+
+    /// Schedule a timer callback
+    pub fn scheduleTimer(self: *Application, delay_ms: u64, repeat_ms: ?u64, callback: timer.TimerCallback, ctx: ?*anyopaque) !timer.TimerHandle {
+        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        if (self.last_frame_ms == 0) self.last_frame_ms = now_ms;
+        return try self.timer_manager.schedule(now_ms, delay_ms, repeat_ms, callback, ctx);
+    }
+
+    /// Cancel a timer
+    pub fn cancelTimer(self: *Application, handle: timer.TimerHandle) bool {
+        return self.timer_manager.cancel(handle);
+    }
+
+    /// Enable accessibility support and wire into focus events
+    pub fn enableAccessibility(self: *Application) !void {
+        if (self.accessibility != null) return;
+        const manager = try self.allocator.create(accessibility.Manager);
+        manager.* = accessibility.Manager.init(self.allocator);
+        self.accessibility = manager;
+        self.focus_manager.accessibility = manager;
+    }
+
+    /// Disable accessibility and free resources
+    pub fn disableAccessibility(self: *Application) void {
+        if (self.accessibility) |manager| {
+            manager.deinit();
+            self.allocator.destroy(manager);
+        }
+        self.accessibility = null;
+        self.focus_manager.accessibility = null;
+    }
+
+    /// Register an accessible node for a widget
+    pub fn registerAccessibleNode(self: *Application, node: accessibility.AccessibleNode) !void {
+        if (self.accessibility) |manager| {
+            try manager.registerNode(node);
+        }
+    }
+
+    /// Update accessibility bounds for a widget
+    pub fn updateAccessibleBounds(self: *Application, w: *widget.Widget, rect: @import("../layout/layout.zig").Rect) void {
+        if (self.accessibility) |manager| {
+            manager.updateBounds(w, rect);
+        }
     }
 
     /// Process an input event
