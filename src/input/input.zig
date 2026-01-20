@@ -730,14 +730,12 @@ pub const InputHandler = struct {
         } else {
             // For all other platforms, use the standard implementation
             const stdin = std.fs.File.stdin();
-            var stdin_buffer: [256]u8 = undefined;
-            var reader = stdin.reader(stdin_buffer[0..]);
 
             // Reset buffer position
             self.buffer_pos = 0;
 
             // Read a single byte
-            const byte = readByte(&reader) catch |err| {
+            const byte = readByte(stdin) catch |err| {
                 // Handle all possible non-blocking errors consistently
                 if (err == error.WouldBlock or err == error.Again or
                     err == error.InputOutput or err == error.NotOpenForReading)
@@ -788,9 +786,9 @@ pub const InputHandler = struct {
         }
     }
 
-    fn readByte(reader: anytype) !u8 {
+    fn readByte(file: std.fs.File) !u8 {
         var buf: [1]u8 = undefined;
-        const bytes_read = try reader.*.read(&buf);
+        const bytes_read = try file.read(&buf);
         if (bytes_read == 0) return error.EndOfStream;
         return buf[0];
     }
@@ -873,11 +871,9 @@ pub const InputHandler = struct {
         } else {
             // Standard implementation for other platforms
             const stdin = std.fs.File.stdin();
-            var stdin_buffer: [256]u8 = undefined;
-            var reader = stdin.reader(stdin_buffer[0..]);
 
             // Try to read the next byte with special handling for macOS
-            const next_byte = readByte(&reader) catch |err| {
+            const next_byte = readByte(stdin) catch |err| {
                 if (err == error.WouldBlock or err == error.Again or
                     err == error.InputOutput)
                 {
@@ -1013,11 +1009,9 @@ pub const InputHandler = struct {
         } else {
             // Original implementation for other platforms
             const stdin = std.fs.File.stdin();
-            var stdin_buffer: [256]u8 = undefined;
-            var reader = stdin.reader(stdin_buffer[0..]);
 
             // Read the next byte
-            const next_byte = readByte(&reader) catch |err| {
+            const next_byte = readByte(stdin) catch |err| {
                 if (err == error.WouldBlock) {
                     return Event{ .unknown = {} };
                 }
@@ -1043,7 +1037,7 @@ pub const InputHandler = struct {
                 'F' => return Event{ .key = KeyEvent{ .key = KeyCode.END, .modifiers = KeyModifiers{} } },
                 '5' => {
                     // Read the next byte (should be ~)
-                    const tilde = readByte(&reader) catch |err| {
+                    const tilde = readByte(stdin) catch |err| {
                         if (err == error.WouldBlock) {
                             return Event{ .unknown = {} };
                         }
@@ -1056,7 +1050,7 @@ pub const InputHandler = struct {
                 },
                 '6' => {
                     // Read the next byte (should be ~)
-                    const tilde = readByte(&reader) catch |err| {
+                    const tilde = readByte(stdin) catch |err| {
                         if (err == error.WouldBlock) {
                             return Event{ .unknown = {} };
                         }
@@ -1069,7 +1063,7 @@ pub const InputHandler = struct {
                 },
                 '2' => {
                     // Read the next byte (should be ~)
-                    const tilde = readByte(&reader) catch |err| {
+                    const tilde = readByte(stdin) catch |err| {
                         if (err == error.WouldBlock) {
                             return Event{ .unknown = {} };
                         }
@@ -1082,7 +1076,7 @@ pub const InputHandler = struct {
                 },
                 '3' => {
                     // Read the next byte (should be ~)
-                    const tilde = readByte(&reader) catch |err| {
+                    const tilde = readByte(stdin) catch |err| {
                         if (err == error.WouldBlock) {
                             return Event{ .unknown = {} };
                         }
@@ -1104,7 +1098,7 @@ pub const InputHandler = struct {
 
                 // Read until we get a non-digit or ~
                 while (num_len < 3) {
-                    const digit = readByte(&reader) catch |err| {
+                    const digit = readByte(stdin) catch |err| {
                         if (err == error.WouldBlock) {
                             break;
                         }
@@ -1148,8 +1142,6 @@ pub const InputHandler = struct {
     /// Parse a mouse event
     fn parseMouseEvent(_: *InputHandler) !Event {
         const stdin = std.fs.File.stdin();
-        var stdin_buffer: [256]u8 = undefined;
-        var reader = stdin.reader(stdin_buffer[0..]);
 
         // Mouse events in SGR mode are of the form: ESC [ < Cb ; Cx ; Cy ; M/m
         // Where:
@@ -1165,7 +1157,7 @@ pub const InputHandler = struct {
 
         // Parse parameters
         while (param_index < 3) {
-            const c = readByte(&reader) catch |err| {
+            const c = readByte(stdin) catch |err| {
                 if (err == error.WouldBlock) {
                     return Event{ .unknown = {} };
                 }

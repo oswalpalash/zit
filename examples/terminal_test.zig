@@ -78,13 +78,11 @@ pub fn main() !void {
     try writer.writeAll("Press any key to see its ASCII value (press 'q' to quit)");
 
     // Input loop
-    var stdin_file = std.fs.File.stdin();
-    var stdin_buffer: [4]u8 = undefined;
-    var stdin = stdin_file.reader(&stdin_buffer);
+    const stdin_file = std.fs.File.stdin();
 
     while (true) {
         var byte_buf: [1]u8 = undefined;
-        const read = stdin.read(&byte_buf) catch continue;
+        const read = stdin_file.read(&byte_buf) catch continue;
         if (read == 0) continue;
         const byte = byte_buf[0];
 
