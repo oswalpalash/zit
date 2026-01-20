@@ -64,6 +64,16 @@ pub const Table = struct {
     on_row_selected: ?*const fn (usize) void = null,
     /// Allocator for table operations
     allocator: std.mem.Allocator,
+    /// Rolling buffer for incremental search
+    search_buffer: [64]u8 = undefined,
+    /// Current length of the incremental search query
+    search_len: usize = 0,
+    /// Timestamp of the last search keystroke in milliseconds
+    last_search_ms: ?i64 = null,
+    /// How long to keep appending to the search buffer (in milliseconds)
+    search_timeout_ms: u64 = 900,
+    /// Clock source (primarily overridden in tests)
+    clock: *const fn () i64 = std.time.milliTimestamp,
 
     /// Virtual method table for Table
     pub const vtable = base.Widget.VTable{
@@ -112,10 +122,11 @@ pub const Table = struct {
     pub fn addColumn(self: *Table, header: []const u8, width: u16, resizable: bool) !void {
         const header_copy = try self.allocator.alloc(u8, header.len);
         @memcpy(header_copy, header);
+        const column_width = if (width == 0) @as(u16, 1) else width;
 
         try self.columns.append(self.allocator, TableColumn{
             .header = header_copy,
-            .width = width,
+            .width = column_width,
             .resizable = resizable,
         });
     }
@@ -206,6 +217,7 @@ pub const Table = struct {
         self.rows.clearRetainingCapacity();
         self.selected_row = null;
         self.first_visible_row = 0;
+        self.resetTypeahead();
     }
 
     /// Set the selected row
@@ -286,6 +298,22 @@ pub const Table = struct {
     /// Set the border style
     pub fn setBorder(self: *Table, border: render.BorderStyle) void {
         self.border = border;
+    }
+
+    /// Configure how long to keep accumulating typeahead search input.
+    pub fn setTypeaheadTimeout(self: *Table, timeout_ms: u64) void {
+        self.search_timeout_ms = timeout_ms;
+    }
+
+    /// Clear any buffered typeahead query.
+    pub fn resetTypeahead(self: *Table) void {
+        self.search_len = 0;
+        self.last_search_ms = null;
+    }
+
+    /// Override the timing source used for typeahead (test-only hook).
+    pub fn setTypeaheadClock(self: *Table, clock: *const fn () i64) void {
+        self.clock = clock;
     }
 
     /// Draw implementation for Table
@@ -488,6 +516,7 @@ pub const Table = struct {
                 } else if (self.selected_row.? < self.rows.items.len - 1) {
                     self.setSelectedRow(self.selected_row.? + 1);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 1) { // Up
                 if (self.selected_row == null) {
@@ -495,6 +524,7 @@ pub const Table = struct {
                 } else if (self.selected_row.? > 0) {
                     self.setSelectedRow(self.selected_row.? - 1);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 6) { // Page down
                 const visible_rows = self.getVisibleRowCount();
@@ -505,6 +535,7 @@ pub const Table = struct {
                     const new_row = @min(self.selected_row.? + visible_rows, self.rows.items.len - 1);
                     self.setSelectedRow(new_row);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 5) { // Page up
                 if (self.selected_row == null) {
@@ -517,17 +548,89 @@ pub const Table = struct {
                         0;
                     self.setSelectedRow(new_row);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 7) { // Home
                 self.setSelectedRow(0);
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 8) { // End
                 self.setSelectedRow(self.rows.items.len - 1);
+                self.resetTypeahead();
+                return true;
+            } else if (key_event.key == input.KeyCode.ESCAPE) {
+                self.resetTypeahead();
+                return false;
+            } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                if (self.handleTypeaheadKey(@as(u8, @intCast(key_event.key)))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn handleTypeaheadKey(self: *Table, byte: u8) bool {
+        if (self.rows.items.len == 0) {
+            return false;
+        }
+
+        const now = self.clock();
+        if (self.last_search_ms) |last| {
+            if (now < last or @as(u64, @intCast(now - last)) > self.search_timeout_ms) {
+                self.resetTypeahead();
+            }
+        }
+        self.last_search_ms = now;
+
+        if (self.search_len < self.search_buffer.len) {
+            self.search_buffer[self.search_len] = std.ascii.toLower(byte);
+            self.search_len += 1;
+        } else {
+            std.mem.copyForwards(u8, self.search_buffer[0 .. self.search_buffer.len - 1], self.search_buffer[1..]);
+            self.search_buffer[self.search_buffer.len - 1] = std.ascii.toLower(byte);
+            self.search_len = self.search_buffer.len;
+        }
+
+        const needle = self.search_buffer[0..self.search_len];
+        if (needle.len == 0) return false;
+
+        const start = self.selected_row orelse 0;
+        var i: usize = 0;
+        while (i < self.rows.items.len) : (i += 1) {
+            const idx = (start + i) % self.rows.items.len;
+            if (rowStartsWith(self.rows.items[idx], needle)) {
+                self.setSelectedRow(idx);
                 return true;
             }
         }
 
         return false;
+    }
+
+    fn rowStartsWith(row: std.ArrayList(TableCell), needle: []const u8) bool {
+        if (needle.len == 0) return false;
+
+        for (row.items) |cell| {
+            if (cell.text.len == 0) continue;
+            if (startsWithIgnoreCase(cell.text, needle)) return true;
+        }
+        return false;
+    }
+
+    fn startsWithIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+        if (needle.len == 0 or needle.len > haystack.len) {
+            return false;
+        }
+
+        var i: usize = 0;
+        while (i < needle.len) : (i += 1) {
+            if (std.ascii.toLower(haystack[i]) != needle[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// Layout implementation for Table
@@ -565,3 +668,41 @@ pub const Table = struct {
         return self.widget.enabled and self.rows.items.len > 0;
     }
 };
+
+test "table typeahead search finds matching rows" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 12, true);
+    try table.addColumn("Details", 16, true);
+
+    try table.addRow(&.{ "Alpha", "First" });
+    try table.addRow(&.{ "Garden", "Plants" });
+    try table.addRow(&.{ "Gamma", "Third" });
+    try table.addRow(&.{ "Zeta", "Last" });
+
+    table.widget.focused = true;
+    try table.widget.layout(layout_module.Rect.init(0, 0, 30, 4));
+    table.setSelectedRow(0);
+
+    const TestClock = struct {
+        var now: i64 = 0;
+        fn tick() i64 {
+            return now;
+        }
+    };
+
+    table.setTypeaheadClock(TestClock.tick);
+    table.setTypeaheadTimeout(1_000);
+
+    _ = try table.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 1), table.selected_row.?); // Garden
+
+    _ = try table.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 1), table.selected_row.?); // "ga" still Garden
+
+    TestClock.now = 5_000; // Exceeds timeout, clears buffer.
+    _ = try table.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 3), table.selected_row.?); // Zeta
+}

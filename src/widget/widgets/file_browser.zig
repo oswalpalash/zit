@@ -23,6 +23,11 @@ pub const FileBrowser = struct {
     header_style: render.Style = render.Style{ .bold = true },
     on_file_selected: ?*const fn ([]const u8, bool) void = null,
     on_directory_changed: ?*const fn ([]const u8) void = null,
+    search_buffer: [64]u8 = undefined,
+    search_len: usize = 0,
+    last_search_ms: ?i64 = null,
+    search_timeout_ms: u64 = 900,
+    clock: *const fn () i64 = std.time.milliTimestamp,
 
     pub const Entry = struct {
         name: []u8,
@@ -85,12 +90,26 @@ pub const FileBrowser = struct {
         self.on_directory_changed = callback;
     }
 
+    pub fn setTypeaheadTimeout(self: *FileBrowser, timeout_ms: u64) void {
+        self.search_timeout_ms = timeout_ms;
+    }
+
+    pub fn resetTypeahead(self: *FileBrowser) void {
+        self.search_len = 0;
+        self.last_search_ms = null;
+    }
+
+    pub fn setTypeaheadClock(self: *FileBrowser, clock: *const fn () i64) void {
+        self.clock = clock;
+    }
+
     pub fn setPath(self: *FileBrowser, path: []const u8) !void {
         const normalized = try normalizePath(self.allocator, path);
         self.allocator.free(self.current_path);
         self.current_path = normalized;
         self.selected = 0;
         self.scroll = 0;
+        self.resetTypeahead();
         try self.refresh();
         if (self.on_directory_changed) |cb| {
             cb(self.current_path);
@@ -137,6 +156,7 @@ pub const FileBrowser = struct {
             self.selected = self.entries.items.len - 1;
         }
 
+        self.resetTypeahead();
         self.ensureVisible();
     }
 
@@ -290,6 +310,57 @@ pub const FileBrowser = struct {
         return buffer[0..available];
     }
 
+    fn handleTypeaheadKey(self: *FileBrowser, byte: u8) bool {
+        if (self.entries.items.len == 0) return false;
+
+        const now = self.clock();
+        if (self.last_search_ms) |last| {
+            if (now < last or @as(u64, @intCast(now - last)) > self.search_timeout_ms) {
+                self.resetTypeahead();
+            }
+        }
+        self.last_search_ms = now;
+
+        if (self.search_len < self.search_buffer.len) {
+            self.search_buffer[self.search_len] = std.ascii.toLower(byte);
+            self.search_len += 1;
+        } else {
+            std.mem.copyForwards(u8, self.search_buffer[0 .. self.search_buffer.len - 1], self.search_buffer[1..]);
+            self.search_buffer[self.search_buffer.len - 1] = std.ascii.toLower(byte);
+            self.search_len = self.search_buffer.len;
+        }
+
+        const needle = self.search_buffer[0..self.search_len];
+        if (needle.len == 0) return false;
+
+        const start = self.selected;
+        var i: usize = 0;
+        while (i < self.entries.items.len) : (i += 1) {
+            const idx = (start + i) % self.entries.items.len;
+            if (startsWithIgnoreCase(self.entries.items[idx].name, needle)) {
+                self.selected = idx;
+                self.ensureVisible();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn startsWithIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+        if (needle.len == 0 or needle.len > haystack.len) {
+            return false;
+        }
+
+        var i: usize = 0;
+        while (i < needle.len) : (i += 1) {
+            if (std.ascii.toLower(haystack[i]) != needle[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
 
@@ -327,12 +398,14 @@ pub const FileBrowser = struct {
                         self.selected -= 1;
                         self.ensureVisible();
                     }
+                    self.resetTypeahead();
                     return true;
                 } else if (key == input.KeyCode.DOWN or key == 'j') {
                     if (self.selected + 1 < self.entries.items.len) {
                         self.selected += 1;
                         self.ensureVisible();
                     }
+                    self.resetTypeahead();
                     return true;
                 } else if (key == input.KeyCode.PAGE_UP) {
                     if (self.visible_items > 0) {
@@ -343,12 +416,14 @@ pub const FileBrowser = struct {
                         }
                         self.ensureVisible();
                     }
+                    self.resetTypeahead();
                     return true;
                 } else if (key == input.KeyCode.PAGE_DOWN) {
                     if (self.visible_items > 0) {
                         self.selected = @min(self.selected + self.visible_items, self.entries.items.len - 1);
                         self.ensureVisible();
                     }
+                    self.resetTypeahead();
                     return true;
                 } else if (key == input.KeyCode.LEFT or key == input.KeyCode.BACKSPACE) {
                     if (std.fs.path.dirname(self.current_path) != null) {
@@ -356,10 +431,19 @@ pub const FileBrowser = struct {
                         defer self.allocator.free(parent);
                         try self.setPath(parent);
                     }
+                    self.resetTypeahead();
                     return true;
                 } else if (key == input.KeyCode.RIGHT or key == input.KeyCode.ENTER or key == '\r' or key == '\n') {
                     try self.enterSelection();
+                    self.resetTypeahead();
                     return true;
+                } else if (key == input.KeyCode.ESCAPE) {
+                    self.resetTypeahead();
+                    return false;
+                } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                    if (self.handleTypeaheadKey(@as(u8, @intCast(key_event.key)))) {
+                        return true;
+                    }
                 }
             },
             else => {},
@@ -417,4 +501,52 @@ test "file browser navigates directories" {
     // Navigate back up.
     _ = try browser.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } });
     try std.testing.expect(!std.mem.endsWith(u8, browser.current_path, "nested"));
+}
+
+test "file browser typeahead selects entries" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        const file = try tmp.dir.createFile("garden.log", .{});
+        file.close();
+    }
+    {
+        const file = try tmp.dir.createFile("gamma.txt", .{});
+        file.close();
+    }
+    {
+        const file = try tmp.dir.createFile("zeta.md", .{});
+        file.close();
+    }
+
+    const root_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(root_path);
+
+    var browser = try FileBrowser.init(alloc, root_path);
+    defer browser.deinit();
+
+    browser.widget.focused = true;
+    try browser.widget.layout(layout_module.Rect.init(0, 0, 30, 8));
+
+    const TestClock = struct {
+        var now: i64 = 0;
+        fn tick() i64 {
+            return now;
+        }
+    };
+
+    browser.setTypeaheadClock(TestClock.tick);
+    browser.setTypeaheadTimeout(1_000);
+
+    _ = try browser.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "garden"));
+
+    _ = try browser.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "garden"));
+
+    TestClock.now = 2_000;
+    _ = try browser.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
 }
