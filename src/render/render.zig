@@ -383,6 +383,28 @@ pub const BorderStyle = enum {
     }
 };
 
+/// Drop shadow styling for boxed UI.
+pub const ShadowStyle = struct {
+    /// Horizontal offset from the box (positive draws to the right).
+    offset_x: u16 = 1,
+    /// Vertical offset from the box (positive draws downward).
+    offset_y: u16 = 1,
+    /// Shadow tint.
+    color: Color = Color.named(NamedColor.bright_black),
+    /// Use a softer shade character when true.
+    soft: bool = true,
+};
+
+/// Combined box style including border, fill, and optional shadow.
+pub const BoxStyle = struct {
+    border: BorderStyle = .single,
+    border_color: Color = Color.named(NamedColor.default),
+    background: Color = Color.named(NamedColor.default),
+    style: Style = Style{},
+    fill_style: Style = Style{},
+    shadow: ?ShadowStyle = null,
+};
+
 /// Terminal capabilities that may not be available on all terminals
 pub const TerminalCapabilities = struct {
     /// Support for RGB colors
@@ -713,6 +735,43 @@ pub const Renderer = struct {
         }
     }
 
+    /// Draw a styled box with optional fill and shadow.
+    pub fn drawStyledBox(self: *Renderer, x: u16, y: u16, width: u16, height: u16, box_style: BoxStyle) void {
+        if (width == 0 or height == 0) return;
+
+        // Fill background first so shadows sit underneath the border.
+        self.fillRect(x, y, width, height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+
+        if (box_style.shadow) |shadow| {
+            const shade: u21 = if (shadow.soft) '░' else '▒';
+
+            if (shadow.offset_x > 0) {
+                const sx: u32 = @as(u32, x) + @as(u32, width) + @as(u32, shadow.offset_x) - 1;
+                if (sx < self.back.width) {
+                    const y_start: u32 = @as(u32, y) + @as(u32, shadow.offset_y);
+                    if (y_start < self.back.height) {
+                        self.fillRect(@intCast(sx), @intCast(y_start), 1, height, shade, shadow.color, shadow.color, Style{});
+                    }
+                }
+            }
+
+            if (shadow.offset_y > 0) {
+                const sy: u32 = @as(u32, y) + @as(u32, height) + @as(u32, shadow.offset_y) - 1;
+                if (sy < self.back.height) {
+                    const start_x_u32: u32 = @as(u32, x) + @as(u32, shadow.offset_x);
+                    if (start_x_u32 < self.back.width) {
+                        const max_draw = @as(u32, self.back.width) - start_x_u32;
+                        const desired = @as(u32, width) + @as(u32, shadow.offset_x);
+                        const draw_width: u16 = @intCast(@min(max_draw, desired));
+                        self.fillRect(@intCast(start_x_u32), @intCast(sy), draw_width, 1, shade, shadow.color, shadow.color, Style{});
+                    }
+                }
+            }
+        }
+
+        self.drawBox(x, y, width, height, box_style.border, box_style.border_color, box_style.background, box_style.style);
+    }
+
     /// Draw a horizontal line
     pub fn drawHLine(self: *Renderer, x: u16, y: u16, width: u16, line_char: u21, fg: Color, bg: Color, style: Style) void {
         for (0..width) |i| {
@@ -901,4 +960,31 @@ test "renderer draws box outlines" {
     try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).char);
     try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).char);
     try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).char);
+}
+
+test "styled box paints drop shadow" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 12, 6);
+    defer renderer.deinit();
+
+    renderer.capabilities.unicode = true;
+    const style = BoxStyle{
+        .border = BorderStyle.rounded,
+        .border_color = Color.named(NamedColor.white),
+        .background = Color.named(NamedColor.black),
+        .shadow = ShadowStyle{
+            .offset_x = 1,
+            .offset_y = 1,
+            .color = Color.named(NamedColor.bright_black),
+            .soft = true,
+        },
+    };
+
+    renderer.drawStyledBox(1, 1, 6, 3, style);
+
+    const right_shadow = renderer.back.getCell(1 + 6, 1 + 1).*;
+    try std.testing.expectEqual(@as(u21, '░'), right_shadow.char);
+
+    const bottom_shadow = renderer.back.getCell(1 + 1, 1 + 3).*;
+    try std.testing.expectEqual(@as(u21, '░'), bottom_shadow.char);
 }
