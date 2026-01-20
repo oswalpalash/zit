@@ -788,10 +788,10 @@ pub const InputHandler = struct {
         }
     }
 
-    fn readByte(reader: *std.fs.File.Reader) !u8 {
+    fn readByte(reader: anytype) !u8 {
         var buf: [1]u8 = undefined;
-        const n = try reader.read(&buf);
-        if (n == 0) return error.EndOfStream;
+        const bytes_read = try reader.*.read(&buf);
+        if (bytes_read == 0) return error.EndOfStream;
         return buf[0];
     }
 
