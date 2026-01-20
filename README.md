@@ -17,6 +17,7 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
   - Lists
   - Popups, toasts, menu bars, and canvas primitives
 - **Input handling**: Keyboard and mouse event processing
+- **Typeahead navigation**: Incremental, case-insensitive jumping for lists, tables, and the file browser with configurable timeouts
 - **Event system**: Basic event handling for widgets
 - **Animations**: Reusable animator with easing and yoyo/repeat
 - **Accessibility**: Annotate widgets with roles and focus announcements
@@ -212,7 +213,7 @@ try app.registerAccessibleNode(.{
 
 ## Examples and benchmarks
 
-- Widget demos: `zig build notifications-example` (popups, toasts, menu bar, canvas) and existing `button-example` / `dashboard-example`.
+- Widget demos: `zig build notifications-example` (popups, toasts, menu bar, canvas), `button-example`, `dashboard-example`, plus new `table-example` and `file-browser-example` to try typeahead navigation.
 - Realistic screens: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Rendering benchmark: `zig build bench` runs `examples/benchmarks/render_bench.zig` to gauge draw throughput.
 
@@ -404,6 +405,16 @@ if (event) |e| {
         else => {},
     }
 }
+```
+
+### Typeahead navigation
+
+List, Table, and FileBrowser widgets accumulate printable keystrokes while focused to jump to the next matching row or entry. The buffer clears on Escape or after `search_timeout_ms` (900ms by default):
+
+```zig
+list.setTypeaheadTimeout(1_200);
+table.setTypeaheadTimeout(800);
+browser.resetTypeahead(); // helpful after directory changes
 ```
 
 ### Rendering
