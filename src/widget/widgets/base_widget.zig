@@ -26,6 +26,8 @@ pub const Widget = struct {
     enabled: bool = true,
     /// Widget ID for identification
     id: []const u8 = "",
+    /// Optional style class used by stylesheet helpers
+    style_class: ?[]const u8 = null,
     /// Parent widget, used primarily for modal dialogs and layout containment
     parent: ?*Widget = null,
 
@@ -103,6 +105,11 @@ pub const Widget = struct {
     /// Set widget ID
     pub fn setId(self: *Widget, id: []const u8) void {
         self.id = id;
+    }
+
+    /// Set widget style class for CSS-like styling
+    pub fn setClass(self: *Widget, class: ?[]const u8) void {
+        self.style_class = class;
     }
 
     /// Set parent widget
