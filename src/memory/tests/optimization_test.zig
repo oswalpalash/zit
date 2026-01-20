@@ -133,4 +133,4 @@ test "MemoryOptimizer pre-allocation" {
     stats = optimizer.getStats();
     try testing.expectEqual(@as(usize, 1), stats.cache_hits);
     try testing.expectEqual(@as(usize, 0), stats.cache_misses);
-} 
+}

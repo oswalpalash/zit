@@ -15,7 +15,9 @@ pub fn main() !void {
     try term.clear();
 
     // Display terminal information
-    const writer = std.io.getStdOut().writer();
+    var stdout_file = std.fs.File.stdout();
+    var stdout_buffer: [512]u8 = undefined;
+    var writer = stdout_file.writer(&stdout_buffer).interface;
     try writer.print("Terminal size: {d}x{d}\n", .{ term.width, term.height });
     try writer.print("256 colors support: {}\n", .{term.supports256Colors()});
     try writer.print("True color support: {}\n\n", .{term.supportsTrueColor()});
@@ -76,9 +78,15 @@ pub fn main() !void {
     try writer.writeAll("Press any key to see its ASCII value (press 'q' to quit)");
 
     // Input loop
+    var stdin_file = std.fs.File.stdin();
+    var stdin_buffer: [4]u8 = undefined;
+    var stdin = stdin_file.reader(&stdin_buffer);
+
     while (true) {
-        const stdin = std.io.getStdIn();
-        const byte = stdin.reader().readByte() catch continue;
+        var byte_buf: [1]u8 = undefined;
+        const read = stdin.read(&byte_buf) catch continue;
+        if (read == 0) continue;
+        const byte = byte_buf[0];
 
         try term.moveCursor(0, term.height - 1);
         try writer.print("Key pressed: '{c}' (ASCII: {d})   ", .{ byte, byte });

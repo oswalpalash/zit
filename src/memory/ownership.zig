@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 
 pub const RefCounted = struct {
     const Self = @This();
-    
+
     ref_count: usize,
     mutex: std.Thread.Mutex,
 
@@ -36,7 +36,7 @@ pub const RefCounted = struct {
 
 pub const WeakRef = struct {
     const Self = @This();
-    
+
     ptr: ?*anyopaque,
     cleanup_fn: *const fn (*anyopaque) void,
 
@@ -61,7 +61,7 @@ pub const WeakRef = struct {
 
 pub const WidgetNode = struct {
     const Self = @This();
-    
+
     parent: ?*Self,
     first_child: ?*Self,
     last_child: ?*Self,
@@ -79,7 +79,7 @@ pub const WidgetNode = struct {
             .next_sibling = null,
             .prev_sibling = null,
             .ref_count = RefCounted.init(),
-            .weak_refs = std.ArrayList(WeakRef).init(allocator),
+            .weak_refs = std.ArrayList(WeakRef).empty,
             .allocator = allocator,
         };
     }
@@ -89,7 +89,7 @@ pub const WidgetNode = struct {
         for (self.weak_refs.items) |*weak_ref| {
             weak_ref.clear();
         }
-        self.weak_refs.deinit();
+        self.weak_refs.deinit(self.allocator);
 
         // Detach from parent
         if (self.parent) |parent| {
@@ -162,7 +162,7 @@ pub const WidgetNode = struct {
     }
 
     pub fn addWeakRef(self: *Self, weak_ref: WeakRef) !void {
-        try self.weak_refs.append(weak_ref);
+        try self.weak_refs.append(self.allocator, weak_ref);
     }
 
     pub fn removeWeakRef(self: *Self, ptr: *anyopaque) void {
@@ -173,4 +173,4 @@ pub const WidgetNode = struct {
             }
         }
     }
-}; 
+};

@@ -240,10 +240,7 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, terminal.width, terminal.height, ' ',
-            render.Color{ .named_color = render.NamedColor.white },
-            render.Color{ .named_color = render.NamedColor.black },
-            render.Style{});
+        renderer.fillRect(0, 0, terminal.width, terminal.height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.black }, render.Style{});
 
         // Layout and render the root container
         try root.widget.layout(layout.Rect.init(0, 0, terminal.width, terminal.height));
@@ -277,4 +274,4 @@ pub fn main() !void {
     // Clean up
     try terminal.clear();
     try terminal.moveCursor(0, 0);
-} 
+}

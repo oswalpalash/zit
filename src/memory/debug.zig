@@ -67,7 +67,7 @@ pub const MemoryDebugger = struct {
         defer self.mutex.unlock();
 
         const ptr = self.parent_allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
-        
+
         var stack_trace: ?[]usize = null;
         if (builtin.mode == .Debug) {
             var trace_buffer: [32]usize = undefined;
@@ -100,7 +100,7 @@ pub const MemoryDebugger = struct {
 
         const old_size = if (self.allocations.get(buf.ptr)) |alloc| alloc.size else 0;
         const success = self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
-        
+
         if (success) {
             if (self.allocations.getPtr(buf.ptr)) |alloc| {
                 self.stats.current_memory_usage -= alloc.size;
@@ -170,4 +170,4 @@ pub const MemoryDebugger = struct {
             }
         }
     }
-}; 
+};

@@ -49,7 +49,7 @@ pub const ArenaAllocator = struct {
     pub fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
         _ = ret_addr;
-        
+
         if (self.is_thread_safe) {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -75,7 +75,7 @@ pub const ArenaAllocator = struct {
         const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
         _ = buf_align;
         _ = ret_addr;
-        
+
         if (self.is_thread_safe) {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -125,4 +125,4 @@ pub const ArenaAllocator = struct {
         _ = ret_addr;
         return null;
     }
-}; 
+};

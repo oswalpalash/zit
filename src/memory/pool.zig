@@ -82,7 +82,7 @@ pub const PoolAllocator = struct {
 
     pub fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self = @as(*PoolAllocator, @ptrCast(@alignCast(ctx)));
-        
+
         if (len > self.node_size) {
             return self.parent_allocator.rawAlloc(len, ptr_align, ret_addr);
         }
@@ -108,7 +108,7 @@ pub const PoolAllocator = struct {
 
     pub fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self = @as(*PoolAllocator, @ptrCast(@alignCast(ctx)));
-        
+
         if (new_len > self.node_size) {
             // If new size is larger than block size, fall back to parent allocator
             return self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
@@ -165,4 +165,4 @@ pub const PoolAllocator = struct {
         _ = ret_addr;
         return null;
     }
-}; 
+};

@@ -101,4 +101,4 @@ test "MemoryManager thread safety" {
     const stats = memory_manager.getStats();
     try testing.expectEqual(@as(usize, 0), stats.arena_usage);
     try testing.expectEqual(@as(usize, 0), stats.widget_pool_stats.allocated_nodes);
-} 
+}
