@@ -326,6 +326,17 @@ pub const FlexChild = struct {
 
 /// Flex layout manager
 pub const FlexLayout = struct {
+    const LayoutMetrics = struct {
+        used_main: u32,
+        max_cross: u16,
+        gap_total: u32,
+    };
+
+    const ChildMeasure = struct {
+        main_with_margin: u16,
+        cross_with_margin: u16,
+    };
+
     /// Base layout
     base: Layout,
     /// Direction of the flex layout
@@ -419,209 +430,21 @@ pub const FlexLayout = struct {
                 0,
         };
 
-        // First pass: measure non-flex children and calculate total flex factor
-        var total_flex: u16 = 0;
-        var total_main_size: u16 = 0;
-        var max_cross_size: u16 = 0;
+        const is_row = self.direction == .row;
+        const available_main = if (is_row) padded_constraints.max_width else padded_constraints.max_height;
+        const available_cross = if (is_row) padded_constraints.max_height else padded_constraints.max_width;
 
-        // Calculate total gap size
-        const total_gap_size = if (self.children.items.len > 1)
-            (self.children.items.len - 1) * self.gap_size
+        const metrics = self.measureChildren(available_main, available_cross);
+
+        const used_main_clamped: u16 = if (metrics.used_main > @as(u32, available_main))
+            available_main
         else
-            0;
+            @intCast(metrics.used_main);
 
-        // First pass: measure non-flex children
-        for (self.children.items) |*child| {
-            if (child.flex == 0) {
-                // Non-flex child: measure with unbounded constraints in flex direction
-                const child_constraints = if (self.direction == .row)
-                    Constraints{
-                        .min_width = 0,
-                        .max_width = padded_constraints.max_width,
-                        .min_height = padded_constraints.min_height,
-                        .max_height = padded_constraints.max_height,
-                    }
-                else
-                    Constraints{
-                        .min_width = padded_constraints.min_width,
-                        .max_width = padded_constraints.max_width,
-                        .min_height = 0,
-                        .max_height = padded_constraints.max_height,
-                    };
-
-                // Account for margin in constraints
-                const margin_adjusted_constraints = Constraints{
-                    .min_width = if (child_constraints.min_width > child.margin_insets.left + child.margin_insets.right)
-                        child_constraints.min_width - child.margin_insets.left - child.margin_insets.right
-                    else
-                        0,
-                    .max_width = if (child_constraints.max_width > child.margin_insets.left + child.margin_insets.right)
-                        child_constraints.max_width - child.margin_insets.left - child.margin_insets.right
-                    else
-                        0,
-                    .min_height = if (child_constraints.min_height > child.margin_insets.top + child.margin_insets.bottom)
-                        child_constraints.min_height - child.margin_insets.top - child.margin_insets.bottom
-                    else
-                        0,
-                    .max_height = if (child_constraints.max_height > child.margin_insets.top + child.margin_insets.bottom)
-                        child_constraints.max_height - child.margin_insets.top - child.margin_insets.bottom
-                    else
-                        0,
-                };
-
-                // Measure the child
-                const size = child.element.layout(margin_adjusted_constraints);
-                child.cached_size = size;
-
-                // Update total sizes
-                if (self.direction == .row) {
-                    total_main_size += size.width + child.margin_insets.left + child.margin_insets.right;
-                    max_cross_size = @max(max_cross_size, size.height + child.margin_insets.top + child.margin_insets.bottom);
-                } else {
-                    total_main_size += size.height + child.margin_insets.top + child.margin_insets.bottom;
-                    max_cross_size = @max(max_cross_size, size.width + child.margin_insets.left + child.margin_insets.right);
-                }
-            } else {
-                total_flex += child.flex;
-            }
-        }
-
-        // Calculate remaining space for flex children
-        const main_axis_size = if (self.direction == .row)
-            padded_constraints.max_width
+        const content_size = if (is_row)
+            Size.init(used_main_clamped, @min(metrics.max_cross, available_cross))
         else
-            padded_constraints.max_height;
-
-        const remaining_space = if (main_axis_size > total_main_size + total_gap_size)
-            main_axis_size - total_main_size - total_gap_size
-        else
-            0;
-
-        // Second pass: Layout flex children
-        if (total_flex > 0) {
-            const flex_unit_size: u16 = @intCast(remaining_space / total_flex);
-
-            for (self.children.items) |*child| {
-                if (child.flex > 0) {
-                    // Calculate main size for this child
-                    const main_size = flex_unit_size * child.flex;
-
-                    // Create constraints for flex child based on direction
-                    const child_constraints = if (self.direction == .row)
-                        Constraints{
-                            .min_width = main_size,
-                            .max_width = main_size,
-                            .min_height = 0,
-                            .max_height = padded_constraints.max_height,
-                        }
-                    else
-                        Constraints{
-                            .min_width = 0,
-                            .max_width = padded_constraints.max_width,
-                            .min_height = main_size,
-                            .max_height = main_size,
-                        };
-
-                    // Account for margin in constraints
-                    const margin_adjusted_constraints = Constraints{
-                        .min_width = if (child_constraints.min_width > child.margin_insets.left + child.margin_insets.right)
-                            child_constraints.min_width - child.margin_insets.left - child.margin_insets.right
-                        else
-                            0,
-                        .max_width = if (child_constraints.max_width > child.margin_insets.left + child.margin_insets.right)
-                            child_constraints.max_width - child.margin_insets.left - child.margin_insets.right
-                        else
-                            0,
-                        .min_height = if (child_constraints.min_height > child.margin_insets.top + child.margin_insets.bottom)
-                            child_constraints.min_height - child.margin_insets.top - child.margin_insets.bottom
-                        else
-                            0,
-                        .max_height = if (child_constraints.max_height > child.margin_insets.top + child.margin_insets.bottom)
-                            child_constraints.max_height - child.margin_insets.top - child.margin_insets.bottom
-                        else
-                            0,
-                    };
-
-                    // Layout the child
-                    const size = child.element.layout(margin_adjusted_constraints);
-                    child.cached_size = size;
-
-                    // Update cross size
-                    if (self.direction == .row) {
-                        child.cached_size.width = size.width + child.margin_insets.left + child.margin_insets.right;
-                        child.cached_size.height = size.height + child.margin_insets.top + child.margin_insets.bottom;
-                    } else {
-                        child.cached_size.width = size.height + child.margin_insets.top + child.margin_insets.bottom;
-                        child.cached_size.height = size.width + child.margin_insets.left + child.margin_insets.right;
-                    }
-
-                    max_cross_size = @max(max_cross_size, child.cached_size.height);
-                }
-            }
-        }
-
-        var current_position: u16 = 0;
-
-        // Apply main axis alignment
-        var offset: u16 = 0;
-        if (self.main_alignment != .start) {
-            var used_space = total_main_size + total_gap_size;
-            if (total_flex > 0) {
-                used_space += remaining_space;
-            }
-
-            const free_space = if (main_axis_size > used_space) main_axis_size - used_space else 0;
-
-            switch (self.main_alignment) {
-                .start => offset = 0,
-                .center => offset = @intCast(free_space / 2),
-                .end => offset = @intCast(free_space),
-                .space_between => offset = 0,
-                .space_evenly => offset = 0,
-                .space_around => offset = 0,
-            }
-        }
-
-        current_position = offset;
-
-        // Layout the children
-        for (self.children.items) |*child| {
-            var child_main_size: u16 = 0;
-            var child_cross_size: u16 = 0;
-
-            if (child.flex > 0) {
-                // Use cached size for flex child
-                child_main_size = child.cached_size.width + child.margin_insets.left + child.margin_insets.right;
-                child_cross_size = child.cached_size.height + child.margin_insets.top + child.margin_insets.bottom;
-            } else {
-                // Use cached size for non-flex child
-                if (self.direction == .row) {
-                    child_main_size = child.cached_size.width + child.margin_insets.left + child.margin_insets.right;
-                    child_cross_size = child.cached_size.height + child.margin_insets.top + child.margin_insets.bottom;
-                } else {
-                    child_main_size = child.cached_size.height + child.margin_insets.top + child.margin_insets.bottom;
-                    child_cross_size = child.cached_size.width + child.margin_insets.left + child.margin_insets.right;
-                }
-            }
-
-            // Move to next position
-            current_position += child_main_size;
-            if (self.children.items.len > 1) {
-                current_position += self.gap_size;
-            }
-        }
-
-        // Return final size including padding
-        const content_size = if (self.direction == .row)
-            Size{
-                .width = @intCast(total_main_size + remaining_space + total_gap_size),
-                .height = max_cross_size,
-            }
-        else
-            Size{
-                .width = max_cross_size,
-                .height = @intCast(total_main_size + remaining_space + total_gap_size),
-            };
+            Size.init(@min(metrics.max_cross, available_cross), used_main_clamped);
 
         return Size{
             .width = content_size.width + self.padding_insets.left + self.padding_insets.right,
@@ -645,192 +468,211 @@ pub const FlexLayout = struct {
             return;
         }
 
-        // Calculate layout again to get positions
-        _ = self.calculateLayout(Constraints.tight(rect.width, rect.height));
-
-        // Calculate layout information
         const is_row = self.direction == .row;
-        const main_axis_size = if (is_row) padded_rect.width else padded_rect.height;
-        const cross_axis_size = if (is_row) padded_rect.height else padded_rect.width;
+        const available_main = if (is_row) padded_rect.width else padded_rect.height;
+        const available_cross = if (is_row) padded_rect.height else padded_rect.width;
 
-        // First pass: measure non-flex children and calculate total flex factor
-        var total_flex: u16 = 0;
-        var total_main_size: u16 = 0;
-        var max_cross_size: u16 = 0;
+        const metrics = self.measureChildren(available_main, available_cross);
+        const child_count = self.children.items.len;
+        if (child_count == 0) return;
 
-        // Calculate total gap size
-        const total_gap_size = if (self.children.items.len > 1)
-            (self.children.items.len - 1) * self.gap_size
-        else
-            0;
+        const main_limit_u32: u32 = available_main;
+        const free_space: u32 = if (metrics.used_main >= main_limit_u32) 0 else main_limit_u32 - metrics.used_main;
 
-        // First pass: measure non-flex children
-        for (self.children.items) |child| {
-            if (child.flex == 0) {
-                if (is_row) {
-                    total_main_size += child.cached_size.width + child.margin_insets.left + child.margin_insets.right;
-                    max_cross_size = @max(max_cross_size, child.cached_size.height + child.margin_insets.top + child.margin_insets.bottom);
-                } else {
-                    total_main_size += child.cached_size.height + child.margin_insets.top + child.margin_insets.bottom;
-                    max_cross_size = @max(max_cross_size, child.cached_size.width + child.margin_insets.left + child.margin_insets.right);
-                }
-            } else {
-                total_flex += child.flex;
-            }
+        var gap_value: u16 = self.gap_size;
+        var start_offset: u16 = 0;
+
+        switch (self.main_alignment) {
+            .start => {},
+            .center => start_offset = @intCast(@min(free_space / 2, @as(u32, std.math.maxInt(u16)))),
+            .end => start_offset = @intCast(@min(free_space, @as(u32, std.math.maxInt(u16)))),
+            .space_between => if (child_count > 1) {
+                const extra_gap = free_space / @as(u32, child_count - 1);
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+            },
+            .space_around => if (child_count > 0) {
+                const extra_gap = free_space / @as(u32, child_count);
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+                start_offset = @intCast(@min(@divFloor(@as(u32, gap_value), 2), @as(u32, std.math.maxInt(u16))));
+            },
+            .space_evenly => if (child_count > 0) {
+                const extra_gap = free_space / @as(u32, child_count + 1);
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+                start_offset = gap_value;
+            },
         }
 
-        // Calculate remaining space for flex children
-        const remaining_space = if (main_axis_size > total_main_size + total_gap_size)
-            main_axis_size - total_main_size - total_gap_size
-        else
-            0;
+        var current_position: u32 = start_offset;
+        const main_origin: u32 = if (is_row) padded_rect.x else padded_rect.y;
+        const cross_origin: u32 = if (is_row) padded_rect.y else padded_rect.x;
 
-        // Second pass: Layout flex children
-        if (total_flex > 0) {
-            const flex_unit_size: u16 = @intCast(remaining_space / total_flex);
+        for (self.children.items, 0..) |*child, idx| {
+            const margin_main_before: u16 = if (is_row) child.margin_insets.left else child.margin_insets.top;
+            const margin_main_after: u16 = if (is_row) child.margin_insets.right else child.margin_insets.bottom;
+            const margin_cross_before: u16 = if (is_row) child.margin_insets.top else child.margin_insets.left;
+            const margin_cross_after: u16 = if (is_row) child.margin_insets.bottom else child.margin_insets.right;
 
-            for (self.children.items) |*child| {
-                if (child.flex > 0) {
-                    // Calculate main size for this child
-                    const main_size = flex_unit_size * child.flex;
+            const child_main_size: u16 = if (is_row) child.cached_size.width else child.cached_size.height;
+            const child_cross_size: u16 = if (is_row) child.cached_size.height else child.cached_size.width;
 
-                    // Create constraints for flex child based on direction
-                    const child_constraints = if (self.direction == .row)
-                        Constraints{
-                            .min_width = main_size,
-                            .max_width = main_size,
-                            .min_height = 0,
-                            .max_height = padded_rect.height,
-                        }
-                    else
-                        Constraints{
-                            .min_width = 0,
-                            .max_width = padded_rect.width,
-                            .min_height = main_size,
-                            .max_height = main_size,
-                        };
+            const cross_with_margin: u32 = @as(u32, child_cross_size) + margin_cross_before + margin_cross_after;
+            const cross_free_space: u32 = if (available_cross > cross_with_margin)
+                available_cross - cross_with_margin
+            else
+                0;
 
-                    // Account for margin in constraints
-                    const margin_adjusted_constraints = Constraints{
-                        .min_width = if (child_constraints.min_width > child.margin_insets.left + child.margin_insets.right)
-                            child_constraints.min_width - child.margin_insets.left - child.margin_insets.right
-                        else
-                            0,
-                        .max_width = if (child_constraints.max_width > child.margin_insets.left + child.margin_insets.right)
-                            child_constraints.max_width - child.margin_insets.left - child.margin_insets.right
-                        else
-                            0,
-                        .min_height = if (child_constraints.min_height > child.margin_insets.top + child.margin_insets.bottom)
-                            child_constraints.min_height - child.margin_insets.top - child.margin_insets.bottom
-                        else
-                            0,
-                        .max_height = if (child_constraints.max_height > child.margin_insets.top + child.margin_insets.bottom)
-                            child_constraints.max_height - child.margin_insets.top - child.margin_insets.bottom
-                        else
-                            0,
-                    };
-
-                    // Layout the child
-                    const size = child.element.layout(margin_adjusted_constraints);
-                    child.cached_size = size;
-
-                    // Update cross size
-                    if (self.direction == .row) {
-                        child.cached_size.width = size.width + child.margin_insets.left + child.margin_insets.right;
-                        child.cached_size.height = size.height + child.margin_insets.top + child.margin_insets.bottom;
-                    } else {
-                        child.cached_size.width = size.height + child.margin_insets.top + child.margin_insets.bottom;
-                        child.cached_size.height = size.width + child.margin_insets.left + child.margin_insets.right;
-                    }
-
-                    max_cross_size = @max(max_cross_size, child.cached_size.height);
-                }
-            }
-        }
-
-        var current_position: u16 = 0;
-
-        // Apply main axis alignment
-        var offset: u16 = 0;
-        if (self.main_alignment != .start) {
-            var used_space = total_main_size + total_gap_size;
-            if (total_flex > 0) {
-                used_space += remaining_space;
-            }
-
-            const free_space = if (main_axis_size > used_space) main_axis_size - used_space else 0;
-
-            switch (self.main_alignment) {
-                .start => offset = 0,
-                .center => offset = @intCast(free_space / 2),
-                .end => offset = @intCast(free_space),
-                .space_between => offset = 0,
-                .space_evenly => offset = 0,
-                .space_around => offset = 0,
-            }
-        }
-
-        current_position = offset;
-
-        // Render each child
-        for (self.children.items) |child| {
-            var child_main_size: u16 = 0;
-            var child_cross_size: u16 = 0;
-
-            // Get child size
-            if (is_row) {
-                child_main_size = child.cached_size.width;
-                child_cross_size = child.cached_size.height;
-            } else {
-                child_main_size = child.cached_size.height;
-                child_cross_size = child.cached_size.width;
-            }
-
-            // Calculate cross axis position (alignment)
-            const cross_position: u16 = 0;
-            const alignment = child.cross_alignment orelse self.cross_alignment;
-
-            // Calculate cross offset based on alignment
             var cross_offset: u16 = 0;
-            const cross_free_space = if (cross_axis_size > child_cross_size) cross_axis_size - child_cross_size else 0;
-
+            const alignment = child.cross_alignment orelse self.cross_alignment;
             switch (alignment) {
-                .start => cross_offset = 0,
-                .center => cross_offset = @intCast(cross_free_space / 2),
-                .end => cross_offset = @intCast(cross_free_space),
-                .space_between, .space_around, .space_evenly => cross_offset = 0,
+                .start => {},
+                .center => cross_offset = @intCast(@min(cross_free_space / 2, @as(u32, std.math.maxInt(u16)))),
+                .end => cross_offset = @intCast(@min(cross_free_space, @as(u32, std.math.maxInt(u16)))),
+                .space_between, .space_around, .space_evenly => {},
             }
 
-            // Calculate child rect
+            const pos_main_u32 = main_origin + current_position + margin_main_before;
+            const pos_cross_u32 = cross_origin + cross_offset + margin_cross_before;
+
             const child_rect = if (is_row)
                 Rect{
-                    .x = padded_rect.x + current_position + child.margin_insets.left,
-                    .y = padded_rect.y + cross_position + child.margin_insets.top,
+                    .x = @intCast(@min(pos_main_u32, @as(u32, std.math.maxInt(u16)))),
+                    .y = @intCast(@min(pos_cross_u32, @as(u32, std.math.maxInt(u16)))),
                     .width = child_main_size,
                     .height = child_cross_size,
                 }
             else
                 Rect{
-                    .x = padded_rect.x + cross_position + child.margin_insets.left,
-                    .y = padded_rect.y + current_position + child.margin_insets.top,
+                    .x = @intCast(@min(pos_cross_u32, @as(u32, std.math.maxInt(u16)))),
+                    .y = @intCast(@min(pos_main_u32, @as(u32, std.math.maxInt(u16)))),
                     .width = child_cross_size,
                     .height = child_main_size,
                 };
 
-            // Render child
             child.element.render(renderer, child_rect);
 
-            // Move to next position
-            if (is_row) {
-                current_position += child_main_size + child.margin_insets.left + child.margin_insets.right;
-            } else {
-                current_position += child_main_size + child.margin_insets.top + child.margin_insets.bottom;
-            }
+            current_position += margin_main_before;
+            current_position += child_main_size;
+            current_position += margin_main_after;
 
-            if (self.children.items.len > 1) {
-                current_position += self.gap_size;
+            if (idx + 1 < child_count) {
+                current_position += gap_value;
             }
         }
+    }
+
+    fn measureChildren(self: *FlexLayout, main_limit: u16, cross_limit: u16) LayoutMetrics {
+        const child_count = self.children.items.len;
+        const base_gap_total: u32 = if (child_count > 1)
+            @as(u32, (child_count - 1)) * @as(u32, self.gap_size)
+        else
+            0;
+
+        var total_flex: u16 = 0;
+        var used_main: u32 = 0;
+        var max_cross: u16 = 0;
+
+        for (self.children.items) |*child| {
+            if (child.flex == 0) {
+                const measure = self.measureChild(child, main_limit, cross_limit, null);
+                used_main += measure.main_with_margin;
+                max_cross = @max(max_cross, measure.cross_with_margin);
+            } else {
+                total_flex += child.flex;
+            }
+        }
+
+        const main_limit_u32: u32 = main_limit;
+        const remaining_space: u32 = if (main_limit_u32 > used_main + base_gap_total)
+            main_limit_u32 - used_main - base_gap_total
+        else
+            0;
+
+        const flex_unit: u16 = if (total_flex > 0) @intCast(remaining_space / total_flex) else 0;
+        var flex_remainder: u16 = if (total_flex > 0) @intCast(remaining_space % total_flex) else 0;
+
+        for (self.children.items) |*child| {
+            if (child.flex == 0) continue;
+
+            var assigned_main_u32: u32 = @as(u32, flex_unit) * child.flex;
+            if (flex_remainder > 0) {
+                assigned_main_u32 += 1;
+                flex_remainder -= 1;
+            }
+
+            const assigned_main: u16 = if (assigned_main_u32 > std.math.maxInt(u16))
+                std.math.maxInt(u16)
+            else
+                @intCast(assigned_main_u32);
+
+            const measure = self.measureChild(child, main_limit, cross_limit, assigned_main);
+            used_main += measure.main_with_margin;
+            max_cross = @max(max_cross, measure.cross_with_margin);
+        }
+
+        return LayoutMetrics{
+            .used_main = used_main + base_gap_total,
+            .max_cross = max_cross,
+            .gap_total = base_gap_total,
+        };
+    }
+
+    fn measureChild(self: *FlexLayout, child: *FlexChild, main_limit: u16, cross_limit: u16, forced_main: ?u16) ChildMeasure {
+        const margin_main_before: u16 = if (self.direction == .row) child.margin_insets.left else child.margin_insets.top;
+        const margin_main_after: u16 = if (self.direction == .row) child.margin_insets.right else child.margin_insets.bottom;
+        const margin_cross_before: u16 = if (self.direction == .row) child.margin_insets.top else child.margin_insets.left;
+        const margin_cross_after: u16 = if (self.direction == .row) child.margin_insets.bottom else child.margin_insets.right;
+
+        const content_main_limit = trimAvailable(main_limit, margin_main_before + margin_main_after);
+        const content_cross_limit = trimAvailable(cross_limit, margin_cross_before + margin_cross_after);
+
+        var child_constraints = if (self.direction == .row)
+            Constraints{
+                .min_width = 0,
+                .max_width = content_main_limit,
+                .min_height = 0,
+                .max_height = content_cross_limit,
+            }
+        else
+            Constraints{
+                .min_width = 0,
+                .max_width = content_cross_limit,
+                .min_height = 0,
+                .max_height = content_main_limit,
+            };
+
+        if (forced_main) |target| {
+            const clamped = if (target > content_main_limit) content_main_limit else target;
+            if (self.direction == .row) {
+                child_constraints.min_width = clamped;
+                child_constraints.max_width = clamped;
+            } else {
+                child_constraints.min_height = clamped;
+                child_constraints.max_height = clamped;
+            }
+        }
+
+        const size = child.element.layout(child_constraints);
+        child.cached_size = size;
+
+        const content_main = if (self.direction == .row) size.width else size.height;
+        const content_cross = if (self.direction == .row) size.height else size.width;
+
+        return ChildMeasure{
+            .main_with_margin = saturatingAdd(content_main, margin_main_before + margin_main_after),
+            .cross_with_margin = saturatingAdd(content_cross, margin_cross_before + margin_cross_after),
+        };
+    }
+
+    fn trimAvailable(value: u16, margin: u16) u16 {
+        return if (value > margin) value - margin else 0;
+    }
+
+    fn saturatingAdd(a: u16, b: u16) u16 {
+        const sum: u32 = @as(u32, a) + @as(u32, b);
+        if (sum > std.math.maxInt(u16)) {
+            return std.math.maxInt(u16);
+        }
+        return @intCast(sum);
     }
 
     /// Create a layout element
@@ -1324,6 +1166,85 @@ pub const GridLayout = struct {
         self.rows = rows;
     }
 };
+
+test "flex layout distributes space and aligns children" {
+    const allocator = std.testing.allocator;
+
+    const Record = struct {
+        rect: Rect = Rect.init(0, 0, 0, 0),
+    };
+
+    const DummyElement = struct {
+        const Self = @This();
+        size: Size,
+        record: *Record,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            const width = @min(self.size.width, constraints.max_width);
+            const height = @min(self.size.height, constraints.max_height);
+            return Size.init(width, height);
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.record.rect = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = DummyElement.layout,
+                .renderFn = DummyElement.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+    _ = layout.gap(1).crossAlignment(.center).mainAlignment(.space_between);
+
+    var rec1 = Record{};
+    var child1 = DummyElement{ .size = Size.init(4, 2), .record = &rec1 };
+    try layout.addChild(FlexChild.init(child1.asElement(), 0).margin(EdgeInsets{
+        .top = 0,
+        .right = 1,
+        .bottom = 0,
+        .left = 1,
+    }));
+
+    var rec2 = Record{};
+    var child2 = DummyElement{ .size = Size.init(3, 3), .record = &rec2 };
+    try layout.addChild(FlexChild.init(child2.asElement(), 1));
+
+    var rec3 = Record{};
+    var child3 = DummyElement{ .size = Size.init(3, 3), .record = &rec3 };
+    try layout.addChild(FlexChild.init(child3.asElement(), 1));
+
+    const reported_size = layout.calculateLayout(Constraints.tight(30, 5));
+    try std.testing.expectEqual(@as(u16, 30), reported_size.width);
+    try std.testing.expectEqual(@as(u16, 3), reported_size.height);
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 40, 10);
+    defer renderer.deinit();
+
+    layout.renderLayout(&renderer, Rect.init(0, 0, 30, 5));
+
+    try std.testing.expectEqual(@as(u16, 1), rec1.rect.x);
+    try std.testing.expectEqual(@as(u16, 1), rec1.rect.y);
+    try std.testing.expectEqual(@as(u16, 4), rec1.rect.width);
+    try std.testing.expectEqual(@as(u16, 2), rec1.rect.height);
+
+    try std.testing.expectEqual(@as(u16, 7), rec2.rect.x);
+    try std.testing.expectEqual(@as(u16, 1), rec2.rect.y);
+    try std.testing.expectEqual(@as(u16, 11), rec2.rect.width);
+    try std.testing.expectEqual(@as(u16, 3), rec2.rect.height);
+
+    try std.testing.expectEqual(@as(u16, 19), rec3.rect.x);
+    try std.testing.expectEqual(@as(u16, 1), rec3.rect.y);
+    try std.testing.expectEqual(@as(u16, 11), rec3.rect.width);
+    try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
+}
 
 /// Constraints for positioning a child within a constraint layout
 pub const ConstraintSpec = struct {
