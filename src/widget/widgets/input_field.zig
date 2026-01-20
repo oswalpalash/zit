@@ -34,6 +34,8 @@ pub const InputField = struct {
     show_border: bool = true,
     /// Placeholder text
     placeholder: []const u8 = "",
+    /// Whether placeholder memory is owned by this widget
+    placeholder_owned: bool = false,
     /// On change callback
     on_change: ?*const fn ([]const u8) void = null,
     /// On submit callback
@@ -69,7 +71,7 @@ pub const InputField = struct {
 
     /// Clean up input field resources
     pub fn deinit(self: *InputField) void {
-        if (self.placeholder.len > 0) {
+        if (self.placeholder_owned and self.placeholder.len > 0) {
             self.allocator.free(self.placeholder);
         }
         self.allocator.free(self.text);
@@ -98,9 +100,20 @@ pub const InputField = struct {
         return self.text[0..len];
     }
 
-    /// Set the placeholder text
+    /// Set the placeholder text. Existing owned placeholder memory is released before storing the new value.
     pub fn setPlaceholder(self: *InputField, placeholder: []const u8) !void {
+        if (self.placeholder_owned and self.placeholder.len > 0) {
+            self.allocator.free(self.placeholder);
+        }
+
+        if (placeholder.len == 0) {
+            self.placeholder = "";
+            self.placeholder_owned = false;
+            return;
+        }
+
         self.placeholder = try self.allocator.dupe(u8, placeholder);
+        self.placeholder_owned = true;
     }
 
     /// Set the border style
@@ -339,3 +352,13 @@ pub const InputField = struct {
         return self.widget.enabled;
     }
 };
+
+test "input field placeholder can be replaced safely" {
+    const alloc = std.testing.allocator;
+    var field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    try field.setPlaceholder("first");
+    try field.setPlaceholder("second");
+    try std.testing.expectEqualStrings("second", field.placeholder);
+}

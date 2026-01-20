@@ -4,7 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 
-/// List widget for displaying and selecting items
+/// List widget for displaying and selecting items with incremental typeahead search
 pub const List = struct {
     /// Base widget
     widget: base.Widget,
@@ -36,6 +36,16 @@ pub const List = struct {
     allocator: std.mem.Allocator,
     /// Border style
     border: render.BorderStyle = .none,
+    /// Rolling buffer for incremental search
+    search_buffer: [64]u8 = undefined,
+    /// Current length of the incremental search query
+    search_len: usize = 0,
+    /// Timestamp of the last search keystroke in milliseconds
+    last_search_ms: ?i64 = null,
+    /// How long to keep appending to the search buffer (in milliseconds)
+    search_timeout_ms: u64 = 900,
+    /// Clock source (primarily overridden in tests)
+    clock: *const fn () i64 = std.time.milliTimestamp,
 
     /// Virtual method table for List
     pub const vtable = base.Widget.VTable{
@@ -102,6 +112,7 @@ pub const List = struct {
         }
         self.items.clearRetainingCapacity();
         self.setSelectedIndex(0);
+        self.resetTypeahead();
     }
 
     /// Set the selected item
@@ -165,6 +176,22 @@ pub const List = struct {
     /// Set the border style
     pub fn setBorder(self: *List, border: render.BorderStyle) void {
         self.border = border;
+    }
+
+    /// Configure how long to keep accumulating typeahead search input.
+    pub fn setTypeaheadTimeout(self: *List, timeout_ms: u64) void {
+        self.search_timeout_ms = timeout_ms;
+    }
+
+    /// Clear any buffered typeahead query.
+    pub fn resetTypeahead(self: *List) void {
+        self.search_len = 0;
+        self.last_search_ms = null;
+    }
+
+    /// Override the timing source used for typeahead (test-only hook).
+    pub fn setTypeaheadClock(self: *List, clock: *const fn () i64) void {
+        self.clock = clock;
     }
 
     /// Draw implementation for List
@@ -286,15 +313,18 @@ pub const List = struct {
                 if (self.selected_index < self.items.items.len - 1) {
                     self.setSelectedIndex(self.selected_index + 1);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 3) { // Up
                 if (self.selected_index > 0) {
                     self.setSelectedIndex(self.selected_index - 1);
                 }
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 6) { // Page down
                 const new_index = @min(self.selected_index + self.visible_items_count, self.items.items.len - 1);
                 self.setSelectedIndex(new_index);
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 5) { // Page up
                 const new_index = if (self.selected_index > self.visible_items_count)
@@ -302,22 +332,86 @@ pub const List = struct {
                 else
                     0;
                 self.setSelectedIndex(new_index);
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 7) { // Home
                 self.setSelectedIndex(0);
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == 8) { // End
                 self.setSelectedIndex(self.items.items.len - 1);
+                self.resetTypeahead();
                 return true;
             } else if (key_event.key == '\r' or key_event.key == '\n') { // Enter
                 if (self.on_item_activated != null) {
                     self.on_item_activated.?(self.selected_index);
                 }
+                self.resetTypeahead();
+                return true;
+            } else if (key_event.key == input.KeyCode.ESCAPE) {
+                self.resetTypeahead();
+                return false;
+            } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                if (self.handleTypeaheadKey(@as(u8, @intCast(key_event.key)))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn handleTypeaheadKey(self: *List, byte: u8) bool {
+        if (self.items.items.len == 0) {
+            return false;
+        }
+
+        const now = self.clock();
+        if (self.last_search_ms) |last| {
+            if (now < last or @as(u64, @intCast(now - last)) > self.search_timeout_ms) {
+                self.resetTypeahead();
+            }
+        }
+        self.last_search_ms = now;
+
+        if (self.search_len < self.search_buffer.len) {
+            self.search_buffer[self.search_len] = std.ascii.toLower(byte);
+            self.search_len += 1;
+        } else {
+            // Keep the most recent portion of the query to avoid unbounded growth.
+            std.mem.copyForwards(u8, self.search_buffer[0 .. self.search_buffer.len - 1], self.search_buffer[1..]);
+            self.search_buffer[self.search_buffer.len - 1] = std.ascii.toLower(byte);
+            self.search_len = self.search_buffer.len;
+        }
+
+        const needle = self.search_buffer[0..self.search_len];
+        if (needle.len == 0) return false;
+
+        const start = self.selected_index;
+        var i: usize = 0;
+        while (i < self.items.items.len) : (i += 1) {
+            const idx = (start + i) % self.items.items.len;
+            if (startsWithIgnoreCase(self.items.items[idx], needle)) {
+                self.setSelectedIndex(idx);
                 return true;
             }
         }
 
         return false;
+    }
+
+    fn startsWithIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+        if (needle.len == 0 or needle.len > haystack.len) {
+            return false;
+        }
+
+        var i: usize = 0;
+        while (i < needle.len) : (i += 1) {
+            if (std.ascii.toLower(haystack[i]) != needle[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// Layout implementation for List
@@ -354,3 +448,37 @@ pub const List = struct {
         return self.widget.enabled and self.items.items.len > 0;
     }
 };
+
+test "list typeahead search cycles through matches" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Garden");
+    try list.addItem("Gamma");
+    try list.addItem("Zzz");
+
+    list.widget.focused = true;
+    try list.widget.layout(layout_module.Rect.init(0, 0, 10, 4));
+
+    const TestClock = struct {
+        var now: i64 = 0;
+        fn tick() i64 {
+            return now;
+        }
+    };
+
+    list.setTypeaheadClock(TestClock.tick);
+    list.setTypeaheadTimeout(1_000);
+
+    _ = try list.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index); // Garden
+
+    _ = try list.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index); // "ga" still Garden
+
+    TestClock.now = 5_000; // Exceeds timeout, clears buffer.
+    _ = try list.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    try std.testing.expectEqual(@as(usize, 3), list.selected_index); // Zzz
+}
