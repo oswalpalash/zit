@@ -113,4 +113,4 @@ test "MemoryDebugger thread safety" {
     try testing.expectEqual(@as(usize, 0), stats.current_memory_usage);
     try testing.expectEqual(@as(usize, 100), stats.peak_memory_usage);
     try testing.expectEqual(@as(usize, 0), stats.leaked_allocations);
-} 
+}

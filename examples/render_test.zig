@@ -85,9 +85,9 @@ fn drawUI(renderer: *zit.render.Renderer) void {
     // Draw title
     const title = "Zit Rendering Test";
     const title_len = @as(u16, @intCast(title.len));
-    const title_x = if (width > title_len) 
+    const title_x = if (width > title_len)
         (width - title_len) / 2
-    else 
+    else
         0;
 
     renderer.drawStr(title_x, 0, title, zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.blue), zit.render.Style.init(true, false, false));

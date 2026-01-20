@@ -10,6 +10,9 @@ const std = @import("std");
 // Re-export the base Widget API
 pub const Widget = @import("widgets/base_widget.zig").Widget;
 pub const FocusDirection = @import("widgets/base_widget.zig").FocusDirection;
+pub const theme = @import("theme.zig");
+pub const Theme = @import("theme.zig").Theme;
+pub const ThemeRole = @import("theme.zig").ThemeRole;
 
 // Re-export widgets
 pub const Label = @import("widgets/label.zig").Label;
@@ -25,11 +28,15 @@ pub const ScrollContainer = @import("widgets/scroll_container.zig").ScrollContai
 pub const DropdownMenu = @import("widgets/dropdown_menu.zig").DropdownMenu;
 pub const Table = @import("widgets/table.zig").Table;
 pub const Modal = @import("widgets/modal.zig").Modal;
+pub const TreeView = @import("widgets/tree_view.zig").TreeView;
+pub const Sparkline = @import("widgets/sparkline.zig").Sparkline;
+pub const Gauge = @import("widgets/gauge.zig").Gauge;
+pub const GaugeOrientation = @import("widgets/gauge.zig").GaugeOrientation;
+pub const SplitPane = @import("widgets/split_pane.zig").SplitPane;
+pub const SplitOrientation = @import("widgets/split_pane.zig").SplitOrientation;
 
 // For when a new file is needed
-pub usingnamespace struct {
-    pub fn _placeholder() void {}
-};
+pub const _placeholder = struct {};
 
 pub const BaseWidget = @import("widgets/base_widget.zig").Widget;
 pub const ScrollOrientation = @import("widgets/scrollbar.zig").ScrollOrientation;
@@ -40,9 +47,7 @@ pub const ProgressDirection = @import("widgets/progress_bar.zig").ProgressDirect
 
 /// Create a new button with the given text
 pub fn createButton(allocator: std.mem.Allocator, text: []const u8) !*Button {
-    var button = try Button.init(allocator);
-    try button.setText(text);
-    return button;
+    return Button.init(allocator, text);
 }
 
 /// Create a new label with the given text
@@ -104,6 +109,26 @@ pub fn createDropdownMenu(allocator: std.mem.Allocator) !*DropdownMenu {
     return DropdownMenu.init(allocator);
 }
 
+/// Create a new tree view
+pub fn createTreeView(allocator: std.mem.Allocator) !*TreeView {
+    return TreeView.init(allocator);
+}
+
+/// Create a new sparkline
+pub fn createSparkline(allocator: std.mem.Allocator) !*Sparkline {
+    return Sparkline.init(allocator);
+}
+
+/// Create a new gauge
+pub fn createGauge(allocator: std.mem.Allocator) !*Gauge {
+    return Gauge.init(allocator);
+}
+
+/// Create a new split pane
+pub fn createSplitPane(allocator: std.mem.Allocator) !*SplitPane {
+    return SplitPane.init(allocator);
+}
+
 /// Convenience function to focus a widget
 pub fn focusWidget(widget: *BaseWidget) void {
     widget.focused = true;
@@ -131,33 +156,33 @@ pub fn hideWidget(widget: *BaseWidget) void {
 
 test "widget" {
     const expect = std.testing.expect;
-    
+
     const allocator = std.testing.allocator;
-    
+
     // Create a button
     var button = try createButton(allocator, "Test Button");
     defer button.deinit();
-    
+
     try expect(button.widget.enabled);
     try expect(button.widget.visible);
-    
+
     // Test enable/disable
     disableWidget(&button.widget);
     try expect(!button.widget.enabled);
-    
+
     enableWidget(&button.widget);
     try expect(button.widget.enabled);
-    
+
     // Test show/hide
     hideWidget(&button.widget);
     try expect(!button.widget.visible);
-    
+
     showWidget(&button.widget);
     try expect(button.widget.visible);
-    
+
     // Test focus
     try expect(!button.widget.focused);
-    
+
     focusWidget(&button.widget);
     try expect(button.widget.focused);
 }

@@ -88,4 +88,4 @@ pub const MemoryManager = struct {
 const Widget = struct {
     // This is a placeholder for the actual Widget type
     // The actual type will be defined in the widget module
-}; 
+};

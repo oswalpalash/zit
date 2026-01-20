@@ -30,7 +30,9 @@ pub fn main() !void {
     try term.clear();
 
     // Display instructions
-    const writer = std.io.getStdOut().writer();
+    var stdout_file = std.fs.File.stdout();
+    var stdout_buffer: [512]u8 = undefined;
+    var writer = stdout_file.writer(&stdout_buffer).interface;
     try writer.writeAll("Input Handler Test\n\n");
     try writer.writeAll("Press keys to see their events (press 'q' to quit)\n");
     try writer.writeAll("Click or move mouse to see mouse events\n\n");

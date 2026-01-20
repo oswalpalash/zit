@@ -146,4 +146,4 @@ pub const MemoryOptimizer = struct {
             self.cache_lines = line;
         }
     }
-}; 
+};

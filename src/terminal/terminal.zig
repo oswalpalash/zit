@@ -44,8 +44,8 @@ pub const Terminal = struct {
 
     /// Initialize a new terminal instance
     pub fn init(allocator: std.mem.Allocator) !Terminal {
-        const stdin_fd = std.io.getStdIn().handle;
-        const stdout_fd = std.io.getStdOut().handle;
+        const stdin_fd = std.fs.File.stdin().handle;
+        const stdout_fd = std.fs.File.stdout().handle;
 
         var original_termios: OriginalTermAttrs = undefined;
         const is_windows = @import("builtin").os.tag == .windows;
@@ -81,7 +81,7 @@ pub const Terminal = struct {
         };
 
         try self.updateSize();
-        
+
         // Set up SIGWINCH handling on Unix platforms
         if (@import("builtin").os.tag != .windows) {
             // Ignore SIGWINCH - we'll handle window size changes manually
@@ -89,7 +89,7 @@ pub const Terminal = struct {
             const SIG = std.posix.SIG;
             _ = std.posix.sigaction(SIG.WINCH, &std.posix.Sigaction{
                 .handler = .{ .handler = SIG.IGN },
-                .mask = std.posix.empty_sigset,
+                .mask = std.posix.sigemptyset(),
                 .flags = 0,
             }, null);
         }
@@ -106,11 +106,11 @@ pub const Terminal = struct {
         if (!self.is_cursor_visible) {
             try self.showCursor();
         }
-        
+
         if (self.is_mouse_enabled) {
             try self.disableMouseEvents();
         }
-        
+
         // Reset all formatting before exit
         try self.resetFormatting();
     }
@@ -118,36 +118,36 @@ pub const Terminal = struct {
     /// Enable raw mode for direct character input
     pub fn enableRawMode(self: *Terminal) !void {
         if (self.is_raw_mode) return;
-        
+
         // For macOS, use a much simpler approach that's more reliable
         if (@import("builtin").os.tag == .macos) {
             // Save original terminal settings first (so we can restore them later)
             self.original_termios = .{ .unix = try std.posix.tcgetattr(self.stdin_fd) };
-            
+
             // On macOS, directly use the system command which is more reliable
             const darwin = struct {
                 extern "c" fn system(command: [*:0]const u8) c_int;
             };
-            
+
             _ = darwin.system("stty -echo -icanon -isig -iexten -ixon raw");
-            
+
             // Also set the terminal to non-blocking mode
             const flags = std.posix.fcntl(self.stdin_fd, std.posix.F.GETFL, 0) catch |err| {
                 return err;
             };
-            
+
             const O_NONBLOCK: u32 = 0x00000004; // macOS value
             _ = std.posix.fcntl(self.stdin_fd, std.posix.F.SETFL, flags | O_NONBLOCK) catch |err| {
                 return err;
             };
-            
+
             // Enable Kitty keyboard protocol
             self.enableKittyKeyboardProtocol() catch {};
-            
+
             self.is_raw_mode = true;
             return;
         }
-        
+
         // Normal implementation for other platforms
         const is_windows = @import("builtin").os.tag == .windows;
 
@@ -158,15 +158,15 @@ pub const Terminal = struct {
                     // Enable extended input flags and disable processed input
                     const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
                     const new_in_mode = (info.in_mode & ~@as(u32, 0x0001)) | ENABLE_VIRTUAL_TERMINAL_INPUT;
-                    
+
                     // Enable virtual terminal processing for ANSI sequences
                     const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
                     const new_out_mode = info.out_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-                    
+
                     if (!std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, new_in_mode)) {
                         return error.SetConsoleModeFailure;
                     }
-                    
+
                     if (!std.os.windows.kernel32.SetConsoleMode(self.stdout_fd, new_out_mode)) {
                         // Try to restore the original mode and report error
                         _ = std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, info.in_mode);
@@ -187,14 +187,14 @@ pub const Terminal = struct {
                     const ICANON: u64 = 0x00000002;
                     const ISIG: u64 = 0x00000001;
                     const IEXTEN: u64 = 0x00000400;
-                    
+
                     // Create a copy in a regular integer (use u32 for 32-bit Linux)
                     var lflag = @as(u32, @bitCast(raw.lflag));
-                    
+
                     // Perform operations on the regular integer
                     const mask: u32 = ECHO | ICANON | ISIG | IEXTEN;
                     lflag &= ~mask;
-                    
+
                     // Assign back to the packed struct
                     raw.lflag = @bitCast(lflag);
 
@@ -204,7 +204,7 @@ pub const Terminal = struct {
                     const BRKINT: u32 = 0x00000002;
                     const INPCK: u32 = 0x00000010;
                     const ISTRIP: u32 = 0x00000020;
-                    
+
                     var iflag = @as(u32, @bitCast(raw.iflag));
                     const iflag_mask: u32 = IXON | ICRNL | BRKINT | INPCK | ISTRIP;
                     iflag &= ~iflag_mask;
@@ -212,14 +212,14 @@ pub const Terminal = struct {
 
                     // Disable output processing
                     const OPOST: u32 = 0x00000001;
-                    
+
                     var oflag = @as(u32, @bitCast(raw.oflag));
                     oflag &= ~OPOST;
                     raw.oflag = @bitCast(oflag);
 
                     // Set character size to 8 bits
                     const CS8: u32 = 0x00000300;
-                    
+
                     var cflag = @as(u32, @bitCast(raw.cflag));
                     cflag |= CS8;
                     raw.cflag = @bitCast(cflag);
@@ -227,10 +227,10 @@ pub const Terminal = struct {
                     // Set read timeout and minimum input to 0 for non-blocking reads
                     // This is especially important for macOS
                     const V_TIME: usize = 16; // VTIME index on macOS
-                    const V_MIN: usize = 17;  // VMIN index on macOS
-                    
+                    const V_MIN: usize = 17; // VMIN index on macOS
+
                     raw.cc[V_TIME] = 0; // No timeout, return immediately
-                    raw.cc[V_MIN] = 0;  // Return even if no characters are available
+                    raw.cc[V_MIN] = 0; // Return even if no characters are available
 
                     // Apply settings
                     try std.posix.tcsetattr(self.stdin_fd, .FLUSH, raw);
@@ -246,14 +246,14 @@ pub const Terminal = struct {
                 // Silently handle error - don't pollute stdout
                 return err;
             };
-            
+
             // Set non-blocking flag - use platform-specific constant
             const O_NONBLOCK: u32 = switch (@import("builtin").os.tag) {
-                .linux => 0o4000,  // Linux O_NONBLOCK value
-                .freebsd, .netbsd => 0x4,  // BSD O_NONBLOCK value
-                else => 0x00000004,  // Default to macOS value
+                .linux => 0o4000, // Linux O_NONBLOCK value
+                .freebsd, .netbsd => 0x4, // BSD O_NONBLOCK value
+                else => 0x00000004, // Default to macOS value
             };
-            
+
             _ = std.posix.fcntl(self.stdin_fd, std.posix.F.SETFL, flags | O_NONBLOCK) catch |err| {
                 // Silently handle error - don't pollute stdout
                 return err;
@@ -272,13 +272,13 @@ pub const Terminal = struct {
 
         // Disable the Kitty keyboard protocol first
         self.disableKittyKeyboardProtocol() catch {};
-        
+
         // For macOS, ensure terminal output is flushed and use a reliable method to restore
         if (@import("builtin").os.tag == .macos) {
             // Flush any pending output
-            const writer = std.io.getStdOut().writer();
-            try writer.writeAll("\r\n"); // Add newline to flush
-            
+            var stdout = std.fs.File.stdout();
+            try stdout.writeAll("\r\n"); // Add newline to flush
+
             // Restore original terminal settings if we have them
             switch (self.original_termios) {
                 .unix => |orig| {
@@ -287,23 +287,23 @@ pub const Terminal = struct {
                 },
                 else => {}, // Do nothing for .none
             }
-            
+
             // Use stty sane as a reliable way to restore a sane terminal state
             const darwin = struct {
                 extern "c" fn system(command: [*:0]const u8) c_int;
             };
             _ = darwin.system("stty sane");
-            
+
             // Small delay to ensure terminal state is fully restored
-            std.time.sleep(std.time.ns_per_ms * 20);
-            
+            std.Thread.sleep(std.time.ns_per_ms * 20);
+
             // Explicitly reset formatting
             try self.resetFormatting();
-            
+
             self.is_raw_mode = false;
             return;
         }
-        
+
         const is_windows = @import("builtin").os.tag == .windows;
 
         if (is_windows) {
@@ -313,7 +313,7 @@ pub const Terminal = struct {
                     if (!std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, info.in_mode)) {
                         return error.SetConsoleModeFailure;
                     }
-                    
+
                     if (!std.os.windows.kernel32.SetConsoleMode(self.stdout_fd, info.out_mode)) {
                         return error.SetConsoleModeFailure;
                     }
@@ -333,7 +333,7 @@ pub const Terminal = struct {
 
         // Explicitly reset formatting to ensure terminal is in a clean state
         try self.resetFormatting();
-        
+
         self.is_raw_mode = false;
     }
 
@@ -344,7 +344,7 @@ pub const Terminal = struct {
         if (is_windows) {
             // Windows implementation
             var console_screen_buffer_info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-            
+
             if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(self.stdout_fd, &console_screen_buffer_info)) {
                 self.width = @intCast(console_screen_buffer_info.srWindow.Right - console_screen_buffer_info.srWindow.Left + 1);
                 self.height = @intCast(console_screen_buffer_info.srWindow.Bottom - console_screen_buffer_info.srWindow.Top + 1);
@@ -372,7 +372,7 @@ pub const Terminal = struct {
 
             // Use ioctl safely based on the OS
             var result: c_int = -1;
-            
+
             if (@import("builtin").os.tag == .macos) {
                 // Use direct syscall for macOS
                 const darwin = struct {
@@ -411,22 +411,18 @@ pub const Terminal = struct {
     /// Enable mouse event reporting
     pub fn enableMouseEvents(self: *Terminal) !void {
         if (self.is_mouse_enabled) return;
-        
-        const writer = std.io.getStdOut().writer();
-        
-        // Enable mouse tracking (X10 compatibility mode + SGR extended mode)
-        try writer.writeAll("\x1b[?1000h\x1b[?1006h");
+
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?1000h\x1b[?1006h"); // Enable mouse tracking (X10 + SGR)
         self.is_mouse_enabled = true;
     }
-    
+
     /// Disable mouse event reporting
     pub fn disableMouseEvents(self: *Terminal) !void {
         if (!self.is_mouse_enabled) return;
-        
-        const writer = std.io.getStdOut().writer();
-        
-        // Disable mouse tracking
-        try writer.writeAll("\x1b[?1000l\x1b[?1006l");
+
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?1000l\x1b[?1006l"); // Disable mouse tracking
         self.is_mouse_enabled = false;
     }
 
@@ -434,8 +430,8 @@ pub const Terminal = struct {
     pub fn hideCursor(self: *Terminal) !void {
         if (!self.is_cursor_visible) return;
 
-        const writer = std.io.getStdOut().writer();
-        try writer.writeAll("\x1b[?25l");
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?25l");
         self.is_cursor_visible = false;
     }
 
@@ -443,62 +439,68 @@ pub const Terminal = struct {
     pub fn showCursor(self: *Terminal) !void {
         if (self.is_cursor_visible) return;
 
-        const writer = std.io.getStdOut().writer();
-        try writer.writeAll("\x1b[?25h");
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?25h");
         self.is_cursor_visible = true;
     }
 
     /// Clear the screen
     pub fn clear(self: *Terminal) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.writeAll("\x1b[2J"); // Clear entire screen
-        try writer.writeAll("\x1b[H"); // Move cursor to top-left corner
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[2J"); // Clear entire screen
+        try stdout.writeAll("\x1b[H"); // Move cursor to top-left corner
     }
 
     /// Move cursor to specified position
     pub fn moveCursor(self: *Terminal, x: u16, y: u16) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
+        var stdout = std.fs.File.stdout();
+        var buf: [32]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 });
+        try stdout.writeAll(seq);
     }
 
     /// Set text color
     pub fn setForegroundColor(self: *Terminal, color: u8) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.print("\x1b[38;5;{d}m", .{color});
+        var stdout = std.fs.File.stdout();
+        var buf: [32]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{color});
+        try stdout.writeAll(seq);
     }
 
     /// Set background color
     pub fn setBackgroundColor(self: *Terminal, color: u8) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.print("\x1b[48;5;{d}m", .{color});
+        var stdout = std.fs.File.stdout();
+        var buf: [32]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{color});
+        try stdout.writeAll(seq);
     }
 
     /// Reset text formatting
     pub fn resetFormatting(self: *Terminal) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.writeAll("\x1b[0m");
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[0m");
     }
 
     /// Set text style (bold, italic, underline)
     pub fn setStyle(self: *Terminal, bold: bool, italic: bool, underline: bool) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
+        var stdout = std.fs.File.stdout();
 
         if (bold) {
-            try writer.writeAll("\x1b[1m");
+            try stdout.writeAll("\x1b[1m");
         }
 
         if (italic) {
-            try writer.writeAll("\x1b[3m");
+            try stdout.writeAll("\x1b[3m");
         }
 
         if (underline) {
-            try writer.writeAll("\x1b[4m");
+            try stdout.writeAll("\x1b[4m");
         }
     }
 
@@ -531,35 +533,37 @@ pub const Terminal = struct {
     /// Set RGB color (if supported)
     pub fn setRgbColor(self: *Terminal, r: u8, g: u8, b: u8, is_foreground: bool) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
+        var stdout = std.fs.File.stdout();
         const code: u8 = if (is_foreground) 38 else 48;
 
-        try writer.print("\x1b[{d};2;{d};{d};{d}m", .{ code, r, g, b });
+        var buf: [48]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};2;{d};{d};{d}m", .{ code, r, g, b });
+        try stdout.writeAll(seq);
     }
-    
+
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        
+        var stdout = std.fs.File.stdout();
+
         // Enable Kitty keyboard protocol (if the terminal supports it)
-        try writer.writeAll("\x1b[>1u");
+        try stdout.writeAll("\x1b[>1u");
     }
-    
+
     /// Disable Kitty keyboard protocol
     pub fn disableKittyKeyboardProtocol(self: *Terminal) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        
+        var stdout = std.fs.File.stdout();
+
         // Disable Kitty keyboard protocol
-        try writer.writeAll("\x1b[<1u");
+        try stdout.writeAll("\x1b[<1u");
     }
 
     /// Handle Unicode output
     pub fn writeUtf8(self: *Terminal, str: []const u8) !void {
         _ = self; // Unused parameter
-        const writer = std.io.getStdOut().writer();
-        try writer.writeAll(str);
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll(str);
     }
 };
 
@@ -568,7 +572,7 @@ pub const init = Terminal.init;
 
 test "terminal initialization" {
     const allocator = std.testing.allocator;
-    
+
     // Try to initialize terminal, but skip test if we're not in a real terminal
     var term = Terminal.init(allocator) catch |err| {
         if (err == error.NotATerminal) {

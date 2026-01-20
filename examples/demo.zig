@@ -36,43 +36,25 @@ pub fn main() !void {
     var title = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Zit TUI Library");
     defer title.deinit();
     title.setAlignment(.center);
-    title.setColor(
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.blue }
-    );
+    title.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
     title.setStyle(zit.render.Style.init(true, false, true));
 
     var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Click Me!");
     defer button.deinit();
-    button.setColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.green },
-        zit.render.Color{ .named_color = zit.render.NamedColor.white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_green }
-    );
+    button.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_green });
     button.setBorder(.rounded);
     button.setOnPress(onButtonPress);
 
     var checkbox = try zit.widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "Enable Feature");
     defer checkbox.deinit();
-    checkbox.setColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.blue },
-        zit.render.Color{ .named_color = zit.render.NamedColor.white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.cyan }
-    );
+    checkbox.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
     checkbox.setOnChange(onCheckboxChange);
 
     var progress_bar = try zit.widget.ProgressBar.init(memory_manager.getWidgetPoolAllocator());
     defer progress_bar.deinit();
     progress_bar.setValue(30);
     progress_bar.setShowPercentage(true);
-    progress_bar.setColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.green },
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.blue }
-    );
+    progress_bar.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_black }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
     progress_bar.setBorder(.single);
 
     var list = try zit.widget.List.init(memory_manager.getWidgetPoolAllocator());
@@ -82,21 +64,13 @@ pub fn main() !void {
     try list.addItem("Option 3");
     list.setSelectedIndex(0);
     list.setOnSelect(onListSelect);
-    list.setColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.blue },
-        zit.render.Color{ .named_color = zit.render.NamedColor.black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.cyan }
-    );
+    list.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
     list.setBorder(.single);
 
     var status = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Press 'q' to quit");
     defer status.deinit();
     status.setAlignment(.center);
-    status.setColor(
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_white },
-        zit.render.Color{ .named_color = zit.render.NamedColor.blue }
-    );
+    status.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
 
     // Variables for dynamic updates
     var progress_value: u8 = 0;
@@ -112,75 +86,38 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', 
-            zit.render.Color{ .named_color = zit.render.NamedColor.white }, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-            zit.render.Style{});
+        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
 
         // Draw border
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, 
-            zit.render.BorderStyle.single, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, 
-            zit.render.Color{ .named_color = zit.render.NamedColor.blue }, 
-            zit.render.Style{});
+        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, zit.render.BorderStyle.single, zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
 
         // Create the window title
-        const title_rect = zit.layout.Rect.init(
-            if (width > 20) (width - 20) / 2 else 0,
-            2,
-            20,
-            1
-        );
+        const title_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, 2, 20, 1);
         try title.widget.layout(title_rect);
         try title.widget.draw(&renderer);
 
         // Draw the button
-        const button_rect = zit.layout.Rect.init(
-            if (width > 12) (width - 12) / 2 else 0,
-            if (height > 10) height / 2 - 4 else 0,
-            12,
-            3
-        );
+        const button_rect = zit.layout.Rect.init(if (width > 12) (width - 12) / 2 else 0, if (height > 10) height / 2 - 4 else 0, 12, 3);
         try button.widget.layout(button_rect);
         try button.widget.draw(&renderer);
 
         // Draw the checkbox
-        const checkbox_rect = zit.layout.Rect.init(
-            if (width > 20) (width - 20) / 2 else 0,
-            if (height > 10) height / 2 else 0,
-            20,
-            1
-        );
+        const checkbox_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 else 0, 20, 1);
         try checkbox.widget.layout(checkbox_rect);
         try checkbox.widget.draw(&renderer);
 
         // Draw the progress bar
-        const progress_rect = zit.layout.Rect.init(
-            if (width > 30) (width - 30) / 2 else 0,
-            if (height > 10) height / 2 + 2 else 0,
-            30,
-            3
-        );
+        const progress_rect = zit.layout.Rect.init(if (width > 30) (width - 30) / 2 else 0, if (height > 10) height / 2 + 2 else 0, 30, 3);
         try progress_bar.widget.layout(progress_rect);
         try progress_bar.widget.draw(&renderer);
 
         // Draw the list
-        const list_rect = zit.layout.Rect.init(
-            if (width > 20) (width - 20) / 2 else 0,
-            if (height > 10) height / 2 + 6 else 0,
-            20,
-            5
-        );
+        const list_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 + 6 else 0, 20, 5);
         try list.widget.layout(list_rect);
         try list.widget.draw(&renderer);
 
         // Draw the status at the bottom
-        const status_rect = zit.layout.Rect.init(
-            if (width > 20) (width - 20) / 2 else 0,
-            if (height > 2) height - 2 else 0,
-            20,
-            1
-        );
+        const status_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 2) height - 2 else 0, 20, 1);
         try status.widget.layout(status_rect);
         try status.widget.draw(&renderer);
 
@@ -249,5 +186,5 @@ fn onCheckboxChange(checked: bool) void {
 
 // List select handler
 fn onListSelect(index: usize, item: []const u8) void {
-    std.debug.print("List item selected: {}, {s}\n", .{index, item});
+    std.debug.print("List item selected: {}, {s}\n", .{ index, item });
 }

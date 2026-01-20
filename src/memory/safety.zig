@@ -17,7 +17,7 @@ pub const MemorySafety = struct {
     canary_value: u64,
 
     pub fn init(parent_allocator: Allocator) !Self {
-        var prng = std.rand.DefaultPrng.init(@bitCast(u64, std.time.milliTimestamp()));
+        var prng = std.Random.DefaultPrng.init(@bitCast(u64, std.time.milliTimestamp()));
         const canary = prng.random().int(u64);
 
         return Self{
@@ -83,7 +83,7 @@ pub const MemorySafety = struct {
 
         const total_size = new_len + @sizeOf(u64);
         const success = self.parent_allocator.rawResize(buf, buf_align, total_size, ret_addr);
-        
+
         if (success) {
             if (self.checks.getPtr(buf.ptr)) |check| {
                 // Update canary position
@@ -154,4 +154,4 @@ pub const MemorySafety = struct {
         }
         return false;
     }
-}; 
+};
