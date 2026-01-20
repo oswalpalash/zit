@@ -202,6 +202,7 @@ pub fn build(b: *std.Build) void {
     }{
         .{ .name = "button", .description = "Run the button widget example", .path = "examples/widget_examples/button_example.zig", .step_name = "button-example" },
         .{ .name = "dashboard", .description = "Run the dashboard widget example", .path = "examples/widget_examples/dashboard_example.zig", .step_name = "dashboard-example" },
+        .{ .name = "notifications", .description = "Run the notifications widget example", .path = "examples/widget_examples/notifications_example.zig", .step_name = "notifications-example" },
     };
 
     for (widget_examples) |example| {
@@ -228,4 +229,23 @@ pub fn build(b: *std.Build) void {
         const exe_step = b.step(example.step_name, example.description);
         exe_step.dependOn(&run_exe.step);
     }
+
+    // Rendering benchmark
+    const render_bench_module = b.createModule(.{
+        .root_source_file = b.path("examples/benchmarks/render_bench.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    render_bench_module.addImport("zit", zit_module);
+
+    const render_bench = b.addExecutable(.{
+        .name = "render_bench",
+        .root_module = render_bench_module,
+    });
+
+    b.installArtifact(render_bench);
+
+    const run_render_bench = b.addRunArtifact(render_bench);
+    const bench_step = b.step("bench", "Run rendering benchmark");
+    bench_step.dependOn(&run_render_bench.step);
 }

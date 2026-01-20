@@ -73,9 +73,9 @@ pub const Canvas = struct {
 
     /// Draw a line using a simplified Bresenham algorithm.
     pub fn drawLine(self: *Canvas, x0: i32, y0: i32, x1: i32, y1: i32, char: u21, fg: render.Color, bg: render.Color, style: render.Style) void {
-        const dx = std.math.absInt(x1 - x0) catch 0;
+        const dx = if (x1 > x0) x1 - x0 else x0 - x1;
         const sx: i32 = if (x0 < x1) 1 else -1;
-        const dy = -std.math.absInt(y1 - y0) catch 0;
+        const dy = -if (y1 > y0) y1 - y0 else y0 - y1;
         const sy: i32 = if (y0 < y1) 1 else -1;
         var err = dx + dy;
 

@@ -13,8 +13,12 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
   - Checkboxes
   - Progress bars
   - Lists
+  - Popups, toasts, menu bars, and canvas primitives
 - **Input handling**: Keyboard and mouse event processing
 - **Event system**: Basic event handling for widgets
+- **Animations**: Reusable animator with easing and yoyo/repeat
+- **Accessibility**: Annotate widgets with roles and focus announcements
+- **Async utilities**: Timer manager plus async application loop helpers
 - **Modern and intuitive API**
 - **Efficient memory management**
 - **Thread-safe components**
@@ -126,20 +130,68 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
-    defer memory_manager.deinit();
+var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
+defer memory_manager.deinit();
 
-    // Initialize terminal with memory manager
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+// Initialize terminal with memory manager
+var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
     // Create widgets using the widget pool allocator
     var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Click Me!");
     defer button.deinit();
 
-    // ... rest of the application code
+// ... rest of the application code
 }
 ```
+
+## Animations and timers
+
+Zit ships with a lightweight animation driver (with easing and yoyo/repeat) plus a timer manager that plugs into the application loop:
+
+```zig
+var app = zit.event.Application.init(allocator);
+try app.enableAccessibility(); // optional: wire focus announcements
+
+// Animate a progress value for 250ms
+var gauge = try zit.widget.Gauge.init(allocator);
+_ = try app.addAnimation(.{
+    .duration_ms = 250,
+    .on_update = struct {
+        fn update(progress: f32, ctx: ?*anyopaque) void {
+            const gauge = @as(*zit.widget.Gauge, @ptrCast(@alignCast(ctx.?)));
+            gauge.setValue(progress * 100);
+        }
+    }.update,
+    .context = @ptrCast(gauge),
+});
+
+// Fire a repeating task every second
+_ = try app.scheduleTimer(1000, 1000, struct {
+    fn tick(_: ?*anyopaque) void {
+        std.debug.print(\"tick\\n\", .{});
+    }
+}.tick, null);
+```
+
+## Accessibility
+
+Mark widgets with accessible roles and names so focus changes can be announced:
+
+```zig
+try app.enableAccessibility();
+try app.registerAccessibleNode(.{
+    .widget_ptr = &button.widget,
+    .role = zit.widget.AccessibilityRole.button,
+    .name = \"Submit\",
+    .description = \"Send the form\",
+});
+```
+
+## Examples and benchmarks
+
+- Widget demos: `zig build notifications-example` (popups, toasts, menu bar, canvas) and existing `button-example` / `dashboard-example`.
+- Rendering benchmark: `zig build bench` runs `examples/benchmarks/render_bench.zig` to gauge draw throughput.
 
 ## Best Practices
 
