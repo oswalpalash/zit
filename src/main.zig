@@ -9,6 +9,7 @@ pub const layout = @import("layout/layout.zig");
 pub const widget = @import("widget/widget.zig");
 pub const event = @import("event/event.zig");
 pub const memory = @import("memory/memory.zig");
+pub const quickstart = @import("quickstart.zig");
 
 /// zit - A Text User Interface (TUI) library for Zig
 ///
