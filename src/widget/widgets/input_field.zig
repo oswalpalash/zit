@@ -69,6 +69,9 @@ pub const InputField = struct {
 
     /// Clean up input field resources
     pub fn deinit(self: *InputField) void {
+        if (self.placeholder.len > 0) {
+            self.allocator.free(self.placeholder);
+        }
         self.allocator.free(self.text);
         self.allocator.destroy(self);
     }
@@ -167,29 +170,43 @@ pub const InputField = struct {
         const inner_width = if (rect.width > 2 * border_adjust) rect.width - 2 * border_adjust else 0;
 
         // Draw placeholder if no text
-        if (content.len == 0 and self.placeholder.len > 0) {
-            const display_text = if (self.placeholder.len <= inner_width)
-                self.placeholder
-            else if (inner_width > 3)
-                self.placeholder[0 .. inner_width - 3] ++ "..."
-            else
-                self.placeholder[0..inner_width];
-
-            renderer.drawStr(inner_x, inner_y, display_text, fg, bg, self.style);
+        if (content.len == 0 and self.placeholder.len > 0 and inner_width > 0) {
+            if (self.placeholder.len <= inner_width) {
+                renderer.drawStr(inner_x, inner_y, self.placeholder, fg, bg, self.style);
+            } else if (inner_width > 3) {
+                var truncated: [256]u8 = undefined;
+                const copy_len: usize = @min(@as(usize, inner_width - 3), self.placeholder.len);
+                const safe_len = @min(copy_len, truncated.len - 3);
+                @memcpy(truncated[0..safe_len], self.placeholder[0..safe_len]);
+                @memcpy(truncated[safe_len .. safe_len + 3], "...");
+                renderer.drawStr(inner_x, inner_y, truncated[0 .. safe_len + 3], fg, bg, self.style);
+            } else {
+                const slice_len: usize = @intCast(inner_width);
+                renderer.drawStr(inner_x, inner_y, self.placeholder[0..slice_len], fg, bg, self.style);
+            }
         }
         // Otherwise draw text
-        else if (content.len > 0) {
-            const display_text = if (content.len <= inner_width)
-                content
-            else if (inner_width > 3)
-                content[0 .. inner_width - 3] ++ "..."
-            else
-                content[0..inner_width];
-
-            renderer.drawStr(inner_x, inner_y, display_text, fg, bg, self.style);
+        else if (content.len > 0 and inner_width > 0) {
+            var rendered_len: usize = 0;
+            if (content.len <= inner_width) {
+                renderer.drawStr(inner_x, inner_y, content, fg, bg, self.style);
+                rendered_len = content.len;
+            } else if (inner_width > 3) {
+                var truncated: [256]u8 = undefined;
+                const copy_len: usize = @min(@as(usize, inner_width - 3), content.len);
+                const safe_len = @min(copy_len, truncated.len - 3);
+                @memcpy(truncated[0..safe_len], content[0..safe_len]);
+                @memcpy(truncated[safe_len .. safe_len + 3], "...");
+                rendered_len = safe_len + 3;
+                renderer.drawStr(inner_x, inner_y, truncated[0..rendered_len], fg, bg, self.style);
+            } else {
+                const slice_len: usize = @intCast(inner_width);
+                rendered_len = slice_len;
+                renderer.drawStr(inner_x, inner_y, content[0..slice_len], fg, bg, self.style);
+            }
 
             // Draw cursor if focused
-            if (self.widget.focused and self.cursor <= display_text.len) {
+            if (self.widget.focused and self.cursor <= rendered_len) {
                 const cursor_x = inner_x + @as(u16, @intCast(self.cursor));
                 renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
             }
@@ -274,7 +291,7 @@ pub const InputField = struct {
                         if (self.cursor < current_text.len) {
                             std.mem.copyBackwards(u8, self.text[self.cursor + 1 .. current_text.len + 1], self.text[self.cursor..current_text.len]);
                         }
-                        self.text[self.cursor] = key_event.key;
+                        self.text[self.cursor] = @as(u8, @intCast(key_event.key));
                         self.cursor += 1;
 
                         if (self.on_change) |callback| {

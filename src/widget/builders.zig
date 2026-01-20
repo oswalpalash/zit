@@ -6,6 +6,7 @@ const Label = @import("widgets/label.zig").Label;
 const Checkbox = @import("widgets/checkbox.zig").Checkbox;
 const InputField = @import("widgets/input_field.zig").InputField;
 const ProgressBar = @import("widgets/progress_bar.zig").ProgressBar;
+const ProgressDirection = @import("widgets/progress_bar.zig").ProgressDirection;
 
 /// Shared configuration for all builders.
 const Common = struct {
@@ -337,11 +338,11 @@ pub const InputBuilder = struct {
     pub fn build(self: *InputBuilder) !*InputField {
         var field = try InputField.init(self.allocator, self.max_len);
         if (self.placeholder.len > 0) try field.setPlaceholder(self.placeholder);
-        if (self.initial.len > 0) try field.setText(self.initial);
+        if (self.initial.len > 0) field.setText(self.initial);
         field.setColors(self.fg, self.bg, self.focused_fg, self.focused_bg);
         field.disabled_fg = self.disabled_fg;
         field.disabled_bg = self.disabled_bg;
-        field.setStyle(self.style);
+        field.style = self.style;
         if (self.on_change) |callback| {
             field.on_change = callback;
         }
@@ -354,7 +355,7 @@ pub const InputBuilder = struct {
 pub const ProgressBarBuilder = struct {
     allocator: std.mem.Allocator,
     progress: u8 = 0,
-    direction: ProgressBar.ProgressDirection = .horizontal,
+    direction: ProgressDirection = .horizontal,
     show_text: bool = true,
     fill_char: u21 = '█',
     fg: render.Color = render.Color.named(render.NamedColor.default),
@@ -380,7 +381,7 @@ pub const ProgressBarBuilder = struct {
         return self;
     }
 
-    pub fn flow(self: *ProgressBarBuilder, dir: ProgressBar.ProgressDirection) *ProgressBarBuilder {
+    pub fn flow(self: *ProgressBarBuilder, dir: ProgressDirection) *ProgressBarBuilder {
         self.direction = dir;
         return self;
     }
@@ -475,9 +476,9 @@ test "input builder configures placeholder and limits" {
     var field = try builder.withPlaceholder("Type").value("ok").maxLength(8).onChange(onChange).build();
     defer field.deinit();
 
-    try std.testing.expectEqualStrings("Type", field.placeholder.?);
+    try std.testing.expectEqualStrings("Type", field.placeholder);
     try std.testing.expectEqual(@as(usize, 8), field.max_length);
-    field.on_change.?(field.text);
+    field.on_change.?(field.getText());
     try std.testing.expectEqualStrings("ok", Capture.last);
 }
 
