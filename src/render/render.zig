@@ -888,3 +888,17 @@ pub const Renderer = struct {
         self.back = temp;
     }
 };
+
+test "renderer draws box outlines" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 8, 4);
+    defer renderer.deinit();
+
+    renderer.capabilities.unicode = true;
+    renderer.drawBox(0, 0, 8, 4, BorderStyle.double, Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
+
+    try std.testing.expectEqual(@as(u21, '╔'), renderer.back.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).char);
+    try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).char);
+    try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).char);
+}
