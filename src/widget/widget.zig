@@ -41,6 +41,7 @@ pub const ToastLevel = @import("widgets/toast.zig").ToastLevel;
 pub const MenuBar = @import("widgets/menubar.zig").MenuBar;
 pub const Canvas = @import("widgets/canvas.zig").Canvas;
 pub const ColorPicker = @import("widgets/color_picker.zig").ColorPicker;
+pub const FileBrowser = @import("widgets/file_browser.zig").FileBrowser;
 pub const animation = @import("animation.zig");
 pub const Animator = animation.Animator;
 pub const AnimationSpec = animation.AnimationSpec;
