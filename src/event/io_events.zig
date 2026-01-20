@@ -1,6 +1,10 @@
 const std = @import("std");
 const event = @import("event.zig");
 
+const file_watch_poll_ms: u64 = 100;
+const network_read_buffer_bytes: usize = 4096;
+const default_event_id_start: u32 = 0x10000;
+
 /// Module for handling file and network I/O events
 /// Using thread-based approach since async/await isn't fully implemented in Zig 0.14.0
 /// I/O Event Types
@@ -25,6 +29,8 @@ pub const IoEventData = struct {
     type: IoEventType,
     /// Status of the operation
     status: IoStatus,
+    /// Allocator used for payload and self cleanup
+    allocator: std.mem.Allocator,
     /// Data associated with the event
     data: ?*anyopaque,
     /// Data size
@@ -32,8 +38,12 @@ pub const IoEventData = struct {
     /// Error message if status is error
     error_message: ?[]const u8,
 
-    /// Clean up function for data
-    cleanup_fn: ?*const fn (data: ?*anyopaque) void,
+    /// Clean up function for owned payloads
+    payload_cleanup: ?*const fn (data: ?*anyopaque) void = null,
+    /// Whether `data` should be freed as a byte slice
+    owns_payload: bool = false,
+    /// Whether `error_message` is owned and should be freed
+    owns_error_message: bool = false,
 };
 
 /// I/O Operation Status
@@ -66,6 +76,20 @@ pub const FileWatchContext = struct {
     allocator: std.mem.Allocator,
 
     /// Initialize a file watcher
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator used for the watcher, emitted events, and cleanup.
+    /// - `path`: file path to poll for modification time changes.
+    /// - `event_queue`: queue that receives `custom` events.
+    /// - `event_id`: identifier used when emitting file watch events.
+    /// - `target`: optional widget to tag as the event target.
+    /// Returns: allocated file watch context.
+    /// Errors: allocation failures when duplicating the path or allocating the context.
+    /// Example:
+    /// ```
+    /// const watcher = try manager.watchFile("log.txt", null);
+    /// defer watcher.deinit();
+    /// ```
     pub fn init(allocator: std.mem.Allocator, path: []const u8, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*FileWatchContext {
         const ctx = try allocator.create(FileWatchContext);
         ctx.* = FileWatchContext{
@@ -79,6 +103,10 @@ pub const FileWatchContext = struct {
     }
 
     /// Clean up resources
+    ///
+    /// Parameters:
+    /// - `self`: watcher to tear down.
+    /// Safety: Idempotent; safe to call after `stop`.
     pub fn deinit(self: *FileWatchContext) void {
         self.stop();
         self.allocator.free(self.path);
@@ -86,14 +114,26 @@ pub const FileWatchContext = struct {
     }
 
     /// Start watching the file
+    ///
+    /// Parameters:
+    /// - `self`: watcher to activate.
+    /// Returns: success when the worker thread is spawned.
+    /// Errors: allocation or thread creation failures.
     pub fn start(self: *FileWatchContext) !void {
         if (self.running) return;
 
         self.running = true;
-        self.thread = try std.Thread.spawn(.{}, watchThreadFn, .{self});
+        self.thread = std.Thread.spawn(.{}, watchThreadFn, .{self}) catch |err| {
+            self.running = false;
+            return err;
+        };
     }
 
     /// Stop watching the file
+    ///
+    /// Parameters:
+    /// - `self`: watcher to stop.
+    /// Safety: Joins the worker thread before returning.
     pub fn stop(self: *FileWatchContext) void {
         if (!self.running) return;
 
@@ -121,10 +161,13 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
                 data.* = IoEventData{
                     .type = .file_watch,
                     .status = .success,
+                    .allocator = ctx.allocator,
                     .data = null,
                     .size = 0,
                     .error_message = null,
-                    .cleanup_fn = ioEventDataCleanup,
+                    .payload_cleanup = null,
+                    .owns_payload = false,
+                    .owns_error_message = false,
                 };
 
                 // Send an event
@@ -138,7 +181,7 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
         }
 
         // Sleep for a bit to avoid high CPU usage
-        std.Thread.sleep(std.time.ns_per_ms * 100);
+        std.Thread.sleep(std.time.ns_per_ms * file_watch_poll_ms);
     }
 }
 
@@ -146,19 +189,21 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
 fn ioEventDataCleanup(data: *anyopaque) void {
     const io_data = @as(*IoEventData, @ptrCast(@alignCast(data)));
 
-    // Free error message if present
-    if (io_data.error_message) |_| {
-        // We need to know the allocator that created this data
-        // Since we don't have it here, we assume the data itself doesn't own the error message
+    // Free error message if owned
+    if (io_data.owns_error_message and io_data.error_message) |msg| {
+        io_data.allocator.free(msg);
     }
 
     // Call cleanup function for inner data if present
-    if (io_data.cleanup_fn != null and io_data.data != null) {
-        io_data.cleanup_fn.?(io_data.data.?);
+    if (io_data.payload_cleanup != null and io_data.data != null) {
+        io_data.payload_cleanup.?(io_data.data.?);
+    } else if (io_data.owns_payload and io_data.data != null) {
+        const bytes = @as([*]u8, @ptrCast(io_data.data.?))[0..io_data.size];
+        io_data.allocator.free(bytes);
     }
 
-    // Free the data itself - again, we don't have the allocator here
-    // The allocator should be stored in the event system somewhere, or a global allocator used
+    // Destroy the IoEventData itself
+    io_data.allocator.destroy(io_data);
 }
 
 /// Network connection context
@@ -185,6 +230,21 @@ pub const NetworkContext = struct {
     buffer: []u8,
 
     /// Initialize a network connection
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator used for connection state, buffers, and event payloads.
+    /// - `address`: IPv4/IPv6 address string to connect to.
+    /// - `port`: destination port.
+    /// - `event_queue`: queue that receives `custom` events.
+    /// - `event_id`: identifier used for emitted network events.
+    /// - `target`: optional widget to tag as the event target.
+    /// Returns: allocated network context.
+    /// Errors: allocation failures for the context, address, or buffer.
+    /// Example:
+    /// ```
+    /// const conn = try manager.connectToServer("127.0.0.1", 8080, null);
+    /// defer conn.deinit();
+    /// ```
     pub fn init(allocator: std.mem.Allocator, address: []const u8, port: u16, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*NetworkContext {
         const ctx = try allocator.create(NetworkContext);
         ctx.* = NetworkContext{
@@ -194,12 +254,16 @@ pub const NetworkContext = struct {
             .event_id = event_id,
             .target = target,
             .allocator = allocator,
-            .buffer = try allocator.alloc(u8, 4096),
+            .buffer = try allocator.alloc(u8, network_read_buffer_bytes),
         };
         return ctx;
     }
 
     /// Clean up resources
+    ///
+    /// Parameters:
+    /// - `self`: network context to destroy.
+    /// Safety: Idempotent; ensures socket is closed and thread joined.
     pub fn deinit(self: *NetworkContext) void {
         self.disconnect();
         self.allocator.free(self.address);
@@ -208,14 +272,26 @@ pub const NetworkContext = struct {
     }
 
     /// Connect to the server
+    ///
+    /// Parameters:
+    /// - `self`: network context to connect.
+    /// Returns: success when the worker thread is spawned.
+    /// Errors: thread creation failures.
     pub fn connect(self: *NetworkContext) !void {
         if (self.running) return;
 
         self.running = true;
-        self.thread = try std.Thread.spawn(.{}, connectThreadFn, .{self});
+        self.thread = std.Thread.spawn(.{}, connectThreadFn, .{self}) catch |err| {
+            self.running = false;
+            return err;
+        };
     }
 
     /// Disconnect from the server
+    ///
+    /// Parameters:
+    /// - `self`: network context to close.
+    /// Safety: Joins the worker thread and closes the socket.
     pub fn disconnect(self: *NetworkContext) void {
         if (!self.running) return;
 
@@ -232,6 +308,12 @@ pub const NetworkContext = struct {
     }
 
     /// Send data to the server
+    ///
+    /// Parameters:
+    /// - `self`: active network context.
+    /// - `data`: bytes to write to the socket.
+    /// Returns: success when the write succeeds.
+    /// Errors: `error.NotConnected` if the socket is not established, or any socket write error.
     pub fn send(self: *NetworkContext, data: []const u8) !void {
         if (!self.running or self.socket == null) return error.NotConnected;
 
@@ -280,6 +362,8 @@ fn connectThreadFn(ctx: *NetworkContext) void {
         socket.close();
         ctx.socket = null;
     }
+
+    ctx.running = false;
 }
 
 /// Helper function to send a network event
@@ -289,10 +373,13 @@ fn sendNetworkEvent(ctx: *NetworkContext, event_type: IoEventType, status: IoSta
     io_data.* = IoEventData{
         .type = event_type,
         .status = status,
+        .allocator = ctx.allocator,
         .data = if (data) |d| @ptrCast(d.ptr) else null,
         .size = size,
         .error_message = error_msg,
-        .cleanup_fn = ioEventDataCleanup,
+        .payload_cleanup = null,
+        .owns_payload = data != null,
+        .owns_error_message = false,
     };
 
     // Send an event
@@ -310,9 +397,19 @@ pub const IoEventManager = struct {
     /// Network connections
     network_connections: std.ArrayList(*NetworkContext),
     /// Next event ID
-    next_event_id: u32 = 0x10000, // Start from a high number to avoid conflicts
+    next_event_id: u32 = default_event_id_start, // Start from a high number to avoid conflicts
 
     /// Initialize an I/O event manager
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator used for watchers, connections, and events.
+    /// - `event_queue`: queue that receives emitted custom events.
+    /// Returns: initialized manager with empty watcher/connection sets.
+    /// Example:
+    /// ```
+    /// var manager = IoEventManager.init(alloc, queue);
+    /// defer manager.deinit();
+    /// ```
     pub fn init(allocator: std.mem.Allocator, event_queue: *event.EventQueue) IoEventManager {
         return IoEventManager{
             .event_queue = event_queue,
@@ -323,6 +420,10 @@ pub const IoEventManager = struct {
     }
 
     /// Clean up resources
+    ///
+    /// Parameters:
+    /// - `self`: manager to tear down.
+    /// Safety: Stops all watches and network connections before freeing.
     pub fn deinit(self: *IoEventManager) void {
         // Stop and free all file watchers
         for (self.file_watchers.items) |watcher| {
@@ -338,6 +439,20 @@ pub const IoEventManager = struct {
     }
 
     /// Create a file watcher
+    ///
+    /// Parameters:
+    /// - `self`: manager used to allocate and track the watcher.
+    /// - `path`: file path to poll for modifications.
+    /// - `target`: widget to tag as the event target; may be null.
+    /// Returns: started file watcher context.
+    /// Errors: allocation failures, thread spawn failures, or duplicate path allocation errors.
+    /// Example:
+    /// ```
+    /// var manager = IoEventManager.init(alloc, queue);
+    /// defer manager.deinit();
+    /// const watch = try manager.watchFile("log.txt", null);
+    /// defer watch.deinit();
+    /// ```
     pub fn watchFile(self: *IoEventManager, path: []const u8, target: ?*event.widget.Widget) !*FileWatchContext {
         const event_id = self.next_event_id;
         self.next_event_id += 1;
@@ -351,6 +466,21 @@ pub const IoEventManager = struct {
     }
 
     /// Create a network connection
+    ///
+    /// Parameters:
+    /// - `self`: manager used to allocate and track the connection.
+    /// - `address`: IPv4/IPv6 address string.
+    /// - `port`: destination port.
+    /// - `target`: widget to tag as the event target; may be null.
+    /// Returns: started network context.
+    /// Errors: allocation failures or thread spawn failures.
+    /// Example:
+    /// ```
+    /// var manager = IoEventManager.init(alloc, queue);
+    /// defer manager.deinit();
+    /// const conn = try manager.connectToServer("127.0.0.1", 5555, null);
+    /// defer conn.deinit();
+    /// ```
     pub fn connectToServer(self: *IoEventManager, address: []const u8, port: u16, target: ?*event.widget.Widget) !*NetworkContext {
         const event_id = self.next_event_id;
         self.next_event_id += 1;
@@ -363,3 +493,22 @@ pub const IoEventManager = struct {
         return connection;
     }
 };
+
+test "ioEventDataCleanup frees owned payloads" {
+    const alloc = std.testing.allocator;
+    const payload = try alloc.dupe(u8, "ping");
+    const ptr = try alloc.create(IoEventData);
+    ptr.* = IoEventData{
+        .type = .network_data,
+        .status = .success,
+        .allocator = alloc,
+        .data = @ptrCast(payload.ptr),
+        .size = payload.len,
+        .error_message = null,
+        .payload_cleanup = null,
+        .owns_payload = true,
+        .owns_error_message = false,
+    };
+
+    ioEventDataCleanup(@ptrCast(ptr));
+}

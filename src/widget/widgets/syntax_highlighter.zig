@@ -243,7 +243,7 @@ pub const SyntaxHighlighter = struct {
 
     fn isKeyword(language: Language, word: []const u8) bool {
         const zig_keywords = [_][]const u8{
-            "const", "var", "pub", "fn", "struct", "enum", "union", "if", "else", "switch", "for", "while",
+            "const",  "var",  "pub",   "fn",   "struct",         "enum",  "union",    "if",    "else", "switch", "for", "while",
             "return", "true", "false", "null", "usingnamespace", "break", "continue", "defer",
         };
 

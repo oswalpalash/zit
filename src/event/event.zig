@@ -5,6 +5,9 @@ const animation = @import("../widget/animation.zig");
 const timer = @import("timer.zig");
 const accessibility = @import("../widget/accessibility.zig");
 
+const event_loop_sleep_ms: u64 = 10;
+const focus_history_limit: usize = 10;
+
 /// Event system module
 ///
 /// This module provides functionality for event handling and propagation:
@@ -607,7 +610,7 @@ pub const FocusManager = struct {
 
         // Add to focus history
         try self.focus_history.append(self.allocator, target_widget);
-        if (self.focus_history.items.len > 10) {
+        if (self.focus_history.items.len > focus_history_limit) {
             _ = self.focus_history.orderedRemove(0);
         }
 
@@ -765,7 +768,7 @@ pub const Application = struct {
             self.last_frame_ms = now_ms;
 
             // Yield to allow other tasks to run
-            std.Thread.sleep(std.time.ns_per_ms * 10);
+            std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
         }
     }
 
@@ -793,7 +796,7 @@ pub const Application = struct {
                     last = now_ms;
 
                     // Yield to allow other tasks to run
-                    std.Thread.sleep(std.time.ns_per_ms * 10);
+                    std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
                 }
 
                 if (cb != null) {
