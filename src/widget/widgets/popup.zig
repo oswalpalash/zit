@@ -101,7 +101,7 @@ pub const Popup = struct {
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
         const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
-        const preferred = try self.getPreferredSize();
+        const preferred = try getPreferredSizeFn(widget_ptr);
         const actual_width = @min(rect.width, preferred.width);
         const actual_height = @min(rect.height, preferred.height);
 
