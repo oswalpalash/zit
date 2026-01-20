@@ -34,6 +34,11 @@ pub const Gauge = @import("widgets/gauge.zig").Gauge;
 pub const GaugeOrientation = @import("widgets/gauge.zig").GaugeOrientation;
 pub const SplitPane = @import("widgets/split_pane.zig").SplitPane;
 pub const SplitOrientation = @import("widgets/split_pane.zig").SplitOrientation;
+pub const Popup = @import("widgets/popup.zig").Popup;
+pub const ToastManager = @import("widgets/toast.zig").ToastManager;
+pub const ToastLevel = @import("widgets/toast.zig").ToastLevel;
+pub const MenuBar = @import("widgets/menubar.zig").MenuBar;
+pub const Canvas = @import("widgets/canvas.zig").Canvas;
 
 // For when a new file is needed
 pub const _placeholder = struct {};
@@ -127,6 +132,26 @@ pub fn createGauge(allocator: std.mem.Allocator) !*Gauge {
 /// Create a new split pane
 pub fn createSplitPane(allocator: std.mem.Allocator) !*SplitPane {
     return SplitPane.init(allocator);
+}
+
+/// Create a new popup
+pub fn createPopup(allocator: std.mem.Allocator, message: []const u8) !*Popup {
+    return Popup.init(allocator, message);
+}
+
+/// Create a new toast manager
+pub fn createToastManager(allocator: std.mem.Allocator) !*ToastManager {
+    return ToastManager.init(allocator);
+}
+
+/// Create a new menu bar
+pub fn createMenuBar(allocator: std.mem.Allocator) !*MenuBar {
+    return MenuBar.init(allocator);
+}
+
+/// Create a new canvas
+pub fn createCanvas(allocator: std.mem.Allocator, width: u16, height: u16) !*Canvas {
+    return Canvas.init(allocator, width, height);
 }
 
 /// Convenience function to focus a widget
