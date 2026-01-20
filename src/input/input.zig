@@ -1,5 +1,5 @@
 const std = @import("std");
-const zit = @import("zit");
+const builtin = @import("builtin");
 const terminal = @import("../terminal/terminal.zig");
 
 /// Input handling module
@@ -126,10 +126,17 @@ pub const KeyEvent = struct {
 
     /// Check if two key events are equal
     pub fn equals(self: KeyEvent, other: KeyEvent) bool {
-        return self.key == other.key and
-            self.modifiers.ctrl == other.modifiers.ctrl and
+        return self.modifiers.ctrl == other.modifiers.ctrl and
             self.modifiers.alt == other.modifiers.alt and
-            self.modifiers.shift == other.modifiers.shift;
+            self.modifiers.shift == other.modifiers.shift and
+            self.normalizedKey() == other.normalizedKey();
+    }
+
+    fn normalizedKey(self: KeyEvent) u21 {
+        if (self.modifiers.ctrl and self.key >= 1 and self.key <= 26) {
+            return @as(u21, 'a') + (self.key - 1);
+        }
+        return self.key;
     }
 };
 
@@ -242,37 +249,56 @@ pub const Keybinding = struct {
     key: KeyEvent,
 };
 
+const VI_BINDINGS = [_]Keybinding{
+    .{ .action = .cursor_left, .key = KeyEvent.init('h', KeyModifiers{}) },
+    .{ .action = .cursor_down, .key = KeyEvent.init('j', KeyModifiers{}) },
+    .{ .action = .cursor_up, .key = KeyEvent.init('k', KeyModifiers{}) },
+    .{ .action = .cursor_right, .key = KeyEvent.init('l', KeyModifiers{}) },
+    .{ .action = .undo, .key = KeyEvent.init('u', KeyModifiers{}) },
+    .{ .action = .redo, .key = KeyEvent.init('r', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .search, .key = KeyEvent.init('/', KeyModifiers{}) },
+};
+
+const EMACS_BINDINGS = [_]Keybinding{
+    .{ .action = .cursor_left, .key = KeyEvent.init('b', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .cursor_right, .key = KeyEvent.init('f', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .cursor_up, .key = KeyEvent.init('p', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .cursor_down, .key = KeyEvent.init('n', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .line_start, .key = KeyEvent.init('a', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .line_end, .key = KeyEvent.init('e', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .undo, .key = KeyEvent.init('_', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .search, .key = KeyEvent.init('s', KeyModifiers{ .ctrl = true }) },
+};
+
+const COMMON_EDITING_BINDINGS = [_]Keybinding{
+    .{ .action = .undo, .key = KeyEvent.init('z', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .redo, .key = KeyEvent.init('y', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .redo, .key = KeyEvent.init('Z', KeyModifiers{ .ctrl = true, .shift = true }) },
+    .{ .action = .copy, .key = KeyEvent.init('c', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .paste, .key = KeyEvent.init('v', KeyModifiers{ .ctrl = true }) },
+    .{ .action = .cut, .key = KeyEvent.init('x', KeyModifiers{ .ctrl = true }) },
+};
+
 /// Predefined profiles for popular editing paradigms.
 pub const KeybindingProfile = struct {
     bindings: []const Keybinding,
 
     pub fn vi() KeybindingProfile {
-        const mods = KeyModifiers{};
         return KeybindingProfile{
-            .bindings = &[_]Keybinding{
-                .{ .action = .cursor_left, .key = KeyEvent.init('h', mods) },
-                .{ .action = .cursor_down, .key = KeyEvent.init('j', mods) },
-                .{ .action = .cursor_up, .key = KeyEvent.init('k', mods) },
-                .{ .action = .cursor_right, .key = KeyEvent.init('l', mods) },
-                .{ .action = .undo, .key = KeyEvent.init('u', mods) },
-                .{ .action = .redo, .key = KeyEvent.init('r', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .search, .key = KeyEvent.init('/', mods) },
-            },
+            .bindings = &VI_BINDINGS,
         };
     }
 
     pub fn emacs() KeybindingProfile {
         return KeybindingProfile{
-            .bindings = &[_]Keybinding{
-                .{ .action = .cursor_left, .key = KeyEvent.init('b', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .cursor_right, .key = KeyEvent.init('f', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .cursor_up, .key = KeyEvent.init('p', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .cursor_down, .key = KeyEvent.init('n', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .line_start, .key = KeyEvent.init('a', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .line_end, .key = KeyEvent.init('e', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .undo, .key = KeyEvent.init('_', KeyModifiers{ .ctrl = true }) },
-                .{ .action = .search, .key = KeyEvent.init('s', KeyModifiers{ .ctrl = true }) },
-            },
+            .bindings = &EMACS_BINDINGS,
+        };
+    }
+
+    /// Common desktop editing shortcuts (Ctrl+Z/Ctrl+Y/Ctrl+C/V/X).
+    pub fn commonEditing() KeybindingProfile {
+        return KeybindingProfile{
+            .bindings = &COMMON_EDITING_BINDINGS,
         };
     }
 
@@ -284,68 +310,247 @@ pub const KeybindingProfile = struct {
     }
 };
 
+/// Try a list of profiles in order until one matches the event.
+pub fn matchEditorAction(event: KeyEvent, profiles: []const KeybindingProfile) ?EditorAction {
+    for (profiles) |profile| {
+        if (profile.match(event)) |action| return action;
+    }
+    return null;
+}
+
+/// Resolve an editor action using profiles plus baseline navigation keys.
+pub fn editorActionForEvent(event: KeyEvent, profiles: []const KeybindingProfile) ?EditorAction {
+    if (matchEditorAction(event, profiles)) |action| return action;
+
+    return switch (event.key) {
+        KeyCode.LEFT => .cursor_left,
+        KeyCode.RIGHT => .cursor_right,
+        KeyCode.UP => .cursor_up,
+        KeyCode.DOWN => .cursor_down,
+        KeyCode.HOME => .line_start,
+        KeyCode.END => .line_end,
+        KeyCode.PAGE_UP => .page_up,
+        KeyCode.PAGE_DOWN => .page_down,
+        else => null,
+    };
+}
+
 /// Simple undo/redo stack tailored for text-like edits.
 pub const UndoRedoStack = struct {
-    undo: std.ArrayList([]const u8),
-    redo: std.ArrayList([]const u8),
+    undo: std.ArrayList([]u8),
+    redo: std.ArrayList([]u8),
     allocator: std.mem.Allocator,
+    max_depth: usize = 128,
 
     pub fn init(allocator: std.mem.Allocator) UndoRedoStack {
         return UndoRedoStack{
-            .undo = std.ArrayList([]const u8).empty,
-            .redo = std.ArrayList([]const u8).empty,
+            .undo = std.ArrayList([]u8).empty,
+            .redo = std.ArrayList([]u8).empty,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *UndoRedoStack) void {
-        for (self.undo.items) |item| self.allocator.free(item);
-        for (self.redo.items) |item| self.allocator.free(item);
+        self.freeList(&self.undo);
+        self.freeList(&self.redo);
         self.undo.deinit(self.allocator);
         self.redo.deinit(self.allocator);
     }
 
-    pub fn push(self: *UndoRedoStack, snapshot: []const u8) !void {
-        try self.undo.append(self.allocator, try self.allocator.dupe(u8, snapshot));
-        self.redo.clearRetainingCapacity();
+    /// Limit the number of remembered states to avoid unbounded memory.
+    pub fn setMaxDepth(self: *UndoRedoStack, depth: usize) void {
+        self.max_depth = if (depth == 0) 1 else depth;
+        self.trim();
     }
 
-    pub fn undoOp(self: *UndoRedoStack, current: []const u8) ?[]const u8 {
-        if (self.undo.items.len == 0) return null;
-        const last = self.undo.pop();
-        self.redo.append(self.allocator, self.allocator.dupe(u8, current) catch current) catch {};
-        return last;
+    /// Capture a new snapshot as the current state.
+    pub fn capture(self: *UndoRedoStack, snapshot: []const u8) !void {
+        if (self.undo.items.len > 0) {
+            const last = self.undo.items[self.undo.items.len - 1];
+            if (std.mem.eql(u8, last, snapshot)) return;
+        }
+
+        const copy = try self.allocator.dupe(u8, snapshot);
+        try self.undo.append(self.allocator, copy);
+        self.trim();
+        self.clearRedo();
     }
 
-    pub fn redoOp(self: *UndoRedoStack, current: []const u8) ?[]const u8 {
+    /// Move backward in history, returning the new active state.
+    pub fn undoOp(self: *UndoRedoStack) ?[]const u8 {
+        if (self.undo.items.len <= 1) return null;
+
+        const current = self.undo.pop().?;
+        self.appendOrFree(&self.redo, current);
+
+        return self.undo.items[self.undo.items.len - 1];
+    }
+
+    /// Move forward in history, returning the new active state.
+    pub fn redoOp(self: *UndoRedoStack) ?[]const u8 {
         if (self.redo.items.len == 0) return null;
-        const next = self.redo.pop();
-        self.undo.append(self.allocator, self.allocator.dupe(u8, current) catch current) catch {};
-        return next;
+
+        const next = self.redo.pop().?;
+        self.appendOrFree(&self.undo, next);
+
+        return self.undo.items[self.undo.items.len - 1];
+    }
+
+    fn appendOrFree(self: *UndoRedoStack, list: *std.ArrayList([]u8), item: []u8) void {
+        list.append(self.allocator, item) catch {
+            self.allocator.free(item);
+            return;
+        };
+        if (list == &self.undo) self.trim();
+    }
+
+    fn freeList(self: *UndoRedoStack, list: *std.ArrayList([]u8)) void {
+        for (list.items) |item| self.allocator.free(item);
+        list.clearRetainingCapacity();
+    }
+
+    fn clearRedo(self: *UndoRedoStack) void {
+        self.freeList(&self.redo);
+    }
+
+    fn trim(self: *UndoRedoStack) void {
+        while (self.undo.items.len > self.max_depth) {
+            const dropped = self.undo.orderedRemove(0);
+            self.allocator.free(dropped);
+        }
     }
 };
 
-/// Minimal clipboard bridge used for copy/paste flows.
+/// Clipboard bridge used for copy/paste flows with system fallbacks.
 pub const Clipboard = struct {
-    buffer: ?[]const u8 = null,
+    buffer: ?[]u8 = null,
     allocator: std.mem.Allocator,
+    prefer_system: bool = false,
+    max_bytes: usize = 16 * 1024,
 
     pub fn init(allocator: std.mem.Allocator) Clipboard {
         return Clipboard{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Clipboard) void {
+        self.clearBuffer();
+    }
+
+    pub fn copy(self: *Clipboard, data: []const u8) !void {
+        const trimmed_len = @min(data.len, self.max_bytes);
+        const trimmed = data[0..trimmed_len];
+
+        try self.replaceBuffer(trimmed);
+
+        if (self.prefer_system) {
+            _ = self.tryWriteSystem(trimmed);
+        }
+    }
+
+    pub fn paste(self: *Clipboard) ?[]const u8 {
+        if (self.prefer_system) {
+            if (self.tryReadSystem()) |system_data| {
+                self.storeOwned(system_data);
+            }
+        }
+        return self.buffer;
+    }
+
+    pub fn clear(self: *Clipboard) void {
+        self.clearBuffer();
+    }
+
+    pub fn preferSystem(self: *Clipboard, enable: bool) void {
+        self.prefer_system = enable;
+    }
+
+    fn replaceBuffer(self: *Clipboard, data: []const u8) !void {
+        const owned = try self.allocator.dupe(u8, data);
+        self.storeOwned(owned);
+    }
+
+    fn clearBuffer(self: *Clipboard) void {
         if (self.buffer) |buf| self.allocator.free(buf);
         self.buffer = null;
     }
 
-    pub fn copy(self: *Clipboard, data: []const u8) !void {
-        if (self.buffer) |buf| self.allocator.free(buf);
-        self.buffer = try self.allocator.dupe(u8, data);
+    fn storeOwned(self: *Clipboard, owned: []u8) void {
+        self.clearBuffer();
+        self.buffer = owned;
     }
 
-    pub fn paste(self: *Clipboard) ?[]const u8 {
-        return self.buffer;
+    fn tryWriteSystem(self: *Clipboard, data: []const u8) bool {
+        const os_tag = builtin.os.tag;
+        const commands = switch (os_tag) {
+            .macos => &[_][]const []const u8{&[_][]const u8{"pbcopy"}},
+            else => &[_][]const []const u8{
+                &[_][]const u8{"wl-copy"},
+                &[_][]const u8{ "xclip", "-selection", "clipboard" },
+                &[_][]const u8{ "xsel", "--clipboard", "--input" },
+            },
+        };
+
+        for (commands) |cmd| {
+            if (self.pipeToCommand(cmd, data)) return true;
+        }
+
+        return false;
+    }
+
+    fn tryReadSystem(self: *Clipboard) ?[]u8 {
+        const os_tag = builtin.os.tag;
+        const commands = switch (os_tag) {
+            .macos => &[_][]const []const u8{&[_][]const u8{"pbpaste"}},
+            else => &[_][]const []const u8{
+                &[_][]const u8{ "wl-paste", "-n" },
+                &[_][]const u8{ "xclip", "-selection", "clipboard", "-o" },
+                &[_][]const u8{ "xsel", "--clipboard", "--output" },
+            },
+        };
+
+        for (commands) |cmd| {
+            const result = self.readFromCommand(cmd) catch continue;
+            return result;
+        }
+
+        return null;
+    }
+
+    fn pipeToCommand(self: *Clipboard, argv: []const []const u8, data: []const u8) bool {
+        var child = std.process.Child.init(argv, self.allocator);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+
+        child.spawn() catch return false;
+
+        const stdin = child.stdin orelse return false;
+        stdin.writeAll(data) catch {
+            _ = child.kill() catch {};
+            return false;
+        };
+        stdin.close();
+
+        _ = child.wait() catch return false;
+        return true;
+    }
+
+    fn readFromCommand(self: *Clipboard, argv: []const []const u8) ![]u8 {
+        var child = std.process.Child.init(argv, self.allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Ignore;
+
+        try child.spawn();
+
+        const stdout = child.stdout orelse return error.NoStdout;
+        const data = stdout.readToEndAlloc(self.allocator, self.max_bytes) catch |err| {
+            _ = child.kill() catch {};
+            return err;
+        };
+
+        _ = child.wait() catch {};
+        return data;
     }
 };
 
@@ -414,6 +619,27 @@ pub const FocusDirection = enum {
     left,
     right,
 };
+
+/// Normalize common navigation keystrokes into focus directions.
+pub fn normalizeFocusDirection(event: KeyEvent) ?FocusDirection {
+    return switch (event.key) {
+        KeyCode.LEFT => .left,
+        KeyCode.RIGHT => .right,
+        KeyCode.UP => .up,
+        KeyCode.DOWN => .down,
+        KeyCode.TAB => if (event.modifiers.shift) .previous else .next,
+        else => blk: {
+            if (event.modifiers.ctrl or event.modifiers.alt) break :blk null;
+            break :blk switch (event.key) {
+                'h', 'H' => .left,
+                'l', 'L' => .right,
+                'k', 'K' => .up,
+                'j', 'J' => .down,
+                else => null,
+            };
+        },
+    };
+}
 
 /// Virtual function table for focusables
 pub const FocusableVTable = struct {
@@ -572,16 +798,24 @@ pub const FocusManager = struct {
     /// Handle a key event by sending it to the focused element
     pub fn handleKeyEvent(self: *FocusManager, key: KeyEvent) bool {
         // If Tab is pressed, handle focus navigation
-        if (key.key == KeyCode.TAB) {
+        if (key.key == KeyCode.TAB and !key.modifiers.ctrl and !key.modifiers.alt) {
             const direction: FocusDirection = if (key.modifiers.shift) .previous else .next;
             return self.moveFocus(direction);
         }
 
-        // If nothing is focused, nothing to do
-        if (self.current_focus == null) return false;
+        // Give the focused element first chance at the event
+        if (self.current_focus) |idx| {
+            if (self.elements.items[idx].onKeyEvent(key)) {
+                return true;
+            }
+        }
 
-        // Send the key event to the focused element
-        return self.elements.items[self.current_focus.?].onKeyEvent(key);
+        // Fall back to focus navigation keys when the widget didn't consume the event
+        if (normalizeFocusDirection(key)) |direction| {
+            return self.moveFocus(direction);
+        }
+
+        return false;
     }
 
     /// Get the currently focused element, if any
@@ -655,7 +889,7 @@ pub const InputHandler = struct {
     /// Read an event from input
     pub fn readEvent(self: *InputHandler) !Event {
         // On macOS, we need to use a different approach for robust input handling
-        if (@import("builtin").os.tag == .macos) {
+        if (builtin.os.tag == .macos) {
             var buffer: [1]u8 = undefined;
 
             // First check if data is available without blocking
@@ -696,6 +930,24 @@ pub const InputHandler = struct {
             // Check for escape sequence
             if (buffer[0] == 0x1b) {
                 return try self.parseEscapeSequence();
+            }
+
+            if (buffer[0] == KeyCode.BACKSPACE or buffer[0] == 8) {
+                return Event{
+                    .key = KeyEvent{
+                        .key = KeyCode.BACKSPACE,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
+            }
+
+            if (buffer[0] == KeyCode.TAB) {
+                return Event{
+                    .key = KeyEvent{
+                        .key = KeyCode.TAB,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
             }
 
             // Check for control characters
@@ -754,6 +1006,24 @@ pub const InputHandler = struct {
                 return try self.parseEscapeSequence();
             }
 
+            if (byte == KeyCode.BACKSPACE or byte == 8) {
+                return Event{
+                    .key = KeyEvent{
+                        .key = KeyCode.BACKSPACE,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
+            }
+
+            if (byte == KeyCode.TAB) {
+                return Event{
+                    .key = KeyEvent{
+                        .key = KeyCode.TAB,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
+            }
+
             // Check for control characters
             if (byte < 32) {
                 // Special handling for newline and carriage return
@@ -796,7 +1066,7 @@ pub const InputHandler = struct {
     /// Parse an escape sequence
     fn parseEscapeSequence(self: *InputHandler) !Event {
         // On macOS, use a specialized approach
-        if (@import("builtin").os.tag == .macos) {
+        if (builtin.os.tag == .macos) {
             // Try to read the next byte with a very small delay
             var buffer: [1]u8 = undefined;
             var poll_fds = [_]std.posix.pollfd{
@@ -913,7 +1183,7 @@ pub const InputHandler = struct {
     /// Parse a CSI (Control Sequence Introducer) sequence
     fn parseCSISequence(self: *InputHandler) !Event {
         // On macOS, use direct read for better reliability
-        if (@import("builtin").os.tag == .macos) {
+        if (builtin.os.tag == .macos) {
             // Read the next byte directly
             var next_byte: [1]u8 = undefined;
             const amount = std.posix.read(self.term.stdin_fd, next_byte[0..1]) catch {
@@ -1221,7 +1491,7 @@ pub const InputHandler = struct {
 
     /// Poll for an event with timeout
     pub fn pollEvent(self: *InputHandler, timeout_ms: u64) !?Event {
-        if (@import("builtin").os.tag == .macos) {
+        if (builtin.os.tag == .macos) {
             // On macOS we need to be extra careful about polling
             // First check if data is available with a very short timeout
             var poll_fds = [_]std.posix.pollfd{

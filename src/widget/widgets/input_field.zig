@@ -10,6 +10,8 @@ pub const InputField = struct {
     widget: base.Widget,
     /// Text content
     text: []u8,
+    /// Active text length
+    len: usize = 0,
     /// Current cursor position
     cursor: usize = 0,
     /// Maximum text length
@@ -42,6 +44,14 @@ pub const InputField = struct {
     on_submit: ?*const fn ([]const u8) void = null,
     /// Allocator for text operations
     allocator: std.mem.Allocator,
+    /// Undo/redo history
+    undo_redo: input.UndoRedoStack,
+    /// Owned clipboard storage
+    clipboard_storage: input.Clipboard,
+    /// Active clipboard reference
+    clipboard: *input.Clipboard,
+    /// Whether the clipboard is owned by this widget
+    owns_clipboard: bool = true,
 
     /// Virtual method table for InputField
     pub const vtable = base.Widget.VTable{
@@ -54,17 +64,29 @@ pub const InputField = struct {
 
     /// Initialize a new input field
     pub fn init(allocator: std.mem.Allocator, max_length: usize) !*InputField {
+        const capacity = @max(max_length, 1);
         const self = try allocator.create(InputField);
-        const initial_buffer = try allocator.alloc(u8, max_length);
+        const initial_buffer = try allocator.alloc(u8, capacity);
 
         @memset(initial_buffer, 0);
 
         self.* = InputField{
             .widget = base.Widget.init(&vtable),
             .text = initial_buffer,
-            .max_length = max_length,
+            .max_length = capacity,
             .allocator = allocator,
+            .undo_redo = input.UndoRedoStack.init(allocator),
+            .clipboard_storage = input.Clipboard.init(allocator),
+            .clipboard = undefined,
         };
+
+        self.clipboard = &self.clipboard_storage;
+        self.widget.setFocusRing(render.FocusRingStyle{
+            .color = self.focused_bg,
+            .border = .rounded,
+            .style = render.Style{ .bold = true },
+        });
+        try self.undo_redo.capture(self.text[0..0]);
 
         return self;
     }
@@ -74,30 +96,85 @@ pub const InputField = struct {
         if (self.placeholder_owned and self.placeholder.len > 0) {
             self.allocator.free(self.placeholder);
         }
+        self.undo_redo.deinit();
+        if (self.owns_clipboard) {
+            self.clipboard_storage.deinit();
+        }
         self.allocator.free(self.text);
         self.allocator.destroy(self);
     }
 
+    fn currentText(self: *const InputField) []const u8 {
+        return self.text[0..self.len];
+    }
+
+    fn resetSentinel(self: *InputField) void {
+        if (self.len < self.text.len) {
+            self.text[self.len] = 0;
+        }
+    }
+
+    fn writeText(self: *InputField, value: []const u8) void {
+        const len = @min(value.len, self.text.len);
+        @memset(self.text, 0);
+        if (len > 0) {
+            std.mem.copyForwards(u8, self.text[0..len], value[0..len]);
+        }
+        self.len = len;
+        self.cursor = len;
+        self.resetSentinel();
+    }
+
+    fn clampCursor(self: *InputField) void {
+        if (self.cursor > self.len) {
+            self.cursor = self.len;
+        }
+    }
+
+    fn pushHistory(self: *InputField) !void {
+        try self.undo_redo.capture(self.currentText());
+    }
+
+    fn notifyChange(self: *InputField) void {
+        if (self.on_change) |callback| {
+            callback(self.currentText());
+        }
+    }
+
+    fn applySnapshot(self: *InputField, snapshot: []const u8) void {
+        self.writeText(snapshot);
+        self.notifyChange();
+    }
+
+    /// Share a clipboard instance between multiple input fields.
+    pub fn useClipboard(self: *InputField, clipboard: *input.Clipboard) void {
+        if (self.owns_clipboard) {
+            self.clipboard_storage.deinit();
+        }
+        self.clipboard = clipboard;
+        self.owns_clipboard = false;
+    }
+
+    /// Toggle integration with the system clipboard when supported by the host.
+    pub fn preferSystemClipboard(self: *InputField, enable: bool) void {
+        self.clipboard.preferSystem(enable);
+    }
+
+    /// Limit undo history growth.
+    pub fn setHistoryDepth(self: *InputField, depth: usize) void {
+        self.undo_redo.setMaxDepth(depth);
+    }
+
     /// Set the input field text
     pub fn setText(self: *InputField, text: []const u8) void {
-        const len = @min(text.len, self.max_length);
-        @memset(self.text, 0);
-        @memcpy(self.text[0..len], text[0..len]);
-        self.cursor = len;
-
-        if (self.on_change) |callback| {
-            callback(self.getText());
-        }
+        self.writeText(text);
+        self.pushHistory() catch {};
+        self.notifyChange();
     }
 
     /// Get the current text
     pub fn getText(self: *InputField) []const u8 {
-        // Find the actual length (first null byte)
-        var len: usize = 0;
-        while (len < self.text.len and self.text[len] != 0) {
-            len += 1;
-        }
-        return self.text[0..len];
+        return self.currentText();
     }
 
     /// Set the placeholder text. Existing owned placeholder memory is released before storing the new value.
@@ -147,6 +224,8 @@ pub const InputField = struct {
         if (!self.widget.visible) {
             return;
         }
+
+        self.clampCursor();
 
         const rect = self.widget.rect;
 
@@ -224,6 +303,111 @@ pub const InputField = struct {
                 renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
             }
         }
+
+        self.widget.drawFocusRing(renderer);
+    }
+
+    fn applyEditorAction(self: *InputField, action: input.EditorAction) anyerror!bool {
+        switch (action) {
+            .cursor_left => {
+                if (self.cursor > 0) self.cursor -= 1;
+                return true;
+            },
+            .cursor_right => {
+                if (self.cursor < self.len) self.cursor += 1;
+                return true;
+            },
+            .line_start => {
+                self.cursor = 0;
+                return true;
+            },
+            .line_end => {
+                self.cursor = self.len;
+                return true;
+            },
+            .undo => return self.performUndo(),
+            .redo => return self.performRedo(),
+            .copy => return self.performCopy(),
+            .paste => return self.performPaste(),
+            .cut => return self.performCut(),
+            else => return false,
+        }
+    }
+
+    fn performUndo(self: *InputField) anyerror!bool {
+        if (self.undo_redo.undoOp()) |snapshot| {
+            self.applySnapshot(snapshot);
+            return true;
+        }
+        return false;
+    }
+
+    fn performRedo(self: *InputField) anyerror!bool {
+        if (self.undo_redo.redoOp()) |snapshot| {
+            self.applySnapshot(snapshot);
+            return true;
+        }
+        return false;
+    }
+
+    fn performCopy(self: *InputField) anyerror!bool {
+        const slice = self.currentText();
+        try self.clipboard.copy(slice);
+        return slice.len > 0;
+    }
+
+    fn performCut(self: *InputField) anyerror!bool {
+        const slice = self.currentText();
+        if (slice.len == 0) return false;
+
+        try self.clipboard.copy(slice);
+        self.writeText("");
+        try self.pushHistory();
+        self.notifyChange();
+        return true;
+    }
+
+    fn performPaste(self: *InputField) anyerror!bool {
+        const pasted = self.clipboard.paste() orelse return false;
+        if (pasted.len == 0) return false;
+
+        const available = if (self.text.len > self.len) self.text.len - self.len else 0;
+        if (available == 0) return false;
+
+        const insert_len = @min(available, pasted.len);
+        if (self.cursor < self.len) {
+            const tail = self.len - self.cursor;
+            if (tail > 0) {
+                std.mem.copyBackwards(u8, self.text[self.cursor + insert_len .. self.cursor + insert_len + tail], self.text[self.cursor .. self.cursor + tail]);
+            }
+        }
+
+        std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + insert_len], pasted[0..insert_len]);
+
+        self.len += insert_len;
+        self.cursor += insert_len;
+        self.resetSentinel();
+        try self.pushHistory();
+        self.notifyChange();
+        return true;
+    }
+
+    fn insertByte(self: *InputField, value: u8) !void {
+        if (self.len >= self.text.len) {
+            return;
+        }
+
+        if (self.cursor < self.len) {
+            const tail = self.len - self.cursor;
+            std.mem.copyBackwards(u8, self.text[self.cursor + 1 .. self.cursor + 1 + tail], self.text[self.cursor .. self.cursor + tail]);
+        }
+
+        self.text[self.cursor] = value;
+        self.len += 1;
+        self.cursor += 1;
+        self.resetSentinel();
+        try self.pushHistory();
+        self.notifyChange();
     }
 
     /// Event handling implementation for InputField
@@ -237,79 +421,59 @@ pub const InputField = struct {
         // Only handle keyboard events when focused
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
-            const current_text = self.getText();
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
+
+            self.clampCursor();
+
+            if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                if (try self.applyEditorAction(action)) {
+                    self.clampCursor();
+                    return true;
+                }
+            }
 
             switch (key_event.key) {
-                '\n' => { // Enter
+                input.KeyCode.ENTER => {
                     if (self.on_submit) |callback| {
-                        callback(current_text);
+                        callback(self.currentText());
                     }
                     return true;
                 },
-                8 => { // Backspace
-                    if (self.cursor > 0 and current_text.len > 0) {
-                        // Remove one character
-                        const copy_len = current_text.len - self.cursor;
-                        if (copy_len > 0) {
-                            std.mem.copyForwards(u8, self.text[self.cursor - 1 ..], self.text[self.cursor .. self.cursor + copy_len]);
+                input.KeyCode.BACKSPACE => {
+                    if (self.cursor > 0 and self.len > 0) {
+                        const tail = self.len - self.cursor;
+                        if (tail > 0) {
+                            std.mem.copyForwards(u8, self.text[self.cursor - 1 .. self.cursor - 1 + tail], self.text[self.cursor .. self.cursor + tail]);
                         }
-                        self.text[current_text.len - 1] = 0;
+                        self.len -= 1;
                         self.cursor -= 1;
-
-                        if (self.on_change) |callback| {
-                            callback(self.getText());
+                        self.resetSentinel();
+                        try self.pushHistory();
+                        self.notifyChange();
+                    }
+                    return true;
+                },
+                input.KeyCode.DELETE => {
+                    if (self.cursor < self.len) {
+                        const tail = self.len - self.cursor - 1;
+                        if (tail > 0) {
+                            std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + tail], self.text[self.cursor + 1 .. self.cursor + 1 + tail]);
                         }
+                        self.len -= 1;
+                        self.resetSentinel();
+                        try self.pushHistory();
+                        self.notifyChange();
                     }
-                    return true;
-                },
-                127 => { // Delete
-                    if (self.cursor < current_text.len) {
-                        // Remove one character at cursor
-                        const copy_len = current_text.len - self.cursor - 1;
-                        if (copy_len > 0) {
-                            std.mem.copyForwards(u8, self.text[self.cursor..], self.text[self.cursor + 1 .. self.cursor + 1 + copy_len]);
-                        }
-                        self.text[current_text.len - 1] = 0;
-
-                        if (self.on_change) |callback| {
-                            callback(self.getText());
-                        }
-                    }
-                    return true;
-                },
-                4 => { // Right arrow
-                    if (self.cursor < current_text.len) {
-                        self.cursor += 1;
-                    }
-                    return true;
-                },
-                3 => { // Left arrow
-                    if (self.cursor > 0) {
-                        self.cursor -= 1;
-                    }
-                    return true;
-                },
-                1 => { // Home
-                    self.cursor = 0;
-                    return true;
-                },
-                5 => { // End
-                    self.cursor = current_text.len;
                     return true;
                 },
                 else => {
                     // Regular character input
-                    if (key_event.key >= 32 and key_event.key <= 126 and current_text.len < self.max_length - 1) {
-                        // Make room for the new character
-                        if (self.cursor < current_text.len) {
-                            std.mem.copyBackwards(u8, self.text[self.cursor + 1 .. current_text.len + 1], self.text[self.cursor..current_text.len]);
-                        }
-                        self.text[self.cursor] = @as(u8, @intCast(key_event.key));
-                        self.cursor += 1;
-
-                        if (self.on_change) |callback| {
-                            callback(self.getText());
-                        }
+                    if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                        try self.insertByte(@as(u8, @intCast(key_event.key)));
                         return true;
                     }
                 },
@@ -361,4 +525,39 @@ test "input field placeholder can be replaced safely" {
     try field.setPlaceholder("first");
     try field.setPlaceholder("second");
     try std.testing.expectEqualStrings("second", field.placeholder);
+}
+
+test "input field supports undo and redo shortcuts" {
+    const alloc = std.testing.allocator;
+    var field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    field.setText("abc");
+    field.setText("abcd");
+
+    const undo_event = input.Event{ .key = input.KeyEvent.init('z', input.KeyModifiers{ .ctrl = true }) };
+    try std.testing.expect(try field.widget.handleEvent(undo_event));
+    try std.testing.expectEqualStrings("abc", field.getText());
+
+    const redo_event = input.Event{ .key = input.KeyEvent.init('y', input.KeyModifiers{ .ctrl = true }) };
+    try std.testing.expect(try field.widget.handleEvent(redo_event));
+    try std.testing.expectEqualStrings("abcd", field.getText());
+}
+
+test "input field copy and paste round trips through clipboard" {
+    const alloc = std.testing.allocator;
+    var field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    field.setText("copy-me");
+    const copy_event = input.Event{ .key = input.KeyEvent.init('c', input.KeyModifiers{ .ctrl = true }) };
+    try std.testing.expect(try field.widget.handleEvent(copy_event));
+
+    field.setText("");
+    const paste_event = input.Event{ .key = input.KeyEvent.init('v', input.KeyModifiers{ .ctrl = true }) };
+    try std.testing.expect(try field.widget.handleEvent(paste_event));
+
+    try std.testing.expectEqualStrings("copy-me", field.getText());
 }

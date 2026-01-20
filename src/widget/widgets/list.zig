@@ -257,6 +257,8 @@ pub const List = struct {
 
             y += 1;
         }
+
+        self.widget.drawFocusRing(renderer);
     }
 
     /// Event handling implementation for List
@@ -289,12 +291,12 @@ pub const List = struct {
                 }
 
                 // Mouse wheel scrolls list
-                if (mouse_event.action == .press and mouse_event.button == 4) { // Scroll up
+                if (mouse_event.action == .scroll_up) {
                     if (self.first_visible_index > 0) {
                         self.first_visible_index -= 1;
                     }
                     return true;
-                } else if (mouse_event.action == .press and mouse_event.button == 5) { // Scroll down
+                } else if (mouse_event.action == .scroll_down) {
                     if (self.first_visible_index + self.visible_items_count < self.items.items.len) {
                         self.first_visible_index += 1;
                     }
@@ -308,41 +310,58 @@ pub const List = struct {
         // Handle key events
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
 
-            if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == 2) { // Down
-                if (self.selected_index < self.items.items.len - 1) {
-                    self.setSelectedIndex(self.selected_index + 1);
+            if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                switch (action) {
+                    .cursor_down => {
+                        if (self.selected_index < self.items.items.len - 1) {
+                            self.setSelectedIndex(self.selected_index + 1);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .cursor_up => {
+                        if (self.selected_index > 0) {
+                            self.setSelectedIndex(self.selected_index - 1);
+                        }
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .page_down => {
+                        const new_index = @min(self.selected_index + self.visible_items_count, self.items.items.len - 1);
+                        self.setSelectedIndex(new_index);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .page_up => {
+                        const new_index = if (self.selected_index > self.visible_items_count)
+                            self.selected_index - self.visible_items_count
+                        else
+                            0;
+                        self.setSelectedIndex(new_index);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .line_start => {
+                        self.setSelectedIndex(0);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    .line_end => {
+                        self.setSelectedIndex(self.items.items.len - 1);
+                        self.resetTypeahead();
+                        return true;
+                    },
+                    else => {},
                 }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 3) { // Up
-                if (self.selected_index > 0) {
-                    self.setSelectedIndex(self.selected_index - 1);
-                }
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 6) { // Page down
-                const new_index = @min(self.selected_index + self.visible_items_count, self.items.items.len - 1);
-                self.setSelectedIndex(new_index);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 5) { // Page up
-                const new_index = if (self.selected_index > self.visible_items_count)
-                    self.selected_index - self.visible_items_count
-                else
-                    0;
-                self.setSelectedIndex(new_index);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 7) { // Home
-                self.setSelectedIndex(0);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == 8) { // End
-                self.setSelectedIndex(self.items.items.len - 1);
-                self.resetTypeahead();
-                return true;
-            } else if (key_event.key == '\r' or key_event.key == '\n') { // Enter
+            }
+
+            if (key_event.key == '\r' or key_event.key == '\n') { // Enter
                 if (self.on_item_activated != null) {
                     self.on_item_activated.?(self.selected_index);
                 }

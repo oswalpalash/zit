@@ -246,6 +246,8 @@ pub const TabView = struct {
         if (self.tabs.items.len > 0) {
             try self.tabs.items[self.active_tab].content.draw(renderer);
         }
+
+        self.widget.drawFocusRing(renderer);
     }
 
     /// Calculate the index of the tab at the given position
@@ -298,19 +300,32 @@ pub const TabView = struct {
         // Handle keyboard navigation between tabs
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
+
+            if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                switch (action) {
+                    .cursor_left => {
+                        if (self.active_tab > 0) {
+                            self.setActiveTab(self.active_tab - 1);
+                            return true;
+                        }
+                    },
+                    .cursor_right => {
+                        if (self.active_tab < self.tabs.items.len - 1) {
+                            self.setActiveTab(self.active_tab + 1);
+                            return true;
+                        }
+                    },
+                    else => {},
+                }
+            }
 
             // Left/right arrows or h/l keys to change tabs
-            if (key_event.key == 'h' or key_event.key == 'H' or key_event.key == 3) { // Left
-                if (self.active_tab > 0) {
-                    self.setActiveTab(self.active_tab - 1);
-                    return true;
-                }
-            } else if (key_event.key == 'l' or key_event.key == 'L' or key_event.key == 4) { // Right
-                if (self.active_tab < self.tabs.items.len - 1) {
-                    self.setActiveTab(self.active_tab + 1);
-                    return true;
-                }
-            } else if (key_event.key == '1' or key_event.key >= '1' and key_event.key <= '9') {
+            if (key_event.key == '1' or key_event.key >= '1' and key_event.key <= '9') {
                 // Number keys 1-9 to switch to specific tabs
                 const tab_index = @as(usize, @intCast(key_event.key - '1'));
                 if (tab_index < self.tabs.items.len) {

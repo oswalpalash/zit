@@ -117,7 +117,7 @@ pub fn createContainer(allocator: std.mem.Allocator) !*Container {
 
 /// Create a new input field
 pub fn createInputField(allocator: std.mem.Allocator) !*InputField {
-    return InputField.init(allocator);
+    return InputField.init(allocator, 256);
 }
 
 /// Create a new input field using the fluent builder API

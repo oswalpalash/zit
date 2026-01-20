@@ -194,6 +194,44 @@ pub const ScrollContainer = struct {
         return @max(0, height);
     }
 
+    fn maxVerticalOffset(self: *ScrollContainer) i16 {
+        return @max(0, self.content_height - self.getViewportHeight());
+    }
+
+    fn maxHorizontalOffset(self: *ScrollContainer) i16 {
+        return @max(0, self.content_width - self.getViewportWidth());
+    }
+
+    fn applyVOffset(self: *ScrollContainer, offset: i16) void {
+        const clamped = std.math.clamp(offset, 0, self.maxVerticalOffset());
+        if (clamped == self.v_offset) return;
+        self.v_offset = clamped;
+        self.syncVScrollbar();
+    }
+
+    fn applyHOffset(self: *ScrollContainer, offset: i16) void {
+        const clamped = std.math.clamp(offset, 0, self.maxHorizontalOffset());
+        if (clamped == self.h_offset) return;
+        self.h_offset = clamped;
+        self.syncHScrollbar();
+    }
+
+    fn syncVScrollbar(self: *ScrollContainer) void {
+        if (self.v_scrollbar) |v_scrollbar_widget| {
+            const denom = @max(1, self.maxVerticalOffset());
+            const value = @as(u8, @intCast(self.v_offset * v_scrollbar_widget.max_value / denom));
+            v_scrollbar_widget.setValue(value);
+        }
+    }
+
+    fn syncHScrollbar(self: *ScrollContainer) void {
+        if (self.h_scrollbar) |h_scrollbar_widget| {
+            const denom = @max(1, self.maxHorizontalOffset());
+            const value = @as(u8, @intCast(self.h_offset * h_scrollbar_widget.max_value / denom));
+            h_scrollbar_widget.setValue(value);
+        }
+    }
+
     /// Get the border characters based on style
     fn getBorderChars(self: *ScrollContainer) [6]u21 {
         if (self.style) |custom_style| {
@@ -283,6 +321,8 @@ pub const ScrollContainer = struct {
                 try v_scrollbar_widget.draw(renderer);
             }
         }
+
+        self.widget.drawFocusRing(renderer);
     }
 
     /// Get the content rectangle
@@ -350,49 +390,11 @@ pub const ScrollContainer = struct {
             const content_rect = self.getContentRect();
 
             if (content_rect.contains(mouse_event.x, mouse_event.y)) {
-                // Mouse wheel scrolling
-                if (mouse_event.action == .scroll) {
-                    if (mouse_event.scroll_y != 0 and self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                        // Vertical scrolling with mouse wheel
-                        const scroll_amount = 3; // Scroll 3 lines at a time
-
-                        if (mouse_event.scroll_y > 0) {
-                            // Scroll up
-                            self.v_offset = if (self.v_offset >= scroll_amount) self.v_offset - scroll_amount else 0;
-                        } else {
-                            // Scroll down
-                            const max_offset = @max(0, self.content_height - self.getViewportHeight());
-                            self.v_offset = @min(self.v_offset + scroll_amount, max_offset);
-                        }
-
-                        // Update scrollbar position
-                        if (self.v_scrollbar) |v_scrollbar_widget| {
-                            const value = @as(u8, @intCast(self.v_offset * v_scrollbar_widget.max_value / @max(1, self.content_height - self.getViewportHeight())));
-                            v_scrollbar_widget.setValue(value);
-                        }
-
-                        return true;
-                    }
-
-                    if (mouse_event.scroll_x != 0 and self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                        // Horizontal scrolling with mouse wheel
-                        const scroll_amount = 3; // Scroll 3 columns at a time
-
-                        if (mouse_event.scroll_x > 0) {
-                            // Scroll left
-                            self.h_offset = if (self.h_offset >= scroll_amount) self.h_offset - scroll_amount else 0;
-                        } else {
-                            // Scroll right
-                            const max_offset = @max(0, self.content_width - self.getViewportWidth());
-                            self.h_offset = @min(self.h_offset + scroll_amount, max_offset);
-                        }
-
-                        // Update scrollbar position
-                        if (self.h_scrollbar) |h_scrollbar_widget| {
-                            const value = @as(u8, @intCast(self.h_offset * h_scrollbar_widget.max_value / @max(1, self.content_width - self.getViewportWidth())));
-                            h_scrollbar_widget.setValue(value);
-                        }
-
+                if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
+                    if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                        const scroll_amount: i16 = 3;
+                        const delta = if (mouse_event.action == .scroll_up) -scroll_amount else scroll_amount;
+                        self.applyVOffset(self.v_offset + delta);
                         return true;
                     }
                 }
@@ -402,52 +404,79 @@ pub const ScrollContainer = struct {
         // Handle keyboard scrolling when focused
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const profiles = [_]input.KeybindingProfile{
+                input.KeybindingProfile.commonEditing(),
+                input.KeybindingProfile.emacs(),
+                input.KeybindingProfile.vi(),
+            };
 
-            if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == 4) { // Down
-                    self.v_offset = @min(self.v_offset + 1, @max(0, self.content_height - self.getViewportHeight()));
-
-                    // Update scrollbar position
-                    if (self.v_scrollbar) |v_scrollbar_widget| {
-                        const value = @as(u8, @intCast(self.v_offset * v_scrollbar_widget.max_value / @max(1, self.content_height - self.getViewportHeight())));
-                        v_scrollbar_widget.setValue(value);
-                    }
-
-                    return true;
-                } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == 3) { // Up
-                    self.v_offset = if (self.v_offset > 0) self.v_offset - 1 else 0;
-
-                    // Update scrollbar position
-                    if (self.v_scrollbar) |v_scrollbar_widget| {
-                        const value = @as(u8, @intCast(self.v_offset * v_scrollbar_widget.max_value / @max(1, self.content_height - self.getViewportHeight())));
-                        v_scrollbar_widget.setValue(value);
-                    }
-
-                    return true;
-                }
-            }
-
-            if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                if (key_event.key == 'l' or key_event.key == 'L' or key_event.key == 4) { // Right
-                    self.h_offset = @min(self.h_offset + 1, @max(0, self.content_width - self.getViewportWidth()));
-
-                    // Update scrollbar position
-                    if (self.h_scrollbar) |h_scrollbar_widget| {
-                        const value = @as(u8, @intCast(self.h_offset * h_scrollbar_widget.max_value / @max(1, self.content_width - self.getViewportWidth())));
-                        h_scrollbar_widget.setValue(value);
-                    }
-
-                    return true;
-                } else if (key_event.key == 'h' or key_event.key == 'H' or key_event.key == 3) { // Left
-                    self.h_offset = if (self.h_offset > 0) self.h_offset - 1 else 0;
-
-                    // Update scrollbar position
-                    if (self.h_scrollbar) |h_scrollbar_widget| {
-                        const value = @as(u8, @intCast(self.h_offset * h_scrollbar_widget.max_value / @max(1, self.content_width - self.getViewportWidth())));
-                        h_scrollbar_widget.setValue(value);
-                    }
-
-                    return true;
+            if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                switch (action) {
+                    .cursor_down => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(self.v_offset + 1);
+                            return true;
+                        }
+                    },
+                    .cursor_up => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(self.v_offset - 1);
+                            return true;
+                        }
+                    },
+                    .page_down => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(self.v_offset + self.getViewportHeight());
+                            return true;
+                        }
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(self.h_offset + self.getViewportWidth());
+                            return true;
+                        }
+                    },
+                    .page_up => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(self.v_offset - self.getViewportHeight());
+                            return true;
+                        }
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(self.h_offset - self.getViewportWidth());
+                            return true;
+                        }
+                    },
+                    .line_end => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(self.maxVerticalOffset());
+                            return true;
+                        }
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(self.maxHorizontalOffset());
+                            return true;
+                        }
+                    },
+                    .line_start => {
+                        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
+                            self.applyVOffset(0);
+                            return true;
+                        }
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(0);
+                            return true;
+                        }
+                    },
+                    .cursor_right => {
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(self.h_offset + 1);
+                            return true;
+                        }
+                    },
+                    .cursor_left => {
+                        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
+                            self.applyHOffset(self.h_offset - 1);
+                            return true;
+                        }
+                    },
+                    else => {},
                 }
             }
         }

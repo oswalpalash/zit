@@ -28,6 +28,8 @@ pub const Widget = struct {
     id: []const u8 = "",
     /// Optional style class used by stylesheet helpers
     style_class: ?[]const u8 = null,
+    /// Optional focus ring styling
+    focus_ring: ?render.FocusRingStyle = null,
     /// Parent widget, used primarily for modal dialogs and layout containment
     parent: ?*Widget = null,
 
@@ -112,9 +114,44 @@ pub const Widget = struct {
         self.style_class = class;
     }
 
+    /// Set focus ring styling.
+    pub fn setFocusRing(self: *Widget, ring: ?render.FocusRingStyle) void {
+        self.focus_ring = ring;
+    }
+
     /// Set parent widget
     pub fn setParent(self: *Widget, parent: ?*Widget) void {
         self.parent = parent;
+    }
+
+    /// Draw a configurable focus ring if one is configured and the widget is focused.
+    pub fn drawFocusRing(self: *Widget, renderer: *render.Renderer) void {
+        if (!self.focused) return;
+        const ring = self.focus_ring orelse return;
+
+        if (self.rect.width <= ring.inset * 2 or self.rect.height <= ring.inset * 2) return;
+
+        const ring_x = self.rect.x + ring.inset;
+        const ring_y = self.rect.y + ring.inset;
+        const ring_width = self.rect.width - ring.inset * 2;
+        const ring_height = self.rect.height - ring.inset * 2;
+
+        if (ring_width < 2 or ring_height < 2) return;
+
+        if (ring.fill) |fill| {
+            renderer.fillRect(ring_x, ring_y, ring_width, ring_height, ' ', ring.color, fill, ring.style);
+        }
+
+        renderer.drawBox(
+            ring_x,
+            ring_y,
+            ring_width,
+            ring_height,
+            ring.border,
+            ring.color,
+            ring.fill orelse render.Color.named(render.NamedColor.default),
+            ring.style,
+        );
     }
 
     /// Adapter to create a LayoutElement from a Widget

@@ -14,12 +14,14 @@ const Common = struct {
     class: ?[]const u8 = null,
     enabled: bool = true,
     visible: bool = true,
+    focus_ring: ?render.FocusRingStyle = null,
 
     fn apply(self: Common, widget: *base.Widget) void {
         if (self.id) |id| widget.id = id;
         widget.enabled = self.enabled;
         widget.visible = self.visible;
         widget.style_class = self.class;
+        if (self.focus_ring) |ring| widget.setFocusRing(ring);
     }
 };
 
@@ -87,6 +89,11 @@ pub const ButtonBuilder = struct {
 
     pub fn class(self: *ButtonBuilder, value: []const u8) *ButtonBuilder {
         self.common.class = value;
+        return self;
+    }
+
+    pub fn focusRing(self: *ButtonBuilder, ring: render.FocusRingStyle) *ButtonBuilder {
+        self.common.focus_ring = ring;
         return self;
     }
 
@@ -267,6 +274,7 @@ pub const InputBuilder = struct {
     on_change: ?*const fn ([]const u8) void = null,
     max_len: usize = 256,
     common: Common = .{},
+    prefer_system_clipboard: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) InputBuilder {
         return .{ .allocator = allocator };
@@ -325,6 +333,11 @@ pub const InputBuilder = struct {
         return self;
     }
 
+    pub fn focusRing(self: *InputBuilder, ring: render.FocusRingStyle) *InputBuilder {
+        self.common.focus_ring = ring;
+        return self;
+    }
+
     pub fn enabled(self: *InputBuilder, is_enabled: bool) *InputBuilder {
         self.common.enabled = is_enabled;
         return self;
@@ -332,6 +345,11 @@ pub const InputBuilder = struct {
 
     pub fn visible(self: *InputBuilder, is_visible: bool) *InputBuilder {
         self.common.visible = is_visible;
+        return self;
+    }
+
+    pub fn systemClipboard(self: *InputBuilder, prefer: bool) *InputBuilder {
+        self.prefer_system_clipboard = prefer;
         return self;
     }
 
@@ -346,6 +364,7 @@ pub const InputBuilder = struct {
         if (self.on_change) |callback| {
             field.on_change = callback;
         }
+        field.preferSystemClipboard(self.prefer_system_clipboard);
         self.common.apply(&field.widget);
         return field;
     }
