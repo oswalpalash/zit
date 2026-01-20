@@ -6,7 +6,7 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
 
 - **Terminal handling**: Cross-platform terminal operations with raw mode support
 - **Text rendering**: Support for colors (named colors), styles (bold, italic, underline), and basic text drawing
-- **Layout system**: Basic layout management with Rect-based positioning
+- **Layout system**: Basic layout management with Rect-based positioning, flex/grid containers, and constraint anchoring
 - **Widget library**: Core UI components including:
   - Labels
   - Buttons
