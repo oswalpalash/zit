@@ -73,6 +73,20 @@ pub const Color = union(enum) {
     }
 };
 
+/// Gradient stop definition for linear gradients
+pub const GradientStop = struct {
+    /// Normalized position between 0 and 1
+    position: f32,
+    /// Color at this stop
+    color: Color,
+};
+
+/// Gradient direction
+pub const GradientDirection = enum {
+    horizontal,
+    vertical,
+};
+
 /// Named ANSI colors
 pub const NamedColor = enum(u8) {
     black = 0,
@@ -207,6 +221,85 @@ pub const Style = struct {
         }
     }
 };
+
+fn colorToRgb(color: Color) RgbColor {
+    return switch (color) {
+        .rgb_color => |rgb| rgb,
+        .named_color => |named| switch (named) {
+            .black => RgbColor.init(0, 0, 0),
+            .red => RgbColor.init(255, 0, 0),
+            .green => RgbColor.init(0, 255, 0),
+            .yellow => RgbColor.init(255, 255, 0),
+            .blue => RgbColor.init(0, 0, 255),
+            .magenta => RgbColor.init(255, 0, 255),
+            .cyan => RgbColor.init(0, 255, 255),
+            .white => RgbColor.init(255, 255, 255),
+            .default => RgbColor.init(0, 0, 0),
+            .bright_black => RgbColor.init(80, 80, 80),
+            .bright_red => RgbColor.init(255, 64, 64),
+            .bright_green => RgbColor.init(64, 255, 64),
+            .bright_yellow => RgbColor.init(255, 255, 128),
+            .bright_blue => RgbColor.init(64, 64, 255),
+            .bright_magenta => RgbColor.init(255, 64, 255),
+            .bright_cyan => RgbColor.init(64, 255, 255),
+            .bright_white => RgbColor.init(255, 255, 255),
+        },
+    };
+}
+
+fn lerpChannel(a: u8, b: u8, t: f32) u8 {
+    const start = @as(f32, @floatFromInt(a));
+    const end = @as(f32, @floatFromInt(b));
+    const value = start + (end - start) * t;
+    const clamped = std.math.clamp(value, 0.0, 255.0);
+    return @intFromFloat(std.math.round(clamped));
+}
+
+fn lerpColor(start: RgbColor, end: RgbColor, t: f32) RgbColor {
+    return RgbColor.init(
+        lerpChannel(start.r, end.r, t),
+        lerpChannel(start.g, end.g, t),
+        lerpChannel(start.b, end.b, t),
+    );
+}
+
+fn copyAndSortStops(allocator: std.mem.Allocator, stops: []const GradientStop) ![]GradientStop {
+    var buffer = try allocator.alloc(GradientStop, stops.len);
+    @memcpy(buffer, stops);
+
+    var i: usize = 0;
+    while (i < buffer.len) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < buffer.len) : (j += 1) {
+            if (buffer[j].position < buffer[i].position) {
+                const tmp = buffer[i];
+                buffer[i] = buffer[j];
+                buffer[j] = tmp;
+            }
+        }
+    }
+
+    return buffer;
+}
+
+fn sampleGradientColor(sorted: []const GradientStop, t_in: f32) RgbColor {
+    if (sorted.len == 0) return RgbColor.init(0, 0, 0);
+    var clamped = t_in;
+    if (clamped < 0) clamped = 0;
+    if (clamped > 1) clamped = 1;
+
+    var prev = sorted[0];
+    for (sorted[1..]) |stop| {
+        if (clamped <= stop.position) {
+            const denom = stop.position - prev.position;
+            const local_t = if (denom <= 0) 0 else (clamped - prev.position) / denom;
+            return lerpColor(colorToRgb(prev.color), colorToRgb(stop.color), local_t);
+        }
+        prev = stop;
+    }
+
+    return colorToRgb(sorted[sorted.len - 1].color);
+}
 
 /// Represents a cell in the screen buffer
 pub const Cell = struct {
@@ -794,6 +887,37 @@ pub const Renderer = struct {
         self.back.fillRect(x, y, width, height, cell);
     }
 
+    /// Fill a rectangular area with a linear gradient background
+    pub fn fillGradient(self: *Renderer, x: u16, y: u16, width: u16, height: u16, stops: []const GradientStop, direction: GradientDirection, style: Style) void {
+        if (width == 0 or height == 0 or stops.len == 0) return;
+
+        const sorted = copyAndSortStops(self.allocator, stops) catch return;
+        defer self.allocator.free(sorted);
+
+        const axis_len: u16 = if (direction == .horizontal) width else height;
+        if (axis_len == 0) return;
+
+        var idx: u16 = 0;
+        while (idx < axis_len) : (idx += 1) {
+            const denom: u16 = if (axis_len <= 1) 1 else axis_len - 1;
+            const t = @as(f32, @floatFromInt(idx)) / @as(f32, @floatFromInt(denom));
+            const rgb = sampleGradientColor(sorted, t);
+            const bg = Color.rgb(rgb.r, rgb.g, rgb.b);
+
+            if (direction == .horizontal) {
+                var row: u16 = 0;
+                while (row < height) : (row += 1) {
+                    self.drawChar(x + idx, y + row, ' ', Color.named(NamedColor.default), bg, style);
+                }
+            } else {
+                var col: u16 = 0;
+                while (col < width) : (col += 1) {
+                    self.drawChar(x + col, y + idx, ' ', Color.named(NamedColor.default), bg, style);
+                }
+            }
+        }
+    }
+
     /// Set cursor position
     pub fn setCursor(self: *Renderer, x: u16, y: u16) void {
         self.cursor_x = x;
@@ -987,4 +1111,36 @@ test "styled box paints drop shadow" {
 
     const bottom_shadow = renderer.back.getCell(1 + 1, 1 + 3).*;
     try std.testing.expectEqual(@as(u21, '░'), bottom_shadow.char);
+}
+
+test "fillGradient paints interpolated colors" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    const stops = [_]GradientStop{
+        GradientStop{ .position = 0.0, .color = Color.rgb(0, 0, 0) },
+        GradientStop{ .position = 1.0, .color = Color.rgb(255, 0, 0) },
+    };
+
+    renderer.fillGradient(0, 0, 4, 1, &stops, GradientDirection.horizontal, Style{});
+
+    const first = renderer.back.getCell(0, 0).bg;
+    const second = renderer.back.getCell(1, 0).bg;
+    const third = renderer.back.getCell(2, 0).bg;
+    const fourth = renderer.back.getCell(3, 0).bg;
+
+    try std.testing.expect(std.meta.eql(first, Color.rgb(0, 0, 0)));
+    try std.testing.expect(std.meta.eql(second, Color.rgb(85, 0, 0)));
+    try std.testing.expect(std.meta.eql(third, Color.rgb(170, 0, 0)));
+    try std.testing.expect(std.meta.eql(fourth, Color.rgb(255, 0, 0)));
+
+    var vertical_renderer = try Renderer.init(alloc, 1, 2);
+    defer vertical_renderer.deinit();
+    vertical_renderer.fillGradient(0, 0, 1, 2, &stops, GradientDirection.vertical, Style{});
+
+    const top = vertical_renderer.back.getCell(0, 0).bg;
+    const bottom = vertical_renderer.back.getCell(0, 1).bg;
+    try std.testing.expect(std.meta.eql(top, Color.rgb(0, 0, 0)));
+    try std.testing.expect(std.meta.eql(bottom, Color.rgb(255, 0, 0)));
 }
