@@ -1,6 +1,4 @@
 const std = @import("std");
-const testing = std.testing;
-
 // Component imports
 pub const terminal = @import("terminal/terminal.zig");
 pub const input = @import("input/input.zig");
@@ -10,6 +8,7 @@ pub const widget = @import("widget/widget.zig");
 pub const event = @import("event/event.zig");
 pub const memory = @import("memory/memory.zig");
 pub const quickstart = @import("quickstart.zig");
+pub const testing = @import("testing/testing.zig");
 
 /// zit - A Text User Interface (TUI) library for Zig
 ///
