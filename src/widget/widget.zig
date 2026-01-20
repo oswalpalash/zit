@@ -34,6 +34,7 @@ pub const TreeView = @import("widgets/tree_view.zig").TreeView;
 pub const Sparkline = @import("widgets/sparkline.zig").Sparkline;
 pub const Gauge = @import("widgets/gauge.zig").Gauge;
 pub const GaugeOrientation = @import("widgets/gauge.zig").GaugeOrientation;
+pub const Markdown = @import("widgets/markdown.zig").Markdown;
 pub const SplitPane = @import("widgets/split_pane.zig").SplitPane;
 pub const SplitOrientation = @import("widgets/split_pane.zig").SplitOrientation;
 pub const Popup = @import("widgets/popup.zig").Popup;
