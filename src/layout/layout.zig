@@ -955,6 +955,12 @@ pub const Center = struct {
     }
 };
 
+/// Track sizing for grid columns/rows
+pub const GridTrack = union(enum) {
+    fixed: u16,
+    flex: u16,
+};
+
 /// Grid layout manager
 pub const GridLayout = struct {
     /// Base layout
@@ -963,6 +969,10 @@ pub const GridLayout = struct {
     columns: u16,
     /// Number of rows
     rows: u16,
+    /// Column track sizing
+    column_tracks: std.ArrayList(GridTrack),
+    /// Row track sizing
+    row_tracks: std.ArrayList(GridTrack),
     /// Cell elements (stored in row-major order)
     cells: std.ArrayList(?LayoutElement),
     /// Padding inside the container
@@ -978,19 +988,36 @@ pub const GridLayout = struct {
             .base = Layout.init(allocator),
             .columns = columns,
             .rows = rows,
+            .column_tracks = std.ArrayList(GridTrack).empty,
+            .row_tracks = std.ArrayList(GridTrack).empty,
             .cells = std.ArrayList(?LayoutElement).empty,
             .padding_insets = EdgeInsets.all(0),
             .gap_size = 0,
         };
 
+        try layout.column_tracks.ensureTotalCapacity(layout.base.allocator, columns);
+        try layout.row_tracks.ensureTotalCapacity(layout.base.allocator, rows);
+
+        var col_index: u16 = 0;
+        while (col_index < columns) : (col_index += 1) {
+            try layout.column_tracks.append(layout.base.allocator, GridTrack{ .flex = 1 });
+        }
+
+        var row_index: u16 = 0;
+        while (row_index < rows) : (row_index += 1) {
+            try layout.row_tracks.append(layout.base.allocator, GridTrack{ .flex = 1 });
+        }
+
         // Initialize cells
-        try layout.initCells(columns, rows);
+        try layout.initCells();
 
         return layout;
     }
 
     /// Clean up grid layout resources
     pub fn deinit(self: *GridLayout) void {
+        self.column_tracks.deinit(self.base.allocator);
+        self.row_tracks.deinit(self.base.allocator);
         self.cells.deinit(self.base.allocator);
         self.base.allocator.destroy(self);
     }
@@ -1004,6 +1031,30 @@ pub const GridLayout = struct {
     /// Set the gap between cells
     pub fn gap(self: *GridLayout, gap_value: u16) *GridLayout {
         self.gap_size = gap_value;
+        return self;
+    }
+
+    /// Update the column track sizing
+    pub fn setColumns(self: *GridLayout, tracks: []const GridTrack) !*GridLayout {
+        self.column_tracks.clearRetainingCapacity();
+        try self.column_tracks.ensureTotalCapacity(self.base.allocator, tracks.len);
+        for (tracks) |track| {
+            try self.column_tracks.append(self.base.allocator, track);
+        }
+        self.columns = @intCast(tracks.len);
+        try self.initCells();
+        return self;
+    }
+
+    /// Update the row track sizing
+    pub fn setRows(self: *GridLayout, tracks: []const GridTrack) !*GridLayout {
+        self.row_tracks.clearRetainingCapacity();
+        try self.row_tracks.ensureTotalCapacity(self.base.allocator, tracks.len);
+        for (tracks) |track| {
+            try self.row_tracks.append(self.base.allocator, track);
+        }
+        self.rows = @intCast(tracks.len);
+        try self.initCells();
         return self;
     }
 
@@ -1045,42 +1096,37 @@ pub const GridLayout = struct {
                 0,
         };
 
-        // Calculate total gap size
-        const total_horizontal_gap = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
-        const total_vertical_gap = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
+        const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
+        const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
 
-        // Calculate cell dimensions
-        const cell_width = if (self.columns > 0 and padded_constraints.max_width > total_horizontal_gap)
-            (padded_constraints.max_width - total_horizontal_gap) / self.columns
-        else
-            0;
+        const column_sizes = self.resolveTracks(self.column_tracks.items, padded_constraints.max_width, total_horizontal_gap) catch {
+            return Size.zero();
+        };
+        defer self.base.allocator.free(column_sizes);
 
-        const cell_height = if (self.rows > 0 and padded_constraints.max_height > total_vertical_gap)
-            (padded_constraints.max_height - total_vertical_gap) / self.rows
-        else
-            0;
+        const row_sizes = self.resolveTracks(self.row_tracks.items, padded_constraints.max_height, total_vertical_gap) catch {
+            return Size.zero();
+        };
+        defer self.base.allocator.free(row_sizes);
 
-        // Create cell constraints
-        const cell_constraints = Constraints.tight(cell_width, cell_height);
-
-        // Layout each cell
-        for (self.cells.items) |cell_opt| {
-            if (cell_opt) |cell| {
-                _ = cell.layout(cell_constraints);
+        var row: usize = 0;
+        while (row < row_sizes.len) : (row += 1) {
+            var col: usize = 0;
+            while (col < column_sizes.len) : (col += 1) {
+                const index = row * column_sizes.len + col;
+                if (index < self.cells.items.len) {
+                    if (self.cells.items[index]) |cell| {
+                        const child_constraints = Constraints.tight(column_sizes[col], row_sizes[row]);
+                        _ = cell.layout(child_constraints);
+                    }
+                }
             }
         }
 
-        // Return final size including padding
-        return Size{
-            .width = if (padded_constraints.max_width > 0)
-                padded_constraints.max_width + self.padding_insets.left + self.padding_insets.right
-            else
-                0,
-            .height = if (padded_constraints.max_height > 0)
-                padded_constraints.max_height + self.padding_insets.top + self.padding_insets.bottom
-            else
-                0,
-        };
+        const used_width = saturatingSum(column_sizes) + total_horizontal_gap + self.padding_insets.left + self.padding_insets.right;
+        const used_height = saturatingSum(row_sizes) + total_vertical_gap + self.padding_insets.top + self.padding_insets.bottom;
+
+        return Size.init(used_width, used_height);
     }
 
     /// Render the layout
@@ -1099,43 +1145,109 @@ pub const GridLayout = struct {
             return;
         }
 
-        // Calculate cell dimensions
-        const total_horizontal_gap = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
-        const total_vertical_gap = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
+        const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
+        const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
 
-        const cell_width = if (self.columns > 0 and padded_rect.width > total_horizontal_gap)
-            (padded_rect.width - total_horizontal_gap) / self.columns
-        else
-            0;
+        const column_sizes = self.resolveTracks(self.column_tracks.items, padded_rect.width, total_horizontal_gap) catch return;
+        defer self.base.allocator.free(column_sizes);
 
-        const cell_height = if (self.rows > 0 and padded_rect.height > total_vertical_gap)
-            (padded_rect.height - total_vertical_gap) / self.rows
-        else
-            0;
+        const row_sizes = self.resolveTracks(self.row_tracks.items, padded_rect.height, total_vertical_gap) catch return;
+        defer self.base.allocator.free(row_sizes);
 
-        // Render each cell
-        var row: u16 = 0;
-        while (row < self.rows) : (row += 1) {
-            var col: u16 = 0;
-            while (col < self.columns) : (col += 1) {
-                const index = @as(usize, row) * @as(usize, self.columns) + @as(usize, col);
+        var y: u16 = padded_rect.y;
+        var row: usize = 0;
+        while (row < row_sizes.len) : (row += 1) {
+            var x: u16 = padded_rect.x;
+            var col: usize = 0;
+            while (col < column_sizes.len) : (col += 1) {
+                const index = row * column_sizes.len + col;
                 if (index < self.cells.items.len) {
                     if (self.cells.items[index]) |cell| {
-                        const x = padded_rect.x + col * (cell_width + self.gap_size);
-                        const y = padded_rect.y + row * (cell_height + self.gap_size);
-
                         const cell_rect = Rect{
                             .x = x,
                             .y = y,
-                            .width = cell_width,
-                            .height = cell_height,
+                            .width = column_sizes[col],
+                            .height = row_sizes[row],
                         };
 
                         cell.render(renderer, cell_rect);
                     }
                 }
+                x += column_sizes[col] + self.gap_size;
+            }
+            y += row_sizes[row] + self.gap_size;
+        }
+    }
+
+    fn resolveTracks(self: *GridLayout, tracks: []const GridTrack, available: u16, gap_total: u16) ![]u16 {
+        const sizes = try self.base.allocator.alloc(u16, tracks.len);
+
+        const available_for_tracks: u32 = if (available > gap_total)
+            @as(u32, available) - gap_total
+        else
+            0;
+
+        var remaining: u32 = available_for_tracks;
+        var flex_total: u32 = 0;
+
+        for (tracks, 0..) |track, idx| {
+            switch (track) {
+                .fixed => |val| {
+                    const take = if (remaining > 0) @min(@as(u32, val), remaining) else 0;
+                    sizes[idx] = @intCast(@min(take, @as(u32, std.math.maxInt(u16))));
+                    if (remaining > take) {
+                        remaining -= take;
+                    } else {
+                        remaining = 0;
+                    }
+                },
+                .flex => |weight| {
+                    sizes[idx] = 0;
+                    flex_total += weight;
+                },
             }
         }
+
+        if (flex_total > 0 and remaining > 0) {
+            var assigned_from_flex: u32 = 0;
+            for (tracks, 0..) |track, idx| {
+                switch (track) {
+                    .fixed => {},
+                    .flex => |weight| {
+                        const portion = (remaining * weight) / flex_total;
+                        sizes[idx] = @intCast(@min(portion, @as(u32, std.math.maxInt(u16))));
+                        assigned_from_flex += portion;
+                    },
+                }
+            }
+
+            var leftover: u32 = if (remaining > assigned_from_flex) remaining - assigned_from_flex else 0;
+            if (leftover > 0) {
+                for (tracks, 0..) |track, idx| {
+                    if (leftover == 0) break;
+                    switch (track) {
+                        .fixed => {},
+                        .flex => {
+                            if (sizes[idx] < std.math.maxInt(u16)) {
+                                sizes[idx] += 1;
+                                leftover -= 1;
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
+        return sizes;
+    }
+
+    fn saturatingSum(values: []const u16) u16 {
+        var total: u32 = 0;
+        for (values) |value| {
+            total += value;
+        }
+        if (total > std.math.maxInt(u16)) return std.math.maxInt(u16);
+        return @intCast(total);
     }
 
     /// Create a layout element
@@ -1148,7 +1260,9 @@ pub const GridLayout = struct {
     }
 
     /// Initialize the grid cells
-    fn initCells(self: *GridLayout, columns: u16, rows: u16) !void {
+    fn initCells(self: *GridLayout) !void {
+        const columns: u16 = @intCast(self.column_tracks.items.len);
+        const rows: u16 = @intCast(self.row_tracks.items.len);
         // Clear any existing cells
         self.cells.clearRetainingCapacity();
 
@@ -1244,6 +1358,83 @@ test "flex layout distributes space and aligns children" {
     try std.testing.expectEqual(@as(u16, 1), rec3.rect.y);
     try std.testing.expectEqual(@as(u16, 11), rec3.rect.width);
     try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
+}
+
+test "grid layout resolves fixed and flexible tracks" {
+    const allocator = std.testing.allocator;
+
+    const Probe = struct {
+        const Self = @This();
+        record: *Rect,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            _ = self;
+            return Size.init(constraints.max_width, constraints.max_height);
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.record.* = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Probe.layout,
+                .renderFn = Probe.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var grid = try GridLayout.init(allocator, 3, 2);
+    defer grid.deinit();
+    _ = grid.gap(1);
+    try grid.setColumns(&[_]GridTrack{
+        GridTrack{ .fixed = 5 },
+        GridTrack{ .flex = 1 },
+        GridTrack{ .flex = 2 },
+    });
+    try grid.setRows(&[_]GridTrack{
+        GridTrack{ .flex = 1 },
+        GridTrack{ .fixed = 2 },
+    });
+
+    var r1 = Rect.init(0, 0, 0, 0);
+    var r2 = Rect.init(0, 0, 0, 0);
+    var r3 = Rect.init(0, 0, 0, 0);
+
+    var p1 = Probe{ .record = &r1 };
+    var p2 = Probe{ .record = &r2 };
+    var p3 = Probe{ .record = &r3 };
+
+    try grid.addChild(p1.asElement(), 0, 0);
+    try grid.addChild(p2.asElement(), 1, 0);
+    try grid.addChild(p3.asElement(), 2, 1);
+
+    const measured = grid.calculateLayout(Constraints.tight(24, 8));
+    try std.testing.expectEqual(@as(u16, 24), measured.width);
+    try std.testing.expectEqual(@as(u16, 8), measured.height);
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 30, 10);
+    defer renderer.deinit();
+
+    grid.renderLayout(&renderer, Rect.init(0, 0, 24, 8));
+
+    try std.testing.expectEqual(@as(u16, 0), r1.x);
+    try std.testing.expectEqual(@as(u16, 0), r1.y);
+    try std.testing.expectEqual(@as(u16, 5), r1.width);
+    try std.testing.expectEqual(@as(u16, 5), r1.height);
+
+    try std.testing.expectEqual(@as(u16, 6), r2.x);
+    try std.testing.expectEqual(@as(u16, 0), r2.y);
+    try std.testing.expectEqual(@as(u16, 6), r2.width);
+    try std.testing.expectEqual(@as(u16, 5), r2.height);
+
+    try std.testing.expectEqual(@as(u16, 13), r3.x);
+    try std.testing.expectEqual(@as(u16, 6), r3.y);
+    try std.testing.expectEqual(@as(u16, 11), r3.width);
+    try std.testing.expectEqual(@as(u16, 2), r3.height);
 }
 
 /// Constraints for positioning a child within a constraint layout
