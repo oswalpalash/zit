@@ -109,7 +109,7 @@ pub const Table = struct {
     }
 
     /// Add a column to the table
-    pub fn addColumn(self: *Table, header: []const u8, width: i16, resizable: bool) !void {
+    pub fn addColumn(self: *Table, header: []const u8, width: u16, resizable: bool) !void {
         const header_copy = try self.allocator.alloc(u8, header.len);
         @memcpy(header_copy, header);
 

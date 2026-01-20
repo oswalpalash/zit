@@ -215,6 +215,165 @@ pub const Event = union(EventType) {
     unknown: void,
 };
 
+/// Editor-style actions used by configurable keybinding profiles.
+pub const EditorAction = enum {
+    cursor_left,
+    cursor_right,
+    cursor_up,
+    cursor_down,
+    word_left,
+    word_right,
+    line_start,
+    line_end,
+    page_up,
+    page_down,
+    undo,
+    redo,
+    search,
+    replace,
+    copy,
+    paste,
+    cut,
+};
+
+/// Describes a keybinding for an editor action.
+pub const Keybinding = struct {
+    action: EditorAction,
+    key: KeyEvent,
+};
+
+/// Predefined profiles for popular editing paradigms.
+pub const KeybindingProfile = struct {
+    bindings: []const Keybinding,
+
+    pub fn vi() KeybindingProfile {
+        const mods = KeyModifiers{};
+        return KeybindingProfile{
+            .bindings = &[_]Keybinding{
+                .{ .action = .cursor_left, .key = KeyEvent.init('h', mods) },
+                .{ .action = .cursor_down, .key = KeyEvent.init('j', mods) },
+                .{ .action = .cursor_up, .key = KeyEvent.init('k', mods) },
+                .{ .action = .cursor_right, .key = KeyEvent.init('l', mods) },
+                .{ .action = .undo, .key = KeyEvent.init('u', mods) },
+                .{ .action = .redo, .key = KeyEvent.init('r', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .search, .key = KeyEvent.init('/', mods) },
+            },
+        };
+    }
+
+    pub fn emacs() KeybindingProfile {
+        return KeybindingProfile{
+            .bindings = &[_]Keybinding{
+                .{ .action = .cursor_left, .key = KeyEvent.init('b', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .cursor_right, .key = KeyEvent.init('f', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .cursor_up, .key = KeyEvent.init('p', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .cursor_down, .key = KeyEvent.init('n', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .line_start, .key = KeyEvent.init('a', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .line_end, .key = KeyEvent.init('e', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .undo, .key = KeyEvent.init('_', KeyModifiers{ .ctrl = true }) },
+                .{ .action = .search, .key = KeyEvent.init('s', KeyModifiers{ .ctrl = true }) },
+            },
+        };
+    }
+
+    pub fn match(self: KeybindingProfile, event: KeyEvent) ?EditorAction {
+        for (self.bindings) |binding| {
+            if (binding.key.equals(event)) return binding.action;
+        }
+        return null;
+    }
+};
+
+/// Simple undo/redo stack tailored for text-like edits.
+pub const UndoRedoStack = struct {
+    undo: std.ArrayList([]const u8),
+    redo: std.ArrayList([]const u8),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) UndoRedoStack {
+        return UndoRedoStack{
+            .undo = std.ArrayList([]const u8).empty,
+            .redo = std.ArrayList([]const u8).empty,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *UndoRedoStack) void {
+        for (self.undo.items) |item| self.allocator.free(item);
+        for (self.redo.items) |item| self.allocator.free(item);
+        self.undo.deinit(self.allocator);
+        self.redo.deinit(self.allocator);
+    }
+
+    pub fn push(self: *UndoRedoStack, snapshot: []const u8) !void {
+        try self.undo.append(self.allocator, try self.allocator.dupe(u8, snapshot));
+        self.redo.clearRetainingCapacity();
+    }
+
+    pub fn undoOp(self: *UndoRedoStack, current: []const u8) ?[]const u8 {
+        if (self.undo.items.len == 0) return null;
+        const last = self.undo.pop();
+        self.redo.append(self.allocator, self.allocator.dupe(u8, current) catch current) catch {};
+        return last;
+    }
+
+    pub fn redoOp(self: *UndoRedoStack, current: []const u8) ?[]const u8 {
+        if (self.redo.items.len == 0) return null;
+        const next = self.redo.pop();
+        self.undo.append(self.allocator, self.allocator.dupe(u8, current) catch current) catch {};
+        return next;
+    }
+};
+
+/// Minimal clipboard bridge used for copy/paste flows.
+pub const Clipboard = struct {
+    buffer: ?[]const u8 = null,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) Clipboard {
+        return Clipboard{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Clipboard) void {
+        if (self.buffer) |buf| self.allocator.free(buf);
+        self.buffer = null;
+    }
+
+    pub fn copy(self: *Clipboard, data: []const u8) !void {
+        if (self.buffer) |buf| self.allocator.free(buf);
+        self.buffer = try self.allocator.dupe(u8, data);
+    }
+
+    pub fn paste(self: *Clipboard) ?[]const u8 {
+        return self.buffer;
+    }
+};
+
+/// Track multiple cursors using a lightweight value object.
+pub const MultiCursor = struct {
+    positions: std.ArrayList(struct { x: u16, y: u16 }),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) MultiCursor {
+        return MultiCursor{
+            .positions = std.ArrayList(struct { x: u16, y: u16 }).empty,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *MultiCursor) void {
+        self.positions.deinit(self.allocator);
+    }
+
+    pub fn add(self: *MultiCursor, x: u16, y: u16) !void {
+        try self.positions.append(self.allocator, .{ .x = x, .y = y });
+    }
+
+    pub fn clear(self: *MultiCursor) void {
+        self.positions.clearRetainingCapacity();
+    }
+};
+
 /// Represents a key-chord (sequence of two keys)
 pub const KeyChord = struct {
     /// First key in the sequence
