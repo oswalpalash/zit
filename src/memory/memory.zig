@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = @import("arena.zig").ArenaAllocator;
 const PoolAllocator = @import("pool.zig").PoolAllocator;
+const Widget = @import("../widget/widget.zig").Widget;
 
 pub const MemoryManager = struct {
     const Self = @This();
@@ -16,6 +17,8 @@ pub const MemoryManager = struct {
         current_memory_usage: usize,
     },
 
+    /// Initialize the memory manager with an arena and widget pool.
+    /// The widget pool is sized to the base widget type so common widgets can be reused safely.
     pub fn init(parent_allocator: Allocator, arena_size: usize, widget_pool_size: usize) !Self {
         var arena = try ArenaAllocator.init(parent_allocator, arena_size, true);
         errdefer arena.deinit();
@@ -36,23 +39,28 @@ pub const MemoryManager = struct {
         };
     }
 
+    /// Release all managed allocators and return borrowed memory.
     pub fn deinit(self: *Self) void {
         self.arena_allocator.deinit();
         self.widget_pool.deinit();
     }
 
+    /// Reset the arena allocator to reclaim its temporary allocations.
     pub fn resetArena(self: *Self) void {
         self.arena_allocator.reset();
     }
 
+    /// Get the arena allocator for short-lived allocations.
     pub fn getArenaAllocator(self: *Self) Allocator {
         return self.arena_allocator.allocator();
     }
 
+    /// Get the widget pool allocator for widget instances.
     pub fn getWidgetPoolAllocator(self: *Self) Allocator {
         return self.widget_pool.allocator();
     }
 
+    /// Get the parent allocator for long-lived allocations.
     pub fn getParentAllocator(self: *Self) Allocator {
         return self.parent_allocator;
     }
@@ -63,14 +71,7 @@ pub const MemoryManager = struct {
         peak_memory_usage: usize,
         current_memory_usage: usize,
         arena_usage: usize,
-        widget_pool_stats: struct {
-            allocations: usize,
-            deallocations: usize,
-            peak_usage: usize,
-            current_usage: usize,
-            total_nodes: usize,
-            allocated_nodes: usize,
-        },
+        widget_pool_stats: PoolAllocator.Stats,
     } {
         const widget_stats = self.widget_pool.getStats();
         return .{
@@ -82,10 +83,4 @@ pub const MemoryManager = struct {
             .widget_pool_stats = widget_stats,
         };
     }
-};
-
-// Forward declarations for widget types
-const Widget = struct {
-    // This is a placeholder for the actual Widget type
-    // The actual type will be defined in the widget module
 };

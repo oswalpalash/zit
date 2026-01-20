@@ -21,5 +21,6 @@ pub const version = std.SemanticVersion{
 };
 
 test "zit basic tests" {
+    _ = @import("memory/tests/memory_test.zig");
     std.testing.refAllDecls(@This());
 }
