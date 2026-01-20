@@ -44,6 +44,10 @@ pub const Animator = animation.Animator;
 pub const AnimationSpec = animation.AnimationSpec;
 pub const AnimationHandle = animation.AnimationHandle;
 pub const Easing = animation.Easing;
+pub const accessibility = @import("accessibility.zig");
+pub const AccessibilityManager = accessibility.Manager;
+pub const AccessibilityRole = accessibility.Role;
+pub const AccessibleNode = accessibility.AccessibleNode;
 
 // For when a new file is needed
 pub const _placeholder = struct {};
