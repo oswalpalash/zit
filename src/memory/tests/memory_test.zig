@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
 const MemoryManager = @import("../memory.zig").MemoryManager;
+const PoolAllocator = @import("../pool.zig").PoolAllocator;
 
 test "MemoryManager initialization and cleanup" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -86,9 +88,9 @@ test "MemoryManager thread safety" {
                 var j: usize = 0;
                 while (j < 100) : (j += 1) {
                     const str = try arena_.alloc(u8, 100);
-                    defer arena_.free(str);
+                    arena_.free(str);
                     const widget = try widget_pool_.alloc(u8, @sizeOf(u64));
-                    defer widget_pool_.free(widget);
+                    widget_pool_.free(widget);
                 }
             }
         }.threadFn, .{ arena, widget_pool });
@@ -98,7 +100,32 @@ test "MemoryManager thread safety" {
         thread.join();
     }
 
+    memory_manager.resetArena();
     const stats = memory_manager.getStats();
     try testing.expectEqual(@as(usize, 0), stats.arena_usage);
     try testing.expectEqual(@as(usize, 0), stats.widget_pool_stats.allocated_nodes);
+}
+
+test "PoolAllocator tracks pooled ownership and falls back for foreign frees" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var pool = try PoolAllocator.init(allocator, 64, 2);
+    defer pool.deinit();
+
+    const pooled_alloc = pool.allocator();
+
+    const first = try pooled_alloc.alloc(u8, 16);
+    const second = try pooled_alloc.alloc(u8, 16);
+    try testing.expectEqual(@as(usize, 2), pool.getStats().allocated_nodes);
+
+    pooled_alloc.free(first);
+    pooled_alloc.free(second);
+    try testing.expectEqual(@as(usize, 0), pool.getStats().allocated_nodes);
+
+    const foreign = try allocator.alloc(u8, 8);
+    const before = pool.getStats().allocated_nodes;
+    pooled_alloc.free(foreign);
+    try testing.expectEqual(before, pool.getStats().allocated_nodes);
 }
