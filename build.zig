@@ -249,6 +249,40 @@ pub fn build(b: *std.Build) void {
         exe_step.dependOn(&run_exe.step);
     }
 
+    const real_examples = [_]struct {
+        name: []const u8,
+        description: []const u8,
+        path: []const u8,
+        step_name: []const u8,
+    }{
+        .{ .name = "htop_clone", .description = "Render an htop-inspired dashboard snapshot", .path = "examples/realworld/htop_clone.zig", .step_name = "htop-clone" },
+        .{ .name = "file_manager", .description = "Render a file manager snapshot", .path = "examples/realworld/file_manager.zig", .step_name = "file-manager" },
+        .{ .name = "text_editor", .description = "Render a text editor snapshot", .path = "examples/realworld/text_editor.zig", .step_name = "text-editor" },
+        .{ .name = "dashboard_demo", .description = "Render a compact dashboard demo", .path = "examples/realworld/dashboard_demo.zig", .step_name = "dashboard-demo" },
+    };
+
+    for (real_examples) |example| {
+        const example_module = b.createModule(.{
+            .root_source_file = b.path(example.path),
+            .target = target,
+            .optimize = optimize,
+        });
+        example_module.addImport("zit", zit_module);
+
+        const exe = b.addExecutable(.{
+            .name = example.name,
+            .root_module = example_module,
+        });
+
+        b.installArtifact(exe);
+
+        const run_exe = b.addRunArtifact(exe);
+        run_exe.step.dependOn(b.getInstallStep());
+
+        const exe_step = b.step(example.step_name, example.description);
+        exe_step.dependOn(&run_exe.step);
+    }
+
     // Rendering benchmark
     const render_bench_module = b.createModule(.{
         .root_source_file = b.path("examples/benchmarks/render_bench.zig"),

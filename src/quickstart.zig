@@ -37,13 +37,17 @@ pub fn renderText(text: []const u8, options: FrameOptions) !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    try withRenderer(allocator, options, struct {
-        fn draw(r: *render.Renderer, opts: FrameOptions) !void {
-            const x = if (opts.padding < opts.width) opts.padding else opts.width - 1;
-            const y = if (opts.padding < opts.height) opts.padding else opts.height - 1;
-            r.drawSmartStr(x, y, text, opts.fg, opts.bg, opts.style);
-        }
-    }.draw);
+    var renderer = try render.Renderer.init(allocator, options.width, options.height);
+    defer renderer.deinit();
+
+    if (options.render_frame) {
+        renderer.drawBox(0, 0, options.width, options.height, .rounded, options.fg, options.bg, options.style);
+    }
+
+    const x = if (options.padding < options.width) options.padding else options.width - 1;
+    const y = if (options.padding < options.height) options.padding else options.height - 1;
+    renderer.drawSmartStr(x, y, text, options.fg, options.bg, options.style);
+    try renderer.render();
 }
 
 test "renderText draws without extra boilerplate" {

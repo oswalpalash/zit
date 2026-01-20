@@ -12,6 +12,7 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
   - Buttons
   - Checkboxes
   - Progress bars
+  - Toggles, radio groups, sliders, rating stars, status bars, toolbars, breadcrumbs, pagination, accordions, wizards/steppers, command palette, notification center
   - Color picker/palettes
   - Lists
   - Popups, toasts, menu bars, and canvas primitives
@@ -212,6 +213,7 @@ try app.registerAccessibleNode(.{
 ## Examples and benchmarks
 
 - Widget demos: `zig build notifications-example` (popups, toasts, menu bar, canvas) and existing `button-example` / `dashboard-example`.
+- Realistic screens: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Rendering benchmark: `zig build bench` runs `examples/benchmarks/render_bench.zig` to gauge draw throughput.
 
 ## Best Practices
