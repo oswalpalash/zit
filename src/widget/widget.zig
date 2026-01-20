@@ -42,6 +42,7 @@ pub const MenuBar = @import("widgets/menubar.zig").MenuBar;
 pub const Canvas = @import("widgets/canvas.zig").Canvas;
 pub const ColorPicker = @import("widgets/color_picker.zig").ColorPicker;
 pub const FileBrowser = @import("widgets/file_browser.zig").FileBrowser;
+pub const DateTimePicker = @import("widgets/date_time_picker.zig").DateTimePicker;
 pub const animation = @import("animation.zig");
 pub const Animator = animation.Animator;
 pub const AnimationSpec = animation.AnimationSpec;
