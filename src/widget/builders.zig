@@ -5,6 +5,7 @@ const Button = @import("widgets/button.zig").Button;
 const Label = @import("widgets/label.zig").Label;
 const Checkbox = @import("widgets/checkbox.zig").Checkbox;
 const InputField = @import("widgets/input_field.zig").InputField;
+const TextArea = @import("widgets/text_area.zig").TextArea;
 const ProgressBar = @import("widgets/progress_bar.zig").ProgressBar;
 const ProgressDirection = @import("widgets/progress_bar.zig").ProgressDirection;
 
@@ -273,6 +274,7 @@ pub const InputBuilder = struct {
     style: render.Style = render.Style{},
     on_change: ?*const fn ([]const u8) void = null,
     max_len: usize = 256,
+    history_depth: usize = 256,
     common: Common = .{},
     prefer_system_clipboard: bool = false,
 
@@ -323,6 +325,11 @@ pub const InputBuilder = struct {
         return self;
     }
 
+    pub fn historyDepth(self: *InputBuilder, depth: usize) *InputBuilder {
+        self.history_depth = depth;
+        return self;
+    }
+
     pub fn id(self: *InputBuilder, identifier: []const u8) *InputBuilder {
         self.common.id = identifier;
         return self;
@@ -365,8 +372,146 @@ pub const InputBuilder = struct {
             field.on_change = callback;
         }
         field.preferSystemClipboard(self.prefer_system_clipboard);
+        field.setHistoryDepth(self.history_depth);
         self.common.apply(&field.widget);
         return field;
+    }
+};
+
+/// Fluent builder for multi-line text areas.
+pub const TextAreaBuilder = struct {
+    allocator: std.mem.Allocator,
+    placeholder: []const u8 = "",
+    initial: []const u8 = "",
+    fg: render.Color = render.Color.named(render.NamedColor.default),
+    bg: render.Color = render.Color.named(render.NamedColor.default),
+    focused_fg: render.Color = render.Color.named(render.NamedColor.black),
+    focused_bg: render.Color = render.Color.named(render.NamedColor.cyan),
+    disabled_fg: render.Color = render.Color.named(render.NamedColor.bright_black),
+    disabled_bg: render.Color = render.Color.named(render.NamedColor.black),
+    style: render.Style = render.Style{},
+    border: render.BorderStyle = .single,
+    max_bytes: usize = 4096,
+    history_depth: usize = 256,
+    prefer_system_clipboard: bool = false,
+    submit_on_ctrl_enter: bool = true,
+    on_change: ?*const fn ([]const u8) void = null,
+    on_submit: ?*const fn ([]const u8) void = null,
+    common: Common = .{},
+
+    pub fn init(allocator: std.mem.Allocator) TextAreaBuilder {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn withPlaceholder(self: *TextAreaBuilder, placeholder: []const u8) *TextAreaBuilder {
+        self.placeholder = placeholder;
+        return self;
+    }
+
+    pub fn initialText(self: *TextAreaBuilder, value: []const u8) *TextAreaBuilder {
+        self.initial = value;
+        return self;
+    }
+
+    pub fn colors(self: *TextAreaBuilder, fg: render.Color, bg: render.Color) *TextAreaBuilder {
+        self.fg = fg;
+        self.bg = bg;
+        return self;
+    }
+
+    pub fn focusedColors(self: *TextAreaBuilder, fg: render.Color, bg: render.Color) *TextAreaBuilder {
+        self.focused_fg = fg;
+        self.focused_bg = bg;
+        return self;
+    }
+
+    pub fn disabledColors(self: *TextAreaBuilder, fg: render.Color, bg: render.Color) *TextAreaBuilder {
+        self.disabled_fg = fg;
+        self.disabled_bg = bg;
+        return self;
+    }
+
+    pub fn borderStyle(self: *TextAreaBuilder, border: render.BorderStyle) *TextAreaBuilder {
+        self.border = border;
+        return self;
+    }
+
+    pub fn textStyle(self: *TextAreaBuilder, style: render.Style) *TextAreaBuilder {
+        self.style = style;
+        return self;
+    }
+
+    pub fn maxBytes(self: *TextAreaBuilder, limit: usize) *TextAreaBuilder {
+        self.max_bytes = limit;
+        return self;
+    }
+
+    pub fn historyDepth(self: *TextAreaBuilder, depth: usize) *TextAreaBuilder {
+        self.history_depth = depth;
+        return self;
+    }
+
+    pub fn systemClipboard(self: *TextAreaBuilder, prefer: bool) *TextAreaBuilder {
+        self.prefer_system_clipboard = prefer;
+        return self;
+    }
+
+    pub fn submitOnCtrlEnter(self: *TextAreaBuilder, enable: bool) *TextAreaBuilder {
+        self.submit_on_ctrl_enter = enable;
+        return self;
+    }
+
+    pub fn onChange(self: *TextAreaBuilder, callback: *const fn ([]const u8) void) *TextAreaBuilder {
+        self.on_change = callback;
+        return self;
+    }
+
+    pub fn onSubmit(self: *TextAreaBuilder, callback: *const fn ([]const u8) void) *TextAreaBuilder {
+        self.on_submit = callback;
+        return self;
+    }
+
+    pub fn id(self: *TextAreaBuilder, value: []const u8) *TextAreaBuilder {
+        self.common.id = value;
+        return self;
+    }
+
+    pub fn class(self: *TextAreaBuilder, value: []const u8) *TextAreaBuilder {
+        self.common.class = value;
+        return self;
+    }
+
+    pub fn focusRing(self: *TextAreaBuilder, ring: render.FocusRingStyle) *TextAreaBuilder {
+        self.common.focus_ring = ring;
+        return self;
+    }
+
+    pub fn enabled(self: *TextAreaBuilder, value: bool) *TextAreaBuilder {
+        self.common.enabled = value;
+        return self;
+    }
+
+    pub fn visible(self: *TextAreaBuilder, value: bool) *TextAreaBuilder {
+        self.common.visible = value;
+        return self;
+    }
+
+    pub fn build(self: *TextAreaBuilder) !*TextArea {
+        var area = try TextArea.init(self.allocator, self.max_bytes);
+        if (self.placeholder.len > 0) try area.setPlaceholder(self.placeholder);
+        if (self.initial.len > 0) try area.setText(self.initial);
+        area.setColors(self.fg, self.bg, self.focused_fg, self.focused_bg);
+        area.disabled_fg = self.disabled_fg;
+        area.disabled_bg = self.disabled_bg;
+        area.style = self.style;
+        area.setBorder(self.border);
+        area.setHistoryDepth(self.history_depth);
+        area.preferSystemClipboard(self.prefer_system_clipboard);
+        area.submitOnCtrlEnter(self.submit_on_ctrl_enter);
+        if (self.on_change) |callback| area.setOnChange(callback);
+        if (self.on_submit) |callback| area.setOnSubmit(callback);
+        self.common.apply(&area.widget);
+        return area;
     }
 };
 

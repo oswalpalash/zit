@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const form = @import("../form.zig");
 
 /// Input field widget for text entry
 pub const InputField = struct {
@@ -170,6 +171,21 @@ pub const InputField = struct {
         self.writeText(text);
         self.pushHistory() catch {};
         self.notifyChange();
+    }
+
+    /// Undo the most recent edit, returning true when the buffer changed.
+    pub fn undo(self: *InputField) bool {
+        return (self.performUndo() catch false);
+    }
+
+    /// Redo the most recently undone edit, returning true when the buffer changed.
+    pub fn redo(self: *InputField) bool {
+        return (self.performRedo() catch false);
+    }
+
+    /// Validate the current value using the provided rules.
+    pub fn validate(self: *InputField, allocator: std.mem.Allocator, field_name: []const u8, rules: []const form.Rule) !form.ValidationResult {
+        return form.validateField(allocator, field_name, self.getText(), rules);
     }
 
     /// Get the current text
@@ -560,4 +576,28 @@ test "input field copy and paste round trips through clipboard" {
     try std.testing.expect(try field.widget.handleEvent(paste_event));
 
     try std.testing.expectEqualStrings("copy-me", field.getText());
+}
+
+test "input field undo/redo APIs restore key edits" {
+    const alloc = std.testing.allocator;
+    var field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    const first = input.Event{ .key = input.KeyEvent.init('p', input.KeyModifiers{}) };
+    const second = input.Event{ .key = input.KeyEvent.init('q', input.KeyModifiers{}) };
+    const backspace = input.Event{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, input.KeyModifiers{}) };
+
+    try std.testing.expect(try field.widget.handleEvent(first));
+    try std.testing.expectEqual(@as(usize, 1), field.len);
+    try std.testing.expect(try field.widget.handleEvent(second));
+    try std.testing.expectEqual(@as(usize, 2), field.len);
+    try std.testing.expect(try field.widget.handleEvent(backspace));
+    try std.testing.expectEqual(@as(usize, 1), field.getText().len);
+    try std.testing.expectEqualStrings("p", field.getText());
+
+    try std.testing.expect(field.undo());
+    try std.testing.expectEqualStrings("pq", field.getText());
+    try std.testing.expect(field.redo());
+    try std.testing.expectEqualStrings("p", field.getText());
 }
