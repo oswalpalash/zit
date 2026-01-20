@@ -12,6 +12,7 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
   - Buttons
   - Checkboxes
   - Progress bars
+  - Color picker/palettes
   - Lists
   - Popups, toasts, menu bars, and canvas primitives
 - **Input handling**: Keyboard and mouse event processing
