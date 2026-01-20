@@ -193,6 +193,25 @@ pub fn build(b: *std.Build) void {
     const widget_test_step = b.step("widget-test", "Run the widget test example");
     widget_test_step.dependOn(&run_widget_test.step);
 
+    // Add hello world quickstart example
+    const hello_module = b.createModule(.{
+        .root_source_file = b.path("examples/hello_world.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    hello_module.addImport("zit", zit_module);
+
+    const hello_exe = b.addExecutable(.{
+        .name = "hello_world",
+        .root_module = hello_module,
+    });
+
+    b.installArtifact(hello_exe);
+
+    const run_hello = b.addRunArtifact(hello_exe);
+    const hello_step = b.step("hello-world", "Run the 5-line hello world example");
+    hello_step.dependOn(&run_hello.step);
+
     // Add widget examples
     const widget_examples = [_]struct {
         name: []const u8,

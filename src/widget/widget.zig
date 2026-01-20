@@ -57,6 +57,7 @@ pub const accessibility = @import("accessibility.zig");
 pub const AccessibilityManager = accessibility.Manager;
 pub const AccessibilityRole = accessibility.Role;
 pub const AccessibleNode = accessibility.AccessibleNode;
+pub const builders = @import("builders.zig");
 
 // For when a new file is needed
 pub const _placeholder = struct {};
@@ -67,17 +68,34 @@ pub const BorderStyle = @import("widgets/scroll_container.zig").BorderStyle;
 pub const TabItem = @import("widgets/tab_view.zig").TabItem;
 
 pub const ProgressDirection = @import("widgets/progress_bar.zig").ProgressDirection;
+pub const ButtonBuilder = builders.ButtonBuilder;
+pub const LabelBuilder = builders.LabelBuilder;
+pub const CheckboxBuilder = builders.CheckboxBuilder;
+pub const InputBuilder = builders.InputBuilder;
+pub const ProgressBarBuilder = builders.ProgressBarBuilder;
 
 /// Create a new button with the given text
 pub fn createButton(allocator: std.mem.Allocator, text: []const u8) !*Button {
     return Button.init(allocator, text);
 }
 
+/// Create a new button using the fluent builder API
+pub fn button(allocator: std.mem.Allocator, text: []const u8) !*Button {
+    var builder = ButtonBuilder.init(allocator);
+    return builder.text(text).build();
+}
+
 /// Create a new label with the given text
 pub fn createLabel(allocator: std.mem.Allocator, text: []const u8) !*Label {
-    var label = try Label.init(allocator);
-    try label.setText(text);
-    return label;
+    var lbl = try Label.init(allocator);
+    try lbl.setText(text);
+    return lbl;
+}
+
+/// Create a new label using the fluent builder API
+pub fn label(allocator: std.mem.Allocator, text: []const u8) !*Label {
+    var builder = LabelBuilder.init(allocator);
+    return builder.content(text).build();
 }
 
 /// Create a new container
@@ -90,6 +108,12 @@ pub fn createInputField(allocator: std.mem.Allocator) !*InputField {
     return InputField.init(allocator);
 }
 
+/// Create a new input field using the fluent builder API
+pub fn input(allocator: std.mem.Allocator, placeholder: []const u8) !*InputField {
+    var builder = InputBuilder.init(allocator);
+    return builder.withPlaceholder(placeholder).build();
+}
+
 /// Create a new list
 pub fn createList(allocator: std.mem.Allocator) !*List {
     return List.init(allocator);
@@ -98,6 +122,12 @@ pub fn createList(allocator: std.mem.Allocator) !*List {
 /// Create a new progress bar
 pub fn createProgressBar(allocator: std.mem.Allocator) !*ProgressBar {
     return ProgressBar.init(allocator);
+}
+
+/// Create a new progress bar using the fluent builder API
+pub fn progress(allocator: std.mem.Allocator, value: usize, max_value: usize) !*ProgressBar {
+    var builder = ProgressBarBuilder.init(allocator);
+    return builder.range(value, max_value).build();
 }
 
 /// Create a new scrollbar
@@ -208,29 +238,29 @@ test "widget" {
     const allocator = std.testing.allocator;
 
     // Create a button
-    var button = try createButton(allocator, "Test Button");
-    defer button.deinit();
+    var btn = try createButton(allocator, "Test Button");
+    defer btn.deinit();
 
-    try expect(button.widget.enabled);
-    try expect(button.widget.visible);
+    try expect(btn.widget.enabled);
+    try expect(btn.widget.visible);
 
     // Test enable/disable
-    disableWidget(&button.widget);
-    try expect(!button.widget.enabled);
+    disableWidget(&btn.widget);
+    try expect(!btn.widget.enabled);
 
-    enableWidget(&button.widget);
-    try expect(button.widget.enabled);
+    enableWidget(&btn.widget);
+    try expect(btn.widget.enabled);
 
     // Test show/hide
-    hideWidget(&button.widget);
-    try expect(!button.widget.visible);
+    hideWidget(&btn.widget);
+    try expect(!btn.widget.visible);
 
-    showWidget(&button.widget);
-    try expect(button.widget.visible);
+    showWidget(&btn.widget);
+    try expect(btn.widget.visible);
 
     // Test focus
-    try expect(!button.widget.focused);
+    try expect(!btn.widget.focused);
 
-    focusWidget(&button.widget);
-    try expect(button.widget.focused);
+    focusWidget(&btn.widget);
+    try expect(btn.widget.focused);
 }

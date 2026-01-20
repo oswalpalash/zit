@@ -27,6 +27,26 @@ Zit is a TUI (Text User Interface) library for Zig that enables developers to cr
 - **Cross-platform support**
 - **Zero dependencies**
 
+## Quick start (5 lines)
+
+```zig
+const zit = @import("zit");
+
+pub fn main() !void {
+    try zit.quickstart.renderText("Hello, Zit!", .{});
+}
+```
+
+Need a widget fast? Fluent builders make configuration readable and type-safe:
+
+```zig
+const button = try zit.widget.ButtonBuilder.init(allocator)
+    .text("Deploy")
+    .borderStyle(.double)
+    .onPress(myHandler)
+    .build();
+```
+
 ## Memory Management
 
 Zit provides a sophisticated memory management system designed for optimal performance and safety in TUI applications. The system includes:

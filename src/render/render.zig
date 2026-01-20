@@ -1,4 +1,5 @@
 const std = @import("std");
+const text_metrics = @import("text_metrics.zig");
 
 /// Output rendering module
 ///
@@ -512,6 +513,14 @@ pub const TerminalCapabilities = struct {
     underline: bool = true,
     /// Support for strikethrough
     strikethrough: bool = false,
+    /// Terminal can safely display emoji
+    emoji: bool = false,
+    /// Terminal renders ligatures
+    ligatures: bool = false,
+    /// Terminal needs double-width accounting
+    double_width: bool = true,
+    /// Terminal can display bidi text coherently
+    bidi: bool = true,
 
     /// Create default capabilities (conservative defaults)
     pub fn init() TerminalCapabilities {
@@ -594,6 +603,15 @@ pub const TerminalCapabilities = struct {
                 caps.rgb_colors = true;
             }
         }
+
+        // Feature survey based on environment hints and pragmatic defaults.
+        caps.emoji = text_metrics.measureWidth("✅").has_emoji;
+        caps.double_width = true; // keep accounting for safety
+        caps.ligatures = std.mem.indexOf(u8, term, "kitty") != null or
+            std.mem.indexOf(u8, term, "wezterm") != null or
+            std.mem.indexOf(u8, term, "vscode") != null;
+        caps.bidi = true; // optimistic but sanitizers are available
+        caps.rgb_colors = caps.rgb_colors or text_metrics.detectTrueColor();
 
         return caps;
     }
@@ -720,6 +738,12 @@ pub const TerminalCapabilities = struct {
 
         return new_style;
     }
+
+    /// Measure a string respecting the terminal's width expectations.
+    pub fn measure(self: TerminalCapabilities, text: []const u8) text_metrics.Metrics {
+        _ = self; // reserved for future capability-aware adjustments
+        return text_metrics.measureWidth(text);
+    }
 };
 
 /// Renderer for drawing to the terminal
@@ -793,6 +817,22 @@ pub const Renderer = struct {
             self.drawChar(x + i, y, codepoint, fg, bg, style);
             i += 1;
         }
+    }
+
+    /// Draw text that may include bidi/double-width content using sanitized output.
+    pub fn drawSmartStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
+        const metrics = self.capabilities.measure(str);
+        if (metrics.has_bidi and !self.capabilities.bidi) {
+            const cleaned = text_metrics.sanitizeBidi(str, self.allocator) catch {
+                self.drawStr(x, y, str, fg, bg, style);
+                return;
+            };
+            defer self.allocator.free(cleaned);
+            self.drawStr(x, y, cleaned, fg, bg, style);
+            return;
+        }
+
+        self.drawStr(x, y, str, fg, bg, style);
     }
 
     /// Draw a box with the specified border style
