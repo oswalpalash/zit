@@ -125,7 +125,7 @@ pub const FileBrowser = struct {
 
         // Sort directories first, then files alphabetically.
         const Ctx = struct {};
-        std.sort.insertion(Entry, self.entries.items, Ctx{}, struct {
+        std.sort.pdq(Entry, self.entries.items, Ctx{}, struct {
             fn lessThan(_: Ctx, a: Entry, b: Entry) bool {
                 if (a.is_parent != b.is_parent) return a.is_parent;
                 if (a.is_dir != b.is_dir) return a.is_dir;

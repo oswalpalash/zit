@@ -140,10 +140,16 @@ fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) 
     };
 
     // Layout the widget
-    widget.layout(rect) catch {};
+    widget.layout(rect) catch |err| {
+        logWidgetError(widget, "layout", err);
+        return layout_module.Size.zero();
+    };
 
     // Return the preferred size constrained by the constraints
-    const preferred_size = widget.getPreferredSize() catch layout_module.Size.zero();
+    const preferred_size = widget.getPreferredSize() catch |err| {
+        logWidgetError(widget, "preferred size", err);
+        return layout_module.Size.zero();
+    };
     return layout_module.Size{
         .width = @min(preferred_size.width, constraints.max_width),
         .height = @min(preferred_size.height, constraints.max_height),
@@ -158,5 +164,65 @@ fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout
     widget.rect = rect;
 
     // Draw the widget
-    widget.draw(renderer) catch {};
+    widget.draw(renderer) catch |err| {
+        logWidgetError(widget, "draw", err);
+    };
+}
+
+fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {
+    const builtin = @import("builtin");
+    if (builtin.is_test) {
+        return;
+    }
+    const id = if (widget.id.len > 0) widget.id else "<anonymous>";
+    std.log.err("zit.widget: {s} {s} failed: {s}", .{ id, action, @errorName(err) });
+}
+
+test "layout adapter returns safe defaults on failure" {
+    const failing_vtable = Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {
+                return error.ForcedDraw;
+            }
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: layout_module.Rect) anyerror!void {
+                return error.ForcedLayout;
+            }
+        }.layout,
+        .get_preferred_size = struct {
+            fn preferred(_: *anyopaque) anyerror!layout_module.Size {
+                return error.ForcedPreferred;
+            }
+        }.preferred,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    const TestWidget = struct {
+        widget: Widget = Widget.init(&failing_vtable),
+    };
+
+    var instance = TestWidget{};
+    instance.widget.id = "failing";
+
+    const element = instance.widget.asLayoutElement();
+    const tight = layout_module.Constraints.tight(2, 2);
+    const measured = element.layout(tight);
+    try std.testing.expectEqual(layout_module.Size.zero(), measured);
+
+    var renderer = try render.Renderer.init(std.testing.allocator, 2, 2);
+    defer renderer.deinit();
+    element.render(&renderer, layout_module.Rect.init(0, 0, 2, 2));
+
+    // Buffer remains untouched because draw failed gracefully.
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).char);
 }

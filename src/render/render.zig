@@ -9,6 +9,27 @@ const text_metrics = @import("text_metrics.zig");
 /// - Efficient rendering with double buffering
 /// - Unicode support
 /// - Drawing primitives for UI elements
+/// Compact, stack-only ANSI escape representation used to avoid heap allocations.
+pub const AnsiCode = struct {
+    buf: [24]u8 = undefined,
+    len: u8 = 0,
+
+    /// Return the active slice of the encoded ANSI sequence.
+    pub fn slice(self: AnsiCode) []const u8 {
+        return self.buf[0..self.len];
+    }
+
+    /// Copy a slice into the internal buffer, truncating if necessary.
+    pub fn fromSlice(data: []const u8) AnsiCode {
+        var code = AnsiCode{};
+        const copy_len = @as(u8, @intCast(@min(data.len, code.buf.len)));
+        if (copy_len > 0) {
+            std.mem.copyForwards(u8, code.buf[0..copy_len], data[0..copy_len]);
+        }
+        code.len = copy_len;
+        return code;
+    }
+};
 /// RGB color representation
 pub const RgbColor = struct {
     r: u8,
@@ -25,12 +46,11 @@ pub const RgbColor = struct {
     }
 
     /// Convert to ANSI color code
-    pub fn toAnsi(self: RgbColor, is_bg: bool) []const u8 {
-        var result: [20]u8 = undefined;
+    pub fn toAnsi(self: RgbColor, is_bg: bool) AnsiCode {
+        var result: [24]u8 = undefined;
         const prefix = if (is_bg) "48" else "38";
 
-        // Format directly to the result buffer
-        const len = std.fmt.bufPrint(&result, "{s};2;{d};{d};{d}", .{ prefix, self.r, self.g, self.b }) catch {
+        const written = std.fmt.bufPrint(&result, "{s};2;{d};{d};{d}", .{ prefix, self.r, self.g, self.b }) catch {
             if (is_bg) {
                 return NamedColor.default.toBg();
             } else {
@@ -38,7 +58,7 @@ pub const RgbColor = struct {
             }
         };
 
-        return result[0..len.len];
+        return AnsiCode.fromSlice(written);
     }
 };
 
@@ -58,7 +78,7 @@ pub const Color = union(enum) {
     }
 
     /// Convert to foreground color code
-    pub fn toFg(self: Color) []const u8 {
+    pub fn toFg(self: Color) AnsiCode {
         return switch (self) {
             .named_color => |c| c.toFg(),
             .rgb_color => |c| c.toAnsi(false),
@@ -66,7 +86,7 @@ pub const Color = union(enum) {
     }
 
     /// Convert to background color code
-    pub fn toBg(self: Color) []const u8 {
+    pub fn toBg(self: Color) AnsiCode {
         return switch (self) {
             .named_color => |c| c.toBg(),
             .rgb_color => |c| c.toAnsi(true),
@@ -109,8 +129,8 @@ pub const NamedColor = enum(u8) {
     bright_white = 17,
 
     /// Convert to foreground color code
-    pub fn toFg(self: NamedColor) []const u8 {
-        return switch (self) {
+    pub fn toFg(self: NamedColor) AnsiCode {
+        return AnsiCode.fromSlice(switch (self) {
             .black => "30",
             .red => "31",
             .green => "32",
@@ -128,12 +148,12 @@ pub const NamedColor = enum(u8) {
             .bright_magenta => "95",
             .bright_cyan => "96",
             .bright_white => "97",
-        };
+        });
     }
 
     /// Convert to background color code
-    pub fn toBg(self: NamedColor) []const u8 {
-        return switch (self) {
+    pub fn toBg(self: NamedColor) AnsiCode {
+        return AnsiCode.fromSlice(switch (self) {
             .black => "40",
             .red => "41",
             .green => "42",
@@ -151,7 +171,7 @@ pub const NamedColor = enum(u8) {
             .bright_magenta => "105",
             .bright_cyan => "106",
             .bright_white => "107",
-        };
+        });
     }
 };
 
@@ -185,43 +205,54 @@ pub const Style = struct {
         };
     }
 
-    /// Convert to ANSI style codes
-    pub fn toAnsi(self: Style, allocator: std.mem.Allocator) ![]const u8 {
-        var codes = std.ArrayList(u8).empty;
-        defer codes.deinit(allocator);
+    /// Convert to ANSI style codes without heap allocations.
+    pub fn toAnsi(self: Style) AnsiCode {
+        var code = AnsiCode{};
 
         if (self.bold) {
-            try codes.appendSlice(allocator, "1;");
+            code = appendAnsi(code, "1;");
         }
 
         if (self.italic) {
-            try codes.appendSlice(allocator, "3;");
+            code = appendAnsi(code, "3;");
         }
 
         if (self.underline) {
-            try codes.appendSlice(allocator, "4;");
+            code = appendAnsi(code, "4;");
         }
 
         if (self.blink) {
-            try codes.appendSlice(allocator, "5;");
+            code = appendAnsi(code, "5;");
         }
 
         if (self.reverse) {
-            try codes.appendSlice(allocator, "7;");
+            code = appendAnsi(code, "7;");
         }
 
         if (self.strikethrough) {
-            try codes.appendSlice(allocator, "9;");
+            code = appendAnsi(code, "9;");
         }
 
-        if (codes.items.len > 0) {
-            // Remove trailing semicolon
-            return try allocator.dupe(u8, codes.items[0 .. codes.items.len - 1]);
-        } else {
-            return try allocator.dupe(u8, "0");
+        if (code.len == 0) {
+            return AnsiCode.fromSlice("0");
         }
+
+        // Drop trailing semicolon
+        code.len -= 1;
+        return code;
     }
 };
+
+fn appendAnsi(current: AnsiCode, fragment: []const u8) AnsiCode {
+    var out = current;
+    const available = out.buf.len - out.len;
+    if (fragment.len > available) {
+        return out; // truncate rather than overflow; caller treats empty as reset
+    }
+    std.mem.copyForwards(u8, out.buf[out.len .. out.len + fragment.len], fragment);
+    out.len += @intCast(fragment.len);
+    return out;
+}
 
 fn colorToRgb(color: Color) RgbColor {
     return switch (color) {
@@ -985,10 +1016,6 @@ pub const Renderer = struct {
         var current_fg: ?Color = null;
         var current_bg: ?Color = null;
         var current_style = Style{};
-        var style_str: []const u8 = "0";
-        var style_str_owned = false;
-        defer if (style_str_owned) self.allocator.free(style_str);
-
         // Perform diff-based updates between front and back buffers
         for (0..self.back.height) |y| {
             for (0..self.back.width) |x| {
@@ -1023,20 +1050,16 @@ pub const Renderer = struct {
                     style_buf.clearRetainingCapacity();
 
                     try style_buf.appendSlice(self.allocator, "\x1b[");
-
-                    if (style_str_owned) {
-                        self.allocator.free(style_str);
-                        style_str_owned = false;
-                    }
-                    style_str = try back_cell.style.toAnsi(self.allocator);
-                    style_str_owned = true;
-                    try style_buf.appendSlice(self.allocator, style_str);
+                    const style_code = back_cell.style.toAnsi();
+                    try style_buf.appendSlice(self.allocator, style_code.slice());
 
                     try style_buf.appendSlice(self.allocator, ";");
-                    try style_buf.appendSlice(self.allocator, back_cell.fg.toFg());
+                    const fg_code = back_cell.fg.toFg();
+                    try style_buf.appendSlice(self.allocator, fg_code.slice());
 
                     try style_buf.appendSlice(self.allocator, ";");
-                    try style_buf.appendSlice(self.allocator, back_cell.bg.toBg());
+                    const bg_code = back_cell.bg.toBg();
+                    try style_buf.appendSlice(self.allocator, bg_code.slice());
 
                     try style_buf.appendSlice(self.allocator, "m");
 
@@ -1189,4 +1212,15 @@ test "fillGradient paints interpolated colors" {
     const bottom = vertical_renderer.back.getCell(0, 1).bg;
     try std.testing.expect(std.meta.eql(top, Color.rgb(0, 0, 0)));
     try std.testing.expect(std.meta.eql(bottom, Color.rgb(255, 0, 0)));
+}
+
+test "ansi helpers produce stable sequences" {
+    const fg = Color.rgb(1, 2, 3).toFg();
+    try std.testing.expectEqualStrings("38;2;1;2;3", fg.slice());
+
+    const bg = Color.named(NamedColor.bright_white).toBg();
+    try std.testing.expectEqualStrings("107", bg.slice());
+
+    const style = (Style{ .bold = true, .underline = true }).toAnsi();
+    try std.testing.expectEqualStrings("1;4", style.slice());
 }
