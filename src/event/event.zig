@@ -1,6 +1,7 @@
 const std = @import("std");
 const input = @import("../input/input.zig");
 pub const widget = @import("../widget/widget.zig");
+const animation = @import("../widget/animation.zig");
 
 /// Event system module
 ///
@@ -655,6 +656,10 @@ pub const Application = struct {
     io_manager: ?*@import("io_events.zig").IoEventManager = null,
     /// Whether to use event propagation
     use_propagation: bool = true,
+    /// Animation driver
+    animator: animation.Animator,
+    /// Last frame timestamp for animation deltas
+    last_frame_ms: u64 = 0,
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -662,6 +667,7 @@ pub const Application = struct {
             .event_queue = EventQueue.init(allocator),
             .allocator = allocator,
             .focus_manager = undefined,
+            .animator = animation.Animator.init(allocator),
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
@@ -676,6 +682,7 @@ pub const Application = struct {
             self.allocator.destroy(manager);
         }
 
+        self.animator.deinit();
         self.focus_manager.deinit();
         self.event_queue.deinit();
     }
@@ -721,6 +728,7 @@ pub const Application = struct {
         }
 
         self.running = true;
+        self.last_frame_ms = @as(u64, @intCast(std.time.milliTimestamp()));
 
         while (self.running) {
             // Process events with or without propagation
@@ -729,6 +737,11 @@ pub const Application = struct {
             } else {
                 try self.event_queue.processEvents();
             }
+
+            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            const delta = if (self.last_frame_ms == 0) 0 else now_ms - self.last_frame_ms;
+            self.animator.tick(delta);
+            self.last_frame_ms = now_ms;
 
             // Yield to allow other tasks to run
             std.Thread.sleep(std.time.ns_per_ms * 10);
@@ -742,13 +755,20 @@ pub const Application = struct {
         }
 
         self.running = true;
+        self.last_frame_ms = @as(u64, @intCast(std.time.milliTimestamp()));
 
         // Start processing in a separate thread
         var thread = try std.Thread.spawn(.{}, struct {
             fn threadFn(app: *Application, cb: ?*const fn () void) !void {
+                var last = app.last_frame_ms;
                 while (app.running) {
                     // Process events
                     try app.event_queue.processEvents();
+
+                    const now_ms: u64 = @intCast(std.time.milliTimestamp());
+                    const delta = if (last == 0) 0 else now_ms - last;
+                    app.animator.tick(delta);
+                    last = now_ms;
 
                     // Yield to allow other tasks to run
                     std.Thread.sleep(std.time.ns_per_ms * 10);
@@ -781,6 +801,16 @@ pub const Application = struct {
     /// Request focus for a widget
     pub fn requestFocus(self: *Application, target_widget: *widget.Widget) !bool {
         return try self.focus_manager.requestFocus(target_widget);
+    }
+
+    /// Add an animation to the application animator
+    pub fn addAnimation(self: *Application, spec: animation.AnimationSpec) !animation.AnimationHandle {
+        return try self.animator.add(spec);
+    }
+
+    /// Cancel an animation by handle
+    pub fn cancelAnimation(self: *Application, handle: animation.AnimationHandle) bool {
+        return self.animator.cancel(handle);
     }
 
     /// Process an input event
