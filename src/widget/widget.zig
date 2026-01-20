@@ -47,6 +47,7 @@ pub const FileBrowser = @import("widgets/file_browser.zig").FileBrowser;
 pub const DateTimePicker = @import("widgets/date_time_picker.zig").DateTimePicker;
 pub const RichText = @import("widgets/rich_text.zig").RichText;
 pub const ImageWidget = @import("widgets/image.zig").ImageWidget;
+pub const TextArea = @import("widgets/text_area.zig").TextArea;
 pub const SyntaxHighlighter = @import("widgets/syntax_highlighter.zig").SyntaxHighlighter;
 pub const ToggleSwitch = @import("widgets/advanced_controls.zig").ToggleSwitch;
 pub const RadioGroup = @import("widgets/advanced_controls.zig").RadioGroup;
@@ -69,6 +70,7 @@ pub const accessibility = @import("accessibility.zig");
 pub const AccessibilityManager = accessibility.Manager;
 pub const AccessibilityRole = accessibility.Role;
 pub const AccessibleNode = accessibility.AccessibleNode;
+pub const form = @import("form.zig");
 pub const builders = @import("builders.zig");
 
 // For when a new file is needed
@@ -84,6 +86,7 @@ pub const ButtonBuilder = builders.ButtonBuilder;
 pub const LabelBuilder = builders.LabelBuilder;
 pub const CheckboxBuilder = builders.CheckboxBuilder;
 pub const InputBuilder = builders.InputBuilder;
+pub const TextAreaBuilder = builders.TextAreaBuilder;
 pub const ProgressBarBuilder = builders.ProgressBarBuilder;
 
 /// Create a new button with the given text
@@ -123,6 +126,17 @@ pub fn createInputField(allocator: std.mem.Allocator) !*InputField {
 /// Create a new input field using the fluent builder API
 pub fn input(allocator: std.mem.Allocator, placeholder: []const u8) !*InputField {
     var builder = InputBuilder.init(allocator);
+    return builder.withPlaceholder(placeholder).build();
+}
+
+/// Create a new multi-line text area
+pub fn createTextArea(allocator: std.mem.Allocator) !*TextArea {
+    return TextArea.init(allocator, 4096);
+}
+
+/// Create a new multi-line text area using the fluent builder API
+pub fn textArea(allocator: std.mem.Allocator, placeholder: []const u8) !*TextArea {
+    var builder = TextAreaBuilder.init(allocator);
     return builder.withPlaceholder(placeholder).build();
 }
 
