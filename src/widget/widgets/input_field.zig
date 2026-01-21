@@ -385,7 +385,8 @@ pub const InputField = struct {
 
     /// Draw implementation for InputField
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -578,7 +579,8 @@ pub const InputField = struct {
 
     /// Event handling implementation for InputField
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -656,13 +658,15 @@ pub const InputField = struct {
 
     /// Layout implementation for InputField
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for InputField
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
 
         // Calculate width based on max length plus borders
         const border_adjust: u16 = if (self.show_border) 2 else 0;
@@ -674,7 +678,8 @@ pub const InputField = struct {
 
     /// Can focus implementation for InputField
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
 };

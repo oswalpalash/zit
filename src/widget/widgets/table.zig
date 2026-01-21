@@ -1240,6 +1240,8 @@ pub const Table = struct {
             return false;
         }
 
+        std.debug.print("typeahead start rows={} search_len={} selected_row={any}\n", .{ total_rows, self.search_len, self.selected_row });
+
         const now = self.clock();
         if (self.last_search_ms) |last| {
             if (now < last or @as(u64, @intCast(now - last)) > self.search_timeout_ms) {
@@ -1266,6 +1268,7 @@ pub const Table = struct {
         while (i < scan_limit) : (i += 1) {
             const idx = (start + i) % total_rows;
             const row_idx = self.visible_order.items[idx];
+            std.debug.print("scan idx={} row_idx={} needle_len={}\n", .{ idx, row_idx, needle.len });
             if (self.rowStartsWith(row_idx, needle)) {
                 self.setSelectedRow(row_idx);
                 return true;

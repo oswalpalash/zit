@@ -193,10 +193,12 @@ fn matchGlob(pattern_text: []const u8, value: []const u8) bool {
     var match_idx: usize = 0;
 
     while (v_idx < value.len) {
-        if (p_idx < pattern_text.len and (pattern_text[p_idx] == '?' or pattern_text[p_idx] == value[v_idx])) {
+        const pat_ch = if (p_idx < pattern_text.len) pattern_text[p_idx] else 0;
+
+        if (p_idx < pattern_text.len and (pat_ch == '?' or pat_ch == value[v_idx] or (pat_ch == '#' and std.ascii.isDigit(value[v_idx])))) {
             p_idx += 1;
             v_idx += 1;
-        } else if (p_idx < pattern_text.len and pattern_text[p_idx] == '*') {
+        } else if (p_idx < pattern_text.len and pat_ch == '*') {
             star_idx = p_idx;
             match_idx = v_idx;
             p_idx += 1;
