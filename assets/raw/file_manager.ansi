@@ -1,7 +1,7 @@
+zig-out/bin/file_manager
 Your user’s .npmrc file (${HOME}/.npmrc)
 has a `globalconfig` and/or a `prefix` setting, which are incompatible with nvm.
 Run `nvm use --delete-prefix v25.2.1 --silent` to unset it.
-[36mdev@dev[39m [33m~/clawd/tmp/zit[39m % [32mzig-out/bin/system_monitor[39m
 [36mdev@dev[39m [33m~/clawd/tmp/zit[39m % [32mzig-out/bin/file_manager[39m
  home / dev / projects / zit
  [Open] [New Folder] [Delete] [Refresh]
