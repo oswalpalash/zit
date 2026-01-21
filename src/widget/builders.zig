@@ -664,8 +664,9 @@ pub const TableBuilder = struct {
         table.setShowGrid(self.show_grid);
         table.setBorder(self.border);
 
-        for (self.columns.items) |col| {
+        for (self.columns.items, 0..) |col, idx| {
             try table.addColumn(col.header, col.width, col.resizable);
+            table.setColumnSortable(idx, col.sortable);
         }
 
         self.common.apply(&table.widget);
@@ -679,6 +680,7 @@ pub const TableColumnSpec = struct {
     header: []const u8,
     width: u16 = 12,
     resizable: bool = true,
+    sortable: bool = true,
 };
 
 test "button builder creates focused button with defaults and chaining" {
