@@ -6,6 +6,14 @@ const widget = zit.widget;
 const memory = zit.memory;
 const form = widget.form;
 
+fn enterAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049h");
+}
+
+fn exitAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+}
+
 const Action = enum { none, next, back, submit };
 var pending_action: Action = .none;
 
@@ -99,15 +107,18 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
-    try input_handler.enableMouse();
+
+    try enterAlternateScreen();
+    defer exitAlternateScreen() catch {};
 
     try term.enableRawMode();
+    defer term.disableRawMode() catch {};
+
     try term.hideCursor();
-    defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
-        term.disableRawMode() catch {};
-    }
+    defer term.showCursor() catch {};
+
+    try input_handler.enableMouse();
+    defer input_handler.disableMouse() catch {};
 
     // Step indicator across the top.
     var stepper = try widget.WizardStepper.init(memory_manager.getWidgetPoolAllocator(), &[_][]const u8{ "Account", "Preferences" });
