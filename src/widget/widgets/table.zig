@@ -120,11 +120,11 @@ pub const Table = struct {
 
     /// Add a column to the table
     pub fn addColumn(self: *Table, header: []const u8, width: u16, resizable: bool) !void {
-        const header_copy = try self.allocator.alloc(u8, header.len);
-        @memcpy(header_copy, header);
+        try self.columns.ensureUnusedCapacity(self.allocator, 1);
+        const header_copy = try self.allocator.dupe(u8, header);
         const column_width = if (width == 0) @as(u16, 1) else width;
 
-        try self.columns.append(self.allocator, TableColumn{
+        self.columns.appendAssumeCapacity(TableColumn{
             .header = header_copy,
             .width = column_width,
             .resizable = resizable,
@@ -134,15 +134,14 @@ pub const Table = struct {
     /// Add a row to the table
     pub fn addRow(self: *Table, cells: []const []const u8) !void {
         var new_row = std.ArrayList(TableCell).empty;
-        errdefer new_row.deinit(self.allocator);
+        errdefer self.freeRow(&new_row);
+        try new_row.ensureTotalCapacityPrecise(self.allocator, self.columns.items.len);
 
         for (cells, 0..) |text, i| {
             if (i >= self.columns.items.len) break;
 
-            const text_copy = try self.allocator.alloc(u8, text.len);
-            @memcpy(text_copy, text);
-
-            try new_row.append(self.allocator, TableCell{
+            const text_copy = try self.allocator.dupe(u8, text);
+            new_row.appendAssumeCapacity(TableCell{
                 .text = text_copy,
                 .fg = null,
                 .bg = null,
@@ -151,8 +150,9 @@ pub const Table = struct {
 
         // Fill remaining columns with empty cells if needed
         while (new_row.items.len < self.columns.items.len) {
+            try new_row.ensureUnusedCapacity(self.allocator, 1);
             const empty_text = try self.allocator.alloc(u8, 0);
-            try new_row.append(self.allocator, TableCell{
+            new_row.appendAssumeCapacity(TableCell{
                 .text = empty_text,
                 .fg = null,
                 .bg = null,
@@ -218,6 +218,13 @@ pub const Table = struct {
         self.selected_row = null;
         self.first_visible_row = 0;
         self.resetTypeahead();
+    }
+
+    fn freeRow(self: *Table, row: *std.ArrayList(TableCell)) void {
+        for (row.items) |cell| {
+            self.allocator.free(cell.text);
+        }
+        row.deinit(self.allocator);
     }
 
     /// Set the selected row
@@ -679,7 +686,8 @@ pub const Table = struct {
         // Calculate width based on columns
         var width: u16 = 0;
         for (self.columns.items) |column| {
-            width += column.width;
+            const expanded: u32 = @as(u32, width) + column.width;
+            width = @intCast(@min(expanded, @as(u32, std.math.maxInt(u16))));
         }
 
         // Preferred height depends on number of rows plus header
@@ -733,4 +741,26 @@ test "table typeahead search finds matching rows" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try table.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), table.selected_row.?); // Zeta
+}
+
+test "table preferred size clamps large widths" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", std.math.maxInt(u16), true);
+    try table.addColumn("B", std.math.maxInt(u16), true);
+
+    const size = try Table.getPreferredSizeFn(@ptrCast(@alignCast(table)));
+    try std.testing.expectEqual(std.math.maxInt(u16), size.width);
+}
+
+test "table ignores input when empty" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.widget.layout(layout_module.Rect.init(0, 0, 10, 5));
+    const handled = try table.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
+    try std.testing.expectEqual(false, handled);
 }

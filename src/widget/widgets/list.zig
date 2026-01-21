@@ -81,9 +81,9 @@ pub const List = struct {
 
     /// Add an item to the list
     pub fn addItem(self: *List, item: []const u8) !void {
-        const item_copy = try self.allocator.alloc(u8, item.len);
-        @memcpy(item_copy, item);
-        try self.items.append(self.allocator, item_copy);
+        try self.items.ensureUnusedCapacity(self.allocator, 1);
+        const item_copy = try self.allocator.dupe(u8, item);
+        self.items.appendAssumeCapacity(item_copy);
     }
 
     /// Remove an item from the list
@@ -117,7 +117,12 @@ pub const List = struct {
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *List, index: usize) void {
-        if (index == self.selected_index or self.items.items.len == 0) {
+        if (self.items.items.len == 0) {
+            self.selected_index = 0;
+            return;
+        }
+
+        if (index == self.selected_index) {
             return;
         }
 
@@ -500,4 +505,21 @@ test "list typeahead search cycles through matches" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try list.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), list.selected_index); // Zzz
+}
+
+test "list clears selection and ignores events when empty" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("one");
+    try list.addItem("two");
+    list.setSelectedIndex(1);
+    list.clear();
+
+    try std.testing.expectEqual(@as(usize, 0), list.selected_index);
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+    const handled = try list.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
+    try std.testing.expectEqual(false, handled);
 }

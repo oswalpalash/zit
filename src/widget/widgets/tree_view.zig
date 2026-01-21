@@ -13,6 +13,7 @@ pub const TreeView = struct {
     selected: usize = 0,
     scroll_offset: usize = 0,
     palette: theme.Theme,
+    visible_dirty: bool = true,
     allocator: std.mem.Allocator,
 
     pub const Node = struct {
@@ -83,17 +84,23 @@ pub const TreeView = struct {
         if (parent_index) |idx| {
             try self.nodes.items[idx].children.append(self.allocator, index);
         }
-        try self.rebuildVisible();
+        self.visible_dirty = true;
         return index;
     }
 
-    fn rebuildVisible(self: *TreeView) !void {
+    fn syncVisible(self: *TreeView) !void {
+        if (!self.visible_dirty) return;
+        self.visible_dirty = false;
         self.visible.clearRetainingCapacity();
+        errdefer self.visible_dirty = true;
         for (self.nodes.items, 0..) |_, idx| {
             const node = self.nodes.items[idx];
             if (node.parent == null) {
                 try self.collectVisible(idx);
             }
+        }
+        if (self.scroll_offset >= self.visible.items.len and self.visible.items.len > 0) {
+            self.scroll_offset = self.visible.items.len - 1;
         }
         if (self.selected >= self.visible.items.len and self.visible.items.len > 0) {
             self.selected = self.visible.items.len - 1;
@@ -134,7 +141,7 @@ pub const TreeView = struct {
         const rect = self.widget.rect;
         if (rect.width == 0 or rect.height == 0) return;
 
-        try self.rebuildVisible();
+        try self.syncVisible();
 
         const total = self.visible.items.len;
         const height: usize = @intCast(rect.height);
@@ -189,7 +196,7 @@ pub const TreeView = struct {
         const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.enabled or !self.widget.visible) return false;
 
-        try self.rebuildVisible();
+        try self.syncVisible();
         if (self.visible.items.len == 0) return false;
 
         switch (event) {
@@ -212,16 +219,18 @@ pub const TreeView = struct {
                         const idx = self.visible.items[self.selected];
                         if (self.nodes.items[idx].children.items.len > 0 and !self.nodes.items[idx].expanded) {
                             self.nodes.items[idx].expanded = true;
+                            self.visible_dirty = true;
                             handled = true;
-                            try self.rebuildVisible();
+                            try self.syncVisible();
                         }
                     },
                     input.KeyCode.LEFT => {
                         const idx = self.visible.items[self.selected];
                         if (self.nodes.items[idx].expanded) {
                             self.nodes.items[idx].expanded = false;
+                            self.visible_dirty = true;
                             handled = true;
-                            try self.rebuildVisible();
+                            try self.syncVisible();
                         } else if (self.nodes.items[idx].parent) |parent_idx| {
                             self.selected = self.indexOfVisible(parent_idx) orelse self.selected;
                             handled = true;
@@ -239,8 +248,9 @@ pub const TreeView = struct {
                         const idx = self.visible.items[self.selected];
                         if (self.nodes.items[idx].children.items.len > 0) {
                             self.nodes.items[idx].expanded = !self.nodes.items[idx].expanded;
+                            self.visible_dirty = true;
                             handled = true;
-                            try self.rebuildVisible();
+                            try self.syncVisible();
                         }
                     },
                     else => {},
@@ -285,6 +295,7 @@ pub const TreeView = struct {
 
     /// Visible nodes for testing and layout decisions.
     pub fn visibleCount(self: *TreeView) usize {
+        self.syncVisible() catch {};
         return self.visible.items.len;
     }
 };
@@ -298,15 +309,37 @@ test "tree view expands and navigates" {
     _ = try tree.addChild(root, "child");
     try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 4));
 
-    try tree.rebuildVisible();
+    try tree.syncVisible();
     try std.testing.expectEqual(@as(usize, 1), tree.visibleCount());
 
     const toggle = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.SPACE, .modifiers = .{} } };
     _ = try tree.handleEvent(toggle);
-    try tree.rebuildVisible();
+    try tree.syncVisible();
     try std.testing.expectEqual(@as(usize, 2), tree.visibleCount());
 
     const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
     _ = try tree.handleEvent(down);
     try std.testing.expect(tree.selected == 1);
+}
+
+test "tree view lazily rebuilds visible cache" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    _ = try tree.addRoot("first");
+    _ = try tree.addRoot("second");
+
+    try std.testing.expect(tree.visible_dirty);
+    try std.testing.expectEqual(@as(usize, 2), tree.visibleCount());
+    try std.testing.expect(!tree.visible_dirty);
+
+    _ = try tree.addChild(0, "child");
+    try std.testing.expect(tree.visible_dirty);
+    try std.testing.expectEqual(@as(usize, 2), tree.visibleCount()); // child hidden until expanded
+    try std.testing.expect(!tree.visible_dirty);
+
+    tree.nodes.items[0].expanded = true;
+    tree.visible_dirty = true;
+    try std.testing.expectEqual(@as(usize, 3), tree.visibleCount());
 }
