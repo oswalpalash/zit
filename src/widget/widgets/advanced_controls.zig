@@ -121,7 +121,7 @@ pub const ToggleSwitch = struct {
 /// Radio group displays mutually exclusive options with keyboard navigation.
 pub const RadioGroup = struct {
     widget: base.Widget,
-    options: std.ArrayList([]const u8),
+    options: std.ArrayListUnmanaged([]const u8),
     selected: usize = 0,
     on_change: ?*const fn (usize, []const u8) void = null,
     allocator: std.mem.Allocator,
@@ -138,7 +138,7 @@ pub const RadioGroup = struct {
         const self = try allocator.create(RadioGroup);
         self.* = RadioGroup{
             .widget = base.Widget.init(&vtable),
-            .options = std.ArrayList([]const u8).empty,
+            .options = .{},
             .allocator = allocator,
         };
 
@@ -549,7 +549,7 @@ pub const StatusBar = struct {
 /// Toolbar lays out a horizontal list of actions.
 pub const Toolbar = struct {
     widget: base.Widget,
-    items: std.ArrayList([]const u8),
+    items: std.ArrayListUnmanaged([]const u8),
     active: usize = 0,
     allocator: std.mem.Allocator,
 
@@ -565,7 +565,7 @@ pub const Toolbar = struct {
         const self = try allocator.create(Toolbar);
         self.* = Toolbar{
             .widget = base.Widget.init(&vtable),
-            .items = std.ArrayList([]const u8).empty,
+            .items = .{},
             .allocator = allocator,
         };
         for (labels) |lbl| {
@@ -661,7 +661,7 @@ pub const Toolbar = struct {
 /// Breadcrumbs print hierarchical navigation with separators.
 pub const Breadcrumbs = struct {
     widget: base.Widget,
-    parts: std.ArrayList([]const u8),
+    parts: std.ArrayListUnmanaged([]const u8),
     separator: []const u8 = " / ",
     allocator: std.mem.Allocator,
 
@@ -677,7 +677,7 @@ pub const Breadcrumbs = struct {
         const self = try allocator.create(Breadcrumbs);
         self.* = Breadcrumbs{
             .widget = base.Widget.init(&vtable),
-            .parts = std.ArrayList([]const u8).empty,
+            .parts = .{},
             .allocator = allocator,
         };
         for (parts) |part| {
@@ -853,7 +853,7 @@ pub const CommandPalette = struct {
     widget: base.Widget,
     title: []const u8 = "Command Palette",
     query: []const u8 = "",
-    commands: std.ArrayList([]const u8),
+    commands: std.ArrayListUnmanaged([]const u8),
     selected: usize = 0,
     on_execute: ?*const fn (usize, []const u8) void = null,
     allocator: std.mem.Allocator,
@@ -870,7 +870,7 @@ pub const CommandPalette = struct {
         const self = try allocator.create(CommandPalette);
         self.* = CommandPalette{
             .widget = base.Widget.init(&vtable),
-            .commands = std.ArrayList([]const u8).empty,
+            .commands = .{},
             .allocator = allocator,
         };
         for (commands) |cmd| {
@@ -958,7 +958,7 @@ pub const CommandPalette = struct {
 /// Notification center stacks transient and sticky messages.
 pub const NotificationCenter = struct {
     widget: base.Widget,
-    notifications: std.ArrayList(Notification),
+    notifications: std.ArrayListUnmanaged(Notification),
     allocator: std.mem.Allocator,
 
     pub const Notification = struct {
@@ -981,7 +981,7 @@ pub const NotificationCenter = struct {
         const self = try allocator.create(NotificationCenter);
         self.* = NotificationCenter{
             .widget = base.Widget.init(&vtable),
-            .notifications = std.ArrayList(Notification).empty,
+            .notifications = .{},
             .allocator = allocator,
         };
         return self;
@@ -1074,7 +1074,7 @@ pub const NotificationCenter = struct {
 /// Accordion groups panels that expand and collapse.
 pub const Accordion = struct {
     widget: base.Widget,
-    sections: std.ArrayList(Section),
+    sections: std.ArrayListUnmanaged(Section),
     allocator: std.mem.Allocator,
 
     pub const Section = struct {
@@ -1095,7 +1095,7 @@ pub const Accordion = struct {
         const self = try allocator.create(Accordion);
         self.* = Accordion{
             .widget = base.Widget.init(&vtable),
-            .sections = std.ArrayList(Section).empty,
+            .sections = .{},
             .allocator = allocator,
         };
         for (sections) |section| {
@@ -1193,7 +1193,7 @@ pub const Accordion = struct {
 /// WizardStepper shows progress across multiple steps.
 pub const WizardStepper = struct {
     widget: base.Widget,
-    steps: std.ArrayList([]const u8),
+    steps: std.ArrayListUnmanaged([]const u8),
     current: usize = 0,
     allocator: std.mem.Allocator,
 
@@ -1209,7 +1209,7 @@ pub const WizardStepper = struct {
         const self = try allocator.create(WizardStepper);
         self.* = WizardStepper{
             .widget = base.Widget.init(&vtable),
-            .steps = std.ArrayList([]const u8).empty,
+            .steps = .{},
             .allocator = allocator,
         };
         for (steps) |step| {
