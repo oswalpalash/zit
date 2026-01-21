@@ -56,10 +56,11 @@ pub fn main() !void {
     var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
-    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
+    // Use the general allocator so per-frame renderer scratch buffers can be freed.
+    var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
 
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
 
     try enterAlternateScreen();
     defer exitAlternateScreen() catch {};
