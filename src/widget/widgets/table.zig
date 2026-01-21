@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const memory = @import("../../memory/memory.zig");
 
 /// TableCell structure
 pub const TableCell = struct {
@@ -64,6 +65,8 @@ pub const Table = struct {
     on_row_selected: ?*const fn (usize) void = null,
     /// Allocator for table operations
     allocator: std.mem.Allocator,
+    /// Optional string interner for deduplicating cell/header text
+    string_intern: ?memory.StringInterner = null,
     /// Rolling buffer for incremental search
     search_buffer: [64]u8 = undefined,
     /// Current length of the incremental search query
@@ -100,28 +103,33 @@ pub const Table = struct {
 
     /// Clean up table resources
     pub fn deinit(self: *Table) void {
+        const using_intern = self.string_intern != null;
+
         // Free column headers
         for (self.columns.items) |column| {
-            self.allocator.free(column.header);
+            if (!using_intern) self.allocator.free(column.header);
         }
         self.columns.deinit(self.allocator);
 
         // Free row cell text
         for (self.rows.items) |*row| {
-            for (row.items) |cell| {
-                self.allocator.free(cell.text);
+            if (!using_intern) {
+                for (row.items) |cell| {
+                    self.allocator.free(cell.text);
+                }
             }
             row.deinit(self.allocator);
         }
         self.rows.deinit(self.allocator);
 
+        if (self.string_intern) |*intern| intern.deinit();
         self.allocator.destroy(self);
     }
 
     /// Add a column to the table
     pub fn addColumn(self: *Table, header: []const u8, width: u16, resizable: bool) !void {
         try self.columns.ensureUnusedCapacity(self.allocator, 1);
-        const header_copy = try self.allocator.dupe(u8, header);
+        const header_copy = try self.ownText(header);
         const column_width = if (width == 0) @as(u16, 1) else width;
 
         self.columns.appendAssumeCapacity(TableColumn{
@@ -140,7 +148,7 @@ pub const Table = struct {
         for (cells, 0..) |text, i| {
             if (i >= self.columns.items.len) break;
 
-            const text_copy = try self.allocator.dupe(u8, text);
+            const text_copy = try self.ownText(text);
             new_row.appendAssumeCapacity(TableCell{
                 .text = text_copy,
                 .fg = null,
@@ -151,7 +159,7 @@ pub const Table = struct {
         // Fill remaining columns with empty cells if needed
         while (new_row.items.len < self.columns.items.len) {
             try new_row.ensureUnusedCapacity(self.allocator, 1);
-            const empty_text = try self.allocator.alloc(u8, 0);
+            const empty_text = try self.ownText("");
             new_row.appendAssumeCapacity(TableCell{
                 .text = empty_text,
                 .fg = null,
@@ -169,11 +177,12 @@ pub const Table = struct {
         }
 
         // Free existing text
-        self.allocator.free(self.rows.items[row].items[col].text);
+        if (self.string_intern == null) {
+            self.allocator.free(self.rows.items[row].items[col].text);
+        }
 
         // Copy new text
-        const text_copy = try self.allocator.alloc(u8, text.len);
-        @memcpy(text_copy, text);
+        const text_copy = try self.ownText(text);
 
         // Update cell
         self.rows.items[row].items[col] = TableCell{
@@ -183,6 +192,36 @@ pub const Table = struct {
         };
     }
 
+    /// Enable string interning for all future cell/header text.
+    pub fn enableStringInterning(self: *Table) !void {
+        if (self.string_intern != null) return;
+
+        var intern = try memory.StringInterner.init(self.allocator);
+
+        // Migrate existing headers and cells so deinit keeps ownership clear.
+        for (self.columns.items) |*column| {
+            const interned = try intern.intern(column.header);
+            self.allocator.free(column.header);
+            column.header = interned;
+        }
+
+        for (self.rows.items) |*row| {
+            for (row.items) |*cell| {
+                const interned = try intern.intern(cell.text);
+                self.allocator.free(cell.text);
+                cell.text = interned;
+            }
+        }
+
+        self.string_intern = intern;
+    }
+
+    /// Inspect interner stats if interning is enabled.
+    pub fn stringInternStats(self: *Table) ?memory.StringInterner.Stats {
+        if (self.string_intern) |*intern| return intern.stats();
+        return null;
+    }
+
     /// Remove a row from the table
     pub fn removeRow(self: *Table, row: usize) void {
         if (row >= self.rows.items.len) {
@@ -190,8 +229,10 @@ pub const Table = struct {
         }
 
         // Free all cell text in the row
-        for (self.rows.items[row].items) |cell| {
-            self.allocator.free(cell.text);
+        if (self.string_intern == null) {
+            for (self.rows.items[row].items) |cell| {
+                self.allocator.free(cell.text);
+            }
         }
 
         // Remove the row
@@ -208,8 +249,10 @@ pub const Table = struct {
     pub fn clearRows(self: *Table) void {
         // Free all row cell text
         for (self.rows.items) |*row| {
-            for (row.items) |cell| {
-                self.allocator.free(cell.text);
+            if (self.string_intern == null) {
+                for (row.items) |cell| {
+                    self.allocator.free(cell.text);
+                }
             }
             row.deinit(self.allocator);
         }
@@ -218,11 +261,16 @@ pub const Table = struct {
         self.selected_row = null;
         self.first_visible_row = 0;
         self.resetTypeahead();
+        if (self.string_intern) |*intern| {
+            intern.clearRetainingCapacity();
+        }
     }
 
     fn freeRow(self: *Table, row: *std.ArrayList(TableCell)) void {
-        for (row.items) |cell| {
-            self.allocator.free(cell.text);
+        if (self.string_intern == null) {
+            for (row.items) |cell| {
+                self.allocator.free(cell.text);
+            }
         }
         row.deinit(self.allocator);
     }
@@ -717,6 +765,13 @@ pub const Table = struct {
     fn canFocusFn(widget_ptr: *anyopaque) bool {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
         return self.widget.enabled and self.rows.items.len > 0;
+    }
+
+    fn ownText(self: *Table, text: []const u8) ![]const u8 {
+        if (self.string_intern) |*intern| {
+            return intern.intern(text);
+        }
+        return self.allocator.dupe(u8, text);
     }
 };
 

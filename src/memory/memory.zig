@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const ArenaAllocator = @import("arena.zig").ArenaAllocator;
 const PoolAllocator = @import("pool.zig").PoolAllocator;
 const Widget = @import("../widget/widget.zig").Widget;
+pub const StringInterner = @import("string_intern.zig").StringInterner;
 
 pub const MemoryManager = struct {
     const Self = @This();

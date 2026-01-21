@@ -93,6 +93,8 @@ pub const CheckboxBuilder = builders.CheckboxBuilder;
 pub const InputBuilder = builders.InputBuilder;
 pub const TextAreaBuilder = builders.TextAreaBuilder;
 pub const ProgressBarBuilder = builders.ProgressBarBuilder;
+pub const TableBuilder = builders.TableBuilder;
+pub const TableColumnSpec = builders.TableColumnSpec;
 
 /// Create a new button with the given text
 pub fn createButton(allocator: std.mem.Allocator, text: []const u8) !*Button {
@@ -186,6 +188,15 @@ pub fn createModal(allocator: std.mem.Allocator) !*Modal {
 /// Create a new table
 pub fn createTable(allocator: std.mem.Allocator) !*Table {
     return Table.init(allocator);
+}
+
+/// Create a table using a fluent builder and optional string interning.
+pub fn table(allocator: std.mem.Allocator, columns: []const builders.TableColumnSpec) !*Table {
+    var builder = builders.TableBuilder.init(allocator);
+    for (columns) |col| {
+        _ = try builder.addColumn(col);
+    }
+    return builder.build();
 }
 
 /// Create a new dropdown menu
