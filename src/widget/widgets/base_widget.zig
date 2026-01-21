@@ -3,6 +3,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const event_module = @import("../../event/event.zig");
+const animation = @import("../animation.zig");
 
 /// Focus direction for navigation
 pub const FocusDirection = enum {
@@ -30,6 +31,8 @@ pub const Widget = struct {
     style_class: ?[]const u8 = null,
     /// Optional focus ring styling
     focus_ring: ?render.FocusRingStyle = null,
+    /// Animated visibility controller for show/hide transitions
+    visibility_transition: animation.VisibilityController = .{},
     /// Parent widget, used primarily for modal dialogs and layout containment
     parent: ?*Widget = null,
 
@@ -64,7 +67,7 @@ pub const Widget = struct {
 
     /// Handle an input event
     pub fn handleEvent(self: *Widget, event: input.Event) !bool {
-        if (!self.visible or !self.enabled) {
+        if (!self.visible or !self.enabled or self.visibility_transition.isHiding()) {
             return false;
         }
         return self.vtable.handle_event(self, event);
@@ -97,6 +100,7 @@ pub const Widget = struct {
     /// Set visibility
     pub fn setVisible(self: *Widget, visible: bool) void {
         self.visible = visible;
+        self.visibility_transition.snap(visible);
     }
 
     /// Set enabled state
@@ -117,6 +121,20 @@ pub const Widget = struct {
     /// Set focus ring styling.
     pub fn setFocusRing(self: *Widget, ring: ?render.FocusRingStyle) void {
         self.focus_ring = ring;
+    }
+
+    /// Animate visibility using configured transitions. This keeps the widget
+    /// renderable while fading/sliding out, then hides it when complete.
+    pub fn animateVisibility(self: *Widget, animator: *animation.Animator, visible: bool, opts: animation.VisibilityOptions) !void {
+        if (visible) {
+            self.visible = true;
+        }
+        _ = try self.visibility_transition.animate(animator, visible, opts);
+    }
+
+    /// Current visibility alpha (1 when fully visible, 0 when hidden).
+    pub fn visibilityAlpha(self: *Widget) f32 {
+        return self.visibility_transition.alpha();
     }
 
     /// Set parent widget
@@ -197,13 +215,45 @@ fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) 
 fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout_module.Rect) void {
     const widget = @as(*Widget, @ptrCast(@alignCast(ctx)));
 
+    var draw_rect = rect;
+    const disp = widget.visibility_transition.displacement();
+    if (disp.dx != 0 or disp.dy != 0) {
+        const new_x_i32: i32 = @as(i32, @intCast(rect.x)) + disp.dx;
+        const new_y_i32: i32 = @as(i32, @intCast(rect.y)) + disp.dy;
+        const new_x: u16 = if (new_x_i32 < 0) 0 else @intCast(new_x_i32);
+        const new_y: u16 = if (new_y_i32 < 0) 0 else @intCast(new_y_i32);
+        draw_rect = layout_module.Rect.init(new_x, new_y, rect.width, rect.height);
+    }
+
     // Set widget rect
-    widget.rect = rect;
+    widget.rect = draw_rect;
 
     // Draw the widget
     widget.draw(renderer) catch |err| {
         logWidgetError(widget, "draw", err);
     };
+
+    // Apply fade after drawing so we tint the rendered cells instead of erasing them.
+    const alpha = widget.visibility_transition.alpha();
+    if (widget.visibility_transition.options.mode == .fade and alpha < 0.999 and draw_rect.width > 0 and draw_rect.height > 0) {
+        const fade_to = widget.visibility_transition.options.fade_to;
+        const max_x = @min(draw_rect.x + draw_rect.width, renderer.back.width);
+        const max_y = @min(draw_rect.y + draw_rect.height, renderer.back.height);
+        var y: u16 = draw_rect.y;
+        while (y < max_y) : (y += 1) {
+            var x: u16 = draw_rect.x;
+            while (x < max_x) : (x += 1) {
+                const cell = renderer.back.getCell(x, y);
+                cell.fg = render.mixColor(fade_to, cell.fg, alpha);
+                cell.bg = render.mixColor(fade_to, cell.bg, alpha);
+            }
+        }
+    }
+
+    // When the hide animation completes, stop drawing and reject input.
+    if (!widget.visibility_transition.target_visible and alpha <= 0.001) {
+        widget.visible = false;
+    }
 }
 
 fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {

@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const animation = @import("../animation.zig");
 
 /// Progress bar direction
 pub const ProgressDirection = enum {
@@ -34,6 +35,16 @@ pub const ProgressBar = struct {
     allocator: std.mem.Allocator,
     /// Border style
     border: render.BorderStyle = .single,
+    /// Optional shared animator for smooth transitions
+    animator: ?*animation.Animator = null,
+    /// Animated scalar for progress smoothing
+    progress_driver: animation.ValueDriver = .{},
+    /// Animated foreground color for the fill
+    fill_fg_transition: animation.ColorTransition = animation.ColorTransition.init(render.Color.named(render.NamedColor.green)),
+    /// Animated background color for the fill
+    fill_bg_transition: animation.ColorTransition = animation.ColorTransition.init(render.Color.named(render.NamedColor.default)),
+    /// Duration for progress tweening
+    progress_duration_ms: u64 = 180,
 
     /// Virtual method table for ProgressBar
     pub const vtable = base.Widget.VTable{
@@ -53,6 +64,9 @@ pub const ProgressBar = struct {
             .allocator = allocator,
         };
 
+        self.progress_driver.snap(@floatFromInt(self.progress));
+        self.fill_fg_transition.snap(self.fill_fg);
+        self.fill_bg_transition.snap(self.fill_bg);
         return self;
     }
 
@@ -66,9 +80,40 @@ pub const ProgressBar = struct {
         self.direction = direction;
     }
 
+    /// Attach a shared animator to enable animated progress and color transitions.
+    pub fn attachAnimator(self: *ProgressBar, animator: *animation.Animator) void {
+        self.animator = animator;
+        self.progress_driver.snap(@floatFromInt(self.progress));
+        self.fill_fg_transition.snap(self.fill_fg);
+        self.fill_bg_transition.snap(self.fill_bg);
+    }
+
     /// Set the progress value (0-100)
     pub fn setProgress(self: *ProgressBar, progress: u8) void {
-        self.progress = @min(progress, 100);
+        const clamped = @min(progress, 100);
+        self.progress = clamped;
+        if (self.animator) |anim| {
+            const update = struct {
+                fn onChange(value: f32, ctx: ?*anyopaque) void {
+                    const bar = @as(*ProgressBar, @ptrCast(@alignCast(ctx.?)));
+                    bar.progress_driver.current = value;
+                }
+            }.onChange;
+
+            _ = self.progress_driver.animate(
+                anim,
+                self.progress_driver.current,
+                @floatFromInt(clamped),
+                self.progress_duration_ms,
+                animation.Easing.easeInOutQuad,
+                update,
+                @ptrCast(self),
+            ) catch {
+                self.progress_driver.snap(@floatFromInt(clamped));
+            };
+        } else {
+            self.progress_driver.snap(@floatFromInt(clamped));
+        }
     }
 
     /// Set the progress value (0-100)
@@ -92,6 +137,21 @@ pub const ProgressBar = struct {
         self.bg = bg;
         self.fill_fg = fill_fg;
         self.fill_bg = fill_bg;
+        self.fill_fg_transition.snap(fill_fg);
+        self.fill_bg_transition.snap(fill_bg);
+    }
+
+    /// Smoothly transition fill colors when an animator is available.
+    pub fn transitionFillColors(self: *ProgressBar, fill_fg: render.Color, fill_bg: render.Color, duration_ms: u64) !void {
+        self.fill_fg = fill_fg;
+        self.fill_bg = fill_bg;
+        if (self.animator) |anim| {
+            try self.fill_fg_transition.animateTo(anim, fill_fg, duration_ms, animation.Easing.easeInOutQuad);
+            try self.fill_bg_transition.animateTo(anim, fill_bg, duration_ms, animation.Easing.easeInOutQuad);
+        } else {
+            self.fill_fg_transition.snap(fill_fg);
+            self.fill_bg_transition.snap(fill_bg);
+        }
     }
 
     /// Set the border style
@@ -112,18 +172,23 @@ pub const ProgressBar = struct {
         // Fill background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
 
+        const effective_progress: f32 = if (self.animator != null) self.progress_driver.current else @as(f32, @floatFromInt(self.progress));
+        const clamped = std.math.clamp(effective_progress, 0, 100);
+        const fill_fg = if (self.animator != null) self.fill_fg_transition.value() else self.fill_fg;
+        const fill_bg = if (self.animator != null) self.fill_bg_transition.value() else self.fill_bg;
+
         // Draw progress
         if (self.direction == .horizontal) {
-            const progress_width = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.width)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
+            const progress_width = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.width)) * (clamped / 100.0)));
 
             if (progress_width > 0) {
-                renderer.fillRect(rect.x, rect.y, progress_width, rect.height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
+                renderer.fillRect(rect.x, rect.y, progress_width, rect.height, self.fill_char, fill_fg, fill_bg, render.Style{});
             }
 
             // Show percentage text
             if (self.show_text and rect.width >= 5) {
                 var buffer: [5]u8 = undefined;
-                const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{self.progress}) catch "";
+                const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{@as(u8, @intFromFloat(clamped))}) catch "";
 
                 const half_width = @divTrunc(rect.width, 2);
                 const text_len = @as(u16, @intCast(text.len));
@@ -138,23 +203,23 @@ pub const ProgressBar = struct {
                     // Choose text color based on position (in progress area or not)
                     const is_in_progress_area = x < rect.x + progress_width;
                     const text_fg = if (is_in_progress_area) self.bg else self.fg;
-                    const text_bg = if (is_in_progress_area) self.fill_fg else self.bg;
+                    const text_bg = if (is_in_progress_area) fill_fg else self.bg;
 
                     renderer.drawChar(x, y, char, text_fg, text_bg, render.Style{});
                 }
             }
         } else {
-            const progress_height = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.height)) * @as(f32, @floatFromInt(self.progress)) / 100.0));
+            const progress_height = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.height)) * (clamped / 100.0)));
             const start_y = rect.y + @as(u16, @intCast(@max(0, @as(i16, @intCast(rect.height)) - @as(i16, @intCast(progress_height)))));
 
             if (progress_height > 0) {
-                renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, self.fill_fg, self.fill_bg, render.Style{});
+                renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, fill_fg, fill_bg, render.Style{});
             }
 
             // Show percentage text
             if (self.show_text and rect.height >= 1 and rect.width >= 4) {
                 var buffer: [5]u8 = undefined;
-                const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{self.progress}) catch "";
+                const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{@as(u8, @intFromFloat(clamped))}) catch "";
 
                 const text_x = rect.x + @as(u16, @intCast(@divTrunc(@as(i16, @intCast(rect.width)), 2) - @divTrunc(@as(i16, @intCast(text.len)), 2)));
                 const text_y = rect.y + @divTrunc(rect.height, 2);

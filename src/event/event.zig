@@ -335,6 +335,19 @@ pub const CustomEventData = struct {
     filter_fn: ?*const fn (data: ?*anyopaque) bool = null,
 };
 
+/// Background task lifecycle notification constants.
+pub const BACKGROUND_TASK_EVENT_ID = 0x42544752; // "BTGR"
+pub const BackgroundTaskStatus = enum { success, failed, cancelled };
+pub const BackgroundTaskResult = struct {
+    status: BackgroundTaskStatus,
+    message: []const u8 = "",
+    allocator: std.mem.Allocator,
+};
+
+/// Invoke work on a separate thread and monitor for cancellation.
+pub const BackgroundTaskFn = *const fn (stop_flag: *std.atomic.Value(bool), ctx: ?*anyopaque) anyerror!void;
+pub const BackgroundTaskHandle = struct { flag: *std.atomic.Value(bool) };
+
 /// Event listener function type
 pub const EventListenerFn = *const fn (event: *Event) bool;
 
@@ -505,6 +518,7 @@ pub const EventQueue = struct {
     /// Event queue
     queue: std.ArrayList(Event),
     head: usize = 0,
+    lock: std.Thread.Mutex = .{},
     /// Event dispatcher
     dispatcher: EventDispatcher,
     /// Allocator for event queue operations
@@ -531,6 +545,8 @@ pub const EventQueue = struct {
     }
 
     pub fn popFront(self: *EventQueue) ?Event {
+        self.lock.lock();
+        defer self.lock.unlock();
         if (self.head >= self.queue.items.len) return null;
         const ev = self.queue.items[self.head];
         self.head += 1;
@@ -540,6 +556,8 @@ pub const EventQueue = struct {
 
     /// Push an event to the queue
     pub fn pushEvent(self: *EventQueue, event: Event) !void {
+        self.lock.lock();
+        defer self.lock.unlock();
         try self.queue.append(self.allocator, event);
     }
 
@@ -737,13 +755,17 @@ pub const EventQueue = struct {
 
     /// Wait for a specific event condition
     pub fn waitForEvent(self: *EventQueue, condition: *const fn (*Event) bool, callback: ?*const fn (Event) void) !void {
-        // Check current queue for matching event
-        for (self.queue.items[self.head..]) |*event| {
-            if (condition(event)) {
-                if (callback != null) {
-                    callback.?(event.*);
+        {
+            self.lock.lock();
+            defer self.lock.unlock();
+            // Check current queue for matching event
+            for (self.queue.items[self.head..]) |*event| {
+                if (condition(event)) {
+                    if (callback != null) {
+                        callback.?(event.*);
+                    }
+                    return;
                 }
-                return;
             }
         }
 
@@ -1675,6 +1697,7 @@ pub const Application = struct {
             .focus_manager = undefined,
             .animator = animation.Animator.init(allocator),
             .timer_manager = timer.TimerManager.init(allocator),
+            .drag_manager = undefined,
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
@@ -1736,6 +1759,36 @@ pub const Application = struct {
         self.root = root;
     }
 
+    /// Process input, timers, and animations once without blocking.
+    pub fn tickOnce(self: *Application) !void {
+        if (self.root == null) {
+            return error.NoRootWidget;
+        }
+
+        if (self.use_propagation) {
+            try self.event_queue.processEventsWithPropagation(self.allocator);
+        } else {
+            try self.event_queue.processEvents();
+        }
+
+        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const delta = if (self.last_frame_ms == 0) 0 else now_ms - self.last_frame_ms;
+        self.animator.tick(delta);
+        self.timer_manager.tick(now_ms);
+        self.last_frame_ms = now_ms;
+    }
+
+    /// Poll until a deadline, useful when embedding zit into an external loop.
+    pub fn pollUntil(self: *Application, deadline_ms: u64) !void {
+        if (!self.running) self.running = true;
+        while (true) {
+            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            if (now_ms >= deadline_ms or !self.running) break;
+            try self.tickOnce();
+            std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
+        }
+    }
+
     /// Start the application event loop
     pub fn run(self: *Application) !void {
         if (self.root == null) {
@@ -1746,18 +1799,7 @@ pub const Application = struct {
         self.last_frame_ms = @as(u64, @intCast(std.time.milliTimestamp()));
 
         while (self.running) {
-            // Process events with or without propagation
-            if (self.use_propagation) {
-                try self.event_queue.processEventsWithPropagation(self.allocator);
-            } else {
-                try self.event_queue.processEvents();
-            }
-
-            const now_ms: u64 = @intCast(std.time.milliTimestamp());
-            const delta = if (self.last_frame_ms == 0) 0 else now_ms - self.last_frame_ms;
-            self.animator.tick(delta);
-            self.timer_manager.tick(now_ms);
-            self.last_frame_ms = now_ms;
+            try self.tickOnce();
 
             // Yield to allow other tasks to run
             std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
@@ -1776,18 +1818,8 @@ pub const Application = struct {
         // Start processing in a separate thread
         var thread = try std.Thread.spawn(.{}, struct {
             fn threadFn(app: *Application, cb: ?*const fn () void) !void {
-                var last = app.last_frame_ms;
                 while (app.running) {
-                    // Process events
-                    try app.event_queue.processEvents();
-
-                    const now_ms: u64 = @intCast(std.time.milliTimestamp());
-                    const delta = if (last == 0) 0 else now_ms - last;
-                    app.animator.tick(delta);
-                    app.timer_manager.tick(now_ms);
-                    last = now_ms;
-
-                    // Yield to allow other tasks to run
+                    try app.tickOnce();
                     std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
                 }
 
@@ -1872,6 +1904,63 @@ pub const Application = struct {
         return self.timer_manager.cancel(handle);
     }
 
+    /// Start a background task that will emit a custom event on completion.
+    pub fn startBackgroundTask(self: *Application, work: BackgroundTaskFn, ctx: ?*anyopaque, target: ?*widget.Widget) !BackgroundTaskHandle {
+        const flag = try self.allocator.create(std.atomic.Value(bool));
+        flag.* = std.atomic.Value(bool).init(false);
+        errdefer self.allocator.destroy(flag);
+
+        const worker = struct {
+            fn run(stop_flag: *std.atomic.Value(bool), queue: *EventQueue, allocator: std.mem.Allocator, work_fn: BackgroundTaskFn, ctx_ptr: ?*anyopaque, target_widget: ?*widget.Widget) void {
+                var status: BackgroundTaskStatus = .success;
+                var message: []const u8 = "";
+
+                work_fn(stop_flag, ctx_ptr) catch |err| {
+                    status = .failed;
+                    message = std.fmt.allocPrint(allocator, "{s}", .{@errorName(err)}) catch "";
+                };
+
+                if (stop_flag.load(.acquire)) {
+                    status = .cancelled;
+                }
+
+                const result = allocator.create(BackgroundTaskResult) catch {
+                    return;
+                };
+
+                result.* = .{ .status = status, .message = message, .allocator = allocator };
+
+                const destructor = struct {
+                    fn destroy(data: *anyopaque) void {
+                        const res = @as(*BackgroundTaskResult, @ptrCast(@alignCast(data)));
+                        if (res.message.len > 0) res.allocator.free(res.message);
+                        res.allocator.destroy(res);
+                    }
+                }.destroy;
+
+                queue.createCustomEvent(BACKGROUND_TASK_EVENT_ID, @ptrCast(result), destructor, target_widget) catch {
+                    destructor(@ptrCast(result));
+                };
+            }
+        }.run;
+
+        const thread = try std.Thread.spawn(.{}, worker, .{ flag, &self.event_queue, self.allocator, work, ctx, target });
+        thread.detach();
+
+        return BackgroundTaskHandle{ .flag = flag };
+    }
+
+    /// Request cancellation for a running background task.
+    pub fn cancelBackgroundTask(self: *Application, handle: BackgroundTaskHandle) void {
+        _ = self;
+        handle.flag.store(true, .release);
+    }
+
+    /// Free the stop flag associated with a background task handle once it is no longer needed.
+    pub fn releaseBackgroundTaskHandle(self: *Application, handle: BackgroundTaskHandle) void {
+        self.allocator.destroy(handle.flag);
+    }
+
     /// Enable accessibility support and wire into focus events
     pub fn enableAccessibility(self: *Application) !void {
         if (self.accessibility != null) return;
@@ -1947,3 +2036,47 @@ pub const Application = struct {
         self.use_propagation = use_prop;
     }
 };
+
+test "background tasks emit completion events" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    app.setRoot(root);
+
+    var completed = false;
+    var announcement_seen = false;
+
+    const Listener = struct {
+        pub var seen: *bool = undefined;
+        pub fn on(ev: *Event) bool {
+            if (ev.type != .custom) return false;
+            if (ev.data.custom.id != BACKGROUND_TASK_EVENT_ID) return false;
+            seen.* = true;
+            return true;
+        }
+    };
+    Listener.seen = &announcement_seen;
+    _ = try app.addEventListener(.custom, Listener.on, null);
+
+    const Worker = struct {
+        fn run(_: *std.atomic.Value(bool), ctx: ?*anyopaque) anyerror!void {
+            const flag = @as(*bool, @ptrCast(@alignCast(ctx.?)));
+            flag.* = true;
+        }
+    };
+
+    const handle = try app.startBackgroundTask(Worker.run, @ptrCast(&completed), null);
+
+    var attempts: usize = 0;
+    while (attempts < 50 and !announcement_seen) : (attempts += 1) {
+        std.Thread.sleep(std.time.ns_per_ms * 2);
+        try app.tickOnce();
+    }
+
+    try std.testing.expect(completed);
+    try std.testing.expect(announcement_seen);
+    app.releaseBackgroundTaskHandle(handle);
+}
