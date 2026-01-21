@@ -9,6 +9,7 @@ pub const StyleTarget = struct {
     id: ?[]const u8 = null,
     class: ?[]const u8 = null,
     type_name: ?[]const u8 = null,
+    state: State = .{},
 };
 
 /// Convenience helper to build a target from a widget instance and type name.
@@ -17,8 +18,21 @@ pub fn targetFromWidget(widget: *const BaseWidget, type_name: []const u8) StyleT
         .id = if (widget.id.len > 0) widget.id else null,
         .class = widget.style_class,
         .type_name = type_name,
+        .state = .{},
     };
 }
+
+/// Pseudo-state flags that mirror CSS-like :hover, :focus, etc.
+pub const State = packed struct {
+    hover: bool = false,
+    focus: bool = false,
+    active: bool = false,
+    disabled: bool = false,
+
+    pub fn any(self: State) bool {
+        return self.hover or self.focus or self.active or self.disabled;
+    }
+};
 
 /// Color value that can be sourced from the theme, a named color, or an RGB literal.
 pub const ColorValue = union(enum) {
@@ -46,6 +60,7 @@ pub const Selector = union(enum) {
 
 pub const StyleRule = struct {
     selector: Selector,
+    state: State = .{},
     properties: StyleProperty,
 };
 
@@ -88,7 +103,7 @@ pub const StyleSheet = struct {
         var resolved = Resolved{ .style = base_style };
 
         for (self.rules.items) |rule| {
-            if (!matches(rule.selector, target)) continue;
+            if (!matches(rule.selector, target) or !matchesState(rule.state, target.state)) continue;
 
             if (rule.properties.fg) |fg_value| {
                 resolved.fg = colorFromValue(fg_value, theme);
@@ -100,6 +115,17 @@ pub const StyleSheet = struct {
             applyFlags(&resolved.style, rule.properties);
         }
 
+        return resolved;
+    }
+
+    /// Resolve a target and inherit fg/bg/style from a parent when not overridden.
+    pub fn resolveWithParent(self: *StyleSheet, target: StyleTarget, theme: ?Theme, base_style: render.Style, parent: ?Resolved) Resolved {
+        const inherited_style = if (parent) |p| p.style else base_style;
+        var resolved = self.resolve(target, theme, inherited_style);
+        if (parent) |p| {
+            if (resolved.fg == null) resolved.fg = p.fg;
+            if (resolved.bg == null) resolved.bg = p.bg;
+        }
         return resolved;
     }
 
@@ -148,8 +174,8 @@ pub const StyleSheet = struct {
                 i += 1;
             }
 
-            const selector = try parseSelector(allocator, selector_text);
-            try sheet.addRule(StyleRule{ .selector = selector, .properties = props });
+            const parsed = try parseSelector(allocator, selector_text);
+            try sheet.addRule(StyleRule{ .selector = parsed.selector, .state = parsed.state, .properties = props });
         }
 
         return sheet;
@@ -163,6 +189,15 @@ fn matches(selector: Selector, target: StyleTarget) bool {
         .class => |class_text| if (target.class) |class| std.mem.eql(u8, class, class_text) else false,
         .type_name => |type_text| if (target.type_name) |type_name| std.mem.eql(u8, type_name, type_text) else false,
     };
+}
+
+fn matchesState(rule_state: State, target_state: State) bool {
+    if (!rule_state.any()) return true;
+    if (rule_state.hover and !target_state.hover) return false;
+    if (rule_state.focus and !target_state.focus) return false;
+    if (rule_state.active and !target_state.active) return false;
+    if (rule_state.disabled and !target_state.disabled) return false;
+    return true;
 }
 
 fn colorFromValue(value: ColorValue, theme: ?Theme) ?render.Color {
@@ -179,19 +214,44 @@ fn applyFlags(style: *render.Style, props: StyleProperty) void {
     if (props.underline) |flag| style.underline = flag;
 }
 
-fn parseSelector(allocator: std.mem.Allocator, raw: []const u8) !Selector {
+fn parseSelector(allocator: std.mem.Allocator, raw: []const u8) !ParsedSelector {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    if (trimmed.len == 0 or (trimmed.len == 1 and trimmed[0] == '*')) return Selector.any;
-
-    if (trimmed[0] == '#') {
-        return Selector{ .id = try allocator.dupe(u8, trimmed[1..]) };
-    }
-    if (trimmed[0] == '.') {
-        return Selector{ .class = try allocator.dupe(u8, trimmed[1..]) };
+    if (trimmed.len == 0 or (trimmed.len == 1 and trimmed[0] == '*')) {
+        return ParsedSelector{ .selector = Selector.any, .state = .{} };
     }
 
-    return Selector{ .type_name = try allocator.dupe(u8, trimmed) };
+    var parts = std.mem.tokenizeScalar(u8, trimmed, ':');
+    const head = parts.next().?;
+    var state = State{};
+
+    while (parts.next()) |pseudo_raw| {
+        const pseudo = std.mem.trim(u8, pseudo_raw, " \t\r\n");
+        if (std.mem.eql(u8, pseudo, "hover")) state.hover = true;
+        if (std.mem.eql(u8, pseudo, "focus")) state.focus = true;
+        if (std.mem.eql(u8, pseudo, "active")) state.active = true;
+        if (std.mem.eql(u8, pseudo, "disabled")) state.disabled = true;
+    }
+
+    const selector = try parseBaseSelector(allocator, head);
+    return ParsedSelector{ .selector = selector, .state = state };
 }
+
+fn parseBaseSelector(allocator: std.mem.Allocator, raw: []const u8) !Selector {
+    if (raw.len == 0 or (raw.len == 1 and raw[0] == '*')) return Selector.any;
+    if (raw[0] == '#') {
+        return Selector{ .id = try allocator.dupe(u8, raw[1..]) };
+    }
+    if (raw[0] == '.') {
+        return Selector{ .class = try allocator.dupe(u8, raw[1..]) };
+    }
+
+    return Selector{ .type_name = try allocator.dupe(u8, raw) };
+}
+
+const ParsedSelector = struct {
+    selector: Selector,
+    state: State,
+};
 
 fn applyProperty(props: *StyleProperty, key: []const u8, value: []const u8) void {
     if (key.len == 0) return;
@@ -276,6 +336,7 @@ test "stylesheet parses and resolves rules" {
         .id = "primary",
         .class = "button",
         .type_name = "label",
+        .state = .{},
     }, theme, render.Style{});
 
     try std.testing.expect(resolved.fg != null);
@@ -288,4 +349,36 @@ test "stylesheet parses and resolves rules" {
 
     const expected_bg = theme.color(.surface);
     try std.testing.expect(std.meta.eql(expected_bg, resolved.bg.?));
+}
+
+test "stylesheet matches pseudo states" {
+    const allocator = std.testing.allocator;
+    const css_text =
+        ".button:hover { color: role(accent); bold: true; }\n" ++
+        ".button:active { background: #101010; }\n";
+
+    var sheet = try StyleSheet.parse(allocator, css_text);
+    defer sheet.deinit();
+
+    const theme = Theme.dark();
+    const base = render.Style{};
+
+    const hover_resolved = sheet.resolve(.{ .class = "button", .state = .{ .hover = true } }, theme, base);
+    try std.testing.expect(hover_resolved.fg != null);
+    try std.testing.expect(hover_resolved.style.bold);
+
+    const active_resolved = sheet.resolve(.{ .class = "button", .state = .{ .active = true } }, theme, base);
+    try std.testing.expect(active_resolved.bg != null);
+}
+
+test "stylesheet resolves with inheritance fallback" {
+    const allocator = std.testing.allocator;
+    var sheet = try StyleSheet.parse(allocator, ".title { color: #ff0000; }");
+    defer sheet.deinit();
+
+    const parent = sheet.resolve(.{ .class = "title" }, null, render.Style{});
+    const child = sheet.resolveWithParent(.{ .id = "child" }, null, render.Style{}, parent);
+
+    try std.testing.expect(child.fg != null);
+    try std.testing.expectEqual(parent.fg.?.rgb_color.r, child.fg.?.rgb_color.r);
 }
