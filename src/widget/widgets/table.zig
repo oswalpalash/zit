@@ -136,6 +136,11 @@ pub const Table = struct {
     editing_row: ?usize = null,
     editing_col: ?usize = null,
 
+    fn fromWidgetPtr(widget_ptr: *anyopaque) *Table {
+        const widget = @as(*base.Widget, @ptrCast(@alignCast(widget_ptr)));
+        return @as(*Table, @fieldParentPtr("widget", widget));
+    }
+
     /// Virtual method table for Table
     pub const vtable = base.Widget.VTable{
         .draw = drawFn,
@@ -805,7 +810,7 @@ pub const Table = struct {
 
     /// Draw implementation for Table
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
 
         if (!self.widget.visible or self.columns.items.len == 0) {
             return;
@@ -985,7 +990,7 @@ pub const Table = struct {
 
     /// Event handling implementation for Table
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         self.ensureView();
         const total_rows = self.dataRowCount();
 
@@ -1240,8 +1245,6 @@ pub const Table = struct {
             return false;
         }
 
-        std.debug.print("typeahead start rows={} search_len={} selected_row={any}\n", .{ total_rows, self.search_len, self.selected_row });
-
         const now = self.clock();
         if (self.last_search_ms) |last| {
             if (now < last or @as(u64, @intCast(now - last)) > self.search_timeout_ms) {
@@ -1268,7 +1271,6 @@ pub const Table = struct {
         while (i < scan_limit) : (i += 1) {
             const idx = (start + i) % total_rows;
             const row_idx = self.visible_order.items[idx];
-            std.debug.print("scan idx={} row_idx={} needle_len={}\n", .{ idx, row_idx, needle.len });
             if (self.rowStartsWith(row_idx, needle)) {
                 self.setSelectedRow(row_idx);
                 return true;
@@ -1305,7 +1307,7 @@ pub const Table = struct {
 
     /// Layout implementation for Table
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         self.widget.rect = rect;
 
         self.clampScroll();
@@ -1317,7 +1319,7 @@ pub const Table = struct {
 
     /// Get preferred size implementation for Table
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
 
         // Calculate width based on columns
         var width: u16 = 0;
@@ -1336,7 +1338,7 @@ pub const Table = struct {
 
     /// Can focus implementation for Table
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         return self.widget.enabled and self.rowCount() > 0;
     }
 
@@ -1356,10 +1358,34 @@ test "table typeahead search finds matching rows" {
     try table.addColumn("Name", 12, true);
     try table.addColumn("Details", 16, true);
 
-    try table.addRow(&.{ "Alpha", "First" });
-    try table.addRow(&.{ "Garden", "Plants" });
-    try table.addRow(&.{ "Gamma", "Third" });
-    try table.addRow(&.{ "Zeta", "Last" });
+    const Provider = struct {
+        rows: []const [2][]const u8,
+
+        fn rowCount(ctx: ?*anyopaque) usize {
+            const self = @as(*const @This(), @ptrCast(@alignCast(ctx.?)));
+            return self.rows.len;
+        }
+
+        fn cellAt(row: usize, col: usize, ctx: ?*anyopaque) TableCellView {
+            const self = @as(*const @This(), @ptrCast(@alignCast(ctx.?)));
+            return .{ .text = self.rows[row][col] };
+        }
+    };
+
+    var provider_ctx = Provider{
+        .rows = &.{
+            .{ "Alpha", "First" },
+            .{ "Garden", "Plants" },
+            .{ "Gamma", "Third" },
+            .{ "Zeta", "Last" },
+        },
+    };
+
+    table.useRowProvider(.{
+        .ctx = &provider_ctx,
+        .row_count = Provider.rowCount,
+        .cell_at = Provider.cellAt,
+    });
 
     table.widget.focused = true;
     try table.widget.layout(layout_module.Rect.init(0, 0, 30, 4));
@@ -1394,7 +1420,7 @@ test "table preferred size clamps large widths" {
     try table.addColumn("A", std.math.maxInt(u16), true);
     try table.addColumn("B", std.math.maxInt(u16), true);
 
-    const size = try Table.getPreferredSizeFn(@ptrCast(@alignCast(table)));
+    const size = try Table.getPreferredSizeFn(@ptrCast(@alignCast(&table.widget)));
     try std.testing.expectEqual(std.math.maxInt(u16), size.width);
 }
 
