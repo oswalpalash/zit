@@ -1,0 +1,56 @@
+Your user’s .npmrc file (${HOME}/.npmrc)
+has a `globalconfig` and/or a `prefix` setting, which are incompatible with nvm.
+Run `nvm use --delete-prefix v25.2.1 --silent` to unset it.
+[36mdev@dev[39m [33m~/clawd/tmp/zit[39m % [32mzig-out/bin/system_monitor[39m
+[36mdev@dev[39m [33m~/clawd/tmp/zit[39m % [32mzig-out/bin/file_manager[39m
+ home / dev / projects / zit
+ [Open] [New Folder] [Delete] [Refresh]
+
+ ╔════════════════════════════════════════════════════════════════════════════╗
+ ║src                        │dir      │-      │2024-04-02 10:12              ║
+ ║examples                   │dir      │-      │2024-04-01 08:31              ║
+ ║README.md                  │file     │12 KB  │2024-03-30 18:04              ║
+ ║build.zig                  │file     │6 KB   │2024-03-30 17:59              ║
+ ║zig-out                    │dir      │-      │2024-03-29 14:20              ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ║                                                                            ║
+ ╚════════════════════════════════════════════════════════════════════════════╝
+
+
+ 5 items                          file manager             F5 refresh  F10 quit
+
+[36mdev@dev[39m [33m~/clawd/tmp/zit[39m % [1m[31mqzig-out/bin/htop_clone[0m
+zsh: no such file or directory: qzig-out/bin/htop_clone
+[36mdev@dev[39m [33m~/clawd/tmp/zit[39m %
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
