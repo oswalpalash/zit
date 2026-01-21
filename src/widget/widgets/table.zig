@@ -802,14 +802,14 @@ test "table typeahead search finds matching rows" {
     table.setTypeaheadClock(TestClock.tick);
     table.setTypeaheadTimeout(1_000);
 
-    _ = try table.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 1), table.selected_row.?); // Garden
 
-    _ = try table.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 1), table.selected_row.?); // "ga" still Garden
 
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
-    _ = try table.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), table.selected_row.?); // Zeta
 }
 
@@ -831,6 +831,6 @@ test "table ignores input when empty" {
     defer table.deinit();
 
     try table.widget.layout(layout_module.Rect.init(0, 0, 10, 5));
-    const handled = try table.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
+    const handled = try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
 }

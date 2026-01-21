@@ -748,7 +748,9 @@ test "progress bar builder wires value and colors" {
 test "table builder enables interning and columns" {
     const alloc = std.testing.allocator;
     var builder = TableBuilder.init(alloc);
-    var table = try builder.addColumn(.{ .header = "ID", .width = 4 }).addColumn(.{ .header = "Name", .width = 8 }).build();
+    _ = try builder.addColumn(.{ .header = "ID", .width = 4 });
+    _ = try builder.addColumn(.{ .header = "Name", .width = 8 });
+    var table = try builder.build();
     defer table.deinit();
 
     try std.testing.expect(table.stringInternStats() != null);
