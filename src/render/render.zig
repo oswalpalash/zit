@@ -666,6 +666,12 @@ pub const Buffer = struct {
     }
 };
 
+const DirtyRow = struct {
+    min_x: u16,
+    max_x: u16,
+    dirty: bool,
+};
+
 /// Border style for boxes
 pub const BorderStyle = enum {
     none,
@@ -917,6 +923,7 @@ pub const Renderer = struct {
     dirty_max_y: u16 = 0,
     has_dirty: bool = false,
     cursor_dirty: bool = true,
+    dirty_rows: []DirtyRow = &.{},
     /// Terminal capabilities
     capabilities: TerminalCapabilities,
     /// Reusable scratch buffers to minimize per-frame allocations
@@ -928,14 +935,19 @@ pub const Renderer = struct {
         const front = try Buffer.init(allocator, width, height);
         errdefer front.deinit();
         const back = try Buffer.init(allocator, width, height);
+        errdefer back.deinit();
+        const dirty_rows = try allocator.alloc(DirtyRow, height);
+        errdefer allocator.free(dirty_rows);
 
         var renderer = Renderer{
             .front = front,
             .back = back,
             .allocator = allocator,
+            .dirty_rows = dirty_rows,
             .capabilities = TerminalCapabilities.detect(),
         };
         renderer.resetDirty();
+        renderer.primeBuffers();
         return renderer;
     }
 
@@ -943,6 +955,7 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         self.front.deinit();
         self.back.deinit();
+        if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
         self.style_scratch.deinit(self.allocator);
         self.output_batch.deinit(self.allocator);
     }
@@ -953,13 +966,35 @@ pub const Renderer = struct {
         errdefer new_front.deinit();
         const new_back = try Buffer.init(self.allocator, width, height);
         errdefer new_back.deinit();
+        const new_dirty_rows = try self.allocator.alloc(DirtyRow, height);
+        errdefer self.allocator.free(new_dirty_rows);
 
         self.front.deinit();
         self.back.deinit();
+        if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
         self.front = new_front;
         self.back = new_back;
+        self.dirty_rows = new_dirty_rows;
         self.resetDirty();
         self.markDirtyRect(0, 0, width, height);
+        self.primeBuffers();
+    }
+
+    fn resetDirtyRows(self: *Renderer) void {
+        if (self.dirty_rows.len == 0) return;
+        for (self.dirty_rows) |*row| {
+            row.* = DirtyRow{ .min_x = self.back.width, .max_x = 0, .dirty = false };
+        }
+    }
+
+    fn primeBuffers(self: *Renderer) void {
+        const est_cells = std.math.mul(u64, self.back.width, self.back.height) catch 0;
+        const estimated_bytes = std.math.mul(u64, est_cells, 8) catch std.math.maxInt(u64);
+        const desired_bytes: u64 = @min(estimated_bytes, 512 * 1024);
+        if (desired_bytes > 0 and desired_bytes <= std.math.maxInt(usize)) {
+            self.output_batch.ensureTotalCapacity(self.allocator, @intCast(desired_bytes)) catch {};
+        }
+        self.style_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
     }
 
     fn resetDirty(self: *Renderer) void {
@@ -969,6 +1004,7 @@ pub const Renderer = struct {
         self.dirty_max_y = 0;
         self.has_dirty = false;
         self.cursor_dirty = false;
+        self.resetDirtyRows();
     }
 
     fn markDirtyRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) void {
@@ -982,6 +1018,19 @@ pub const Renderer = struct {
         self.dirty_max_x = @max(self.dirty_max_x, max_x);
         self.dirty_max_y = @max(self.dirty_max_y, max_y);
         self.has_dirty = true;
+
+        if (self.dirty_rows.len == 0) return;
+        const max_row: usize = max_y;
+        var row_idx: usize = @intCast(y);
+        while (row_idx <= max_row and row_idx < self.dirty_rows.len) : (row_idx += 1) {
+            const target = &self.dirty_rows[row_idx];
+            if (!target.dirty) {
+                target.* = DirtyRow{ .min_x = x, .max_x = max_x, .dirty = true };
+            } else {
+                target.min_x = @min(target.min_x, x);
+                target.max_x = @max(target.max_x, max_x);
+            }
+        }
     }
 
     fn writeAllGeneric(writer: anytype, data: []const u8) !void {
@@ -1242,16 +1291,15 @@ pub const Renderer = struct {
         try self.output_batch.appendSlice(self.allocator, "\x1b[?25l");
 
         if (self.has_dirty) {
-            const dirty_start_y: u16 = self.dirty_min_y;
-            const dirty_end_y: u16 = self.dirty_max_y + 1;
-            const dirty_start_x: u16 = self.dirty_min_x;
-            const dirty_end_x: u16 = self.dirty_max_x + 1;
-
             // Perform diff-based updates between front and back buffers
-            for (dirty_start_y..dirty_end_y) |y| {
+            for (self.dirty_rows, 0..) |row, y_idx| {
+                if (!row.dirty) continue;
+                const dirty_start_x: u16 = row.min_x;
+                const dirty_end_x: u16 = row.max_x + 1;
+                const y: u16 = @intCast(y_idx);
                 for (dirty_start_x..dirty_end_x) |x| {
-                    const back_cell = self.back.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
-                    const front_cell = self.front.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
+                    const back_cell = self.back.getCell(@as(u16, @intCast(x)), y);
+                    const front_cell = self.front.getCell(@as(u16, @intCast(x)), y);
 
                     // Skip if cell hasn't changed
                     if (front_cell.eql(back_cell.*)) continue;

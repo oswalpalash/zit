@@ -30,6 +30,12 @@ fn saturatingAdd(a: u16, b: u16) u16 {
     return @intCast(@min(sum, std.math.maxInt(u16)));
 }
 
+fn intersectsViewport(rect: Rect, renderer: *renderer_mod.Renderer) bool {
+    if (rect.width == 0 or rect.height == 0) return false;
+    if (renderer.back.width == 0 or renderer.back.height == 0) return false;
+    return rect.x < renderer.back.width and rect.y < renderer.back.height;
+}
+
 /// Layout system module
 ///
 /// This module provides functionality for arranging UI elements:
@@ -448,6 +454,12 @@ pub const FlexLayout = struct {
         max_main: u16,
     };
 
+    const NaturalMeasure = struct {
+        main: u16,
+        min_main: u16,
+        max_main: u16,
+    };
+
     const FlexCache = struct {
         valid: bool = false,
         available_main: u16 = 0,
@@ -474,6 +486,9 @@ pub const FlexLayout = struct {
     gap_size: u16,
     /// Cached layout results
     cache: FlexCache,
+    /// Reusable measurement scratch buffers to avoid per-frame allocations
+    naturals_scratch: std.ArrayListUnmanaged(NaturalMeasure),
+    assigned_scratch: std.ArrayListUnmanaged(u16),
 
     /// Initialize a new flex layout
     pub fn init(allocator: std.mem.Allocator, direction: FlexDirection) !*FlexLayout {
@@ -487,6 +502,8 @@ pub const FlexLayout = struct {
             .padding_insets = EdgeInsets.all(0),
             .gap_size = 0,
             .cache = .{},
+            .naturals_scratch = .{},
+            .assigned_scratch = .{},
         };
         return layout;
     }
@@ -494,6 +511,8 @@ pub const FlexLayout = struct {
     /// Clean up flex layout resources
     pub fn deinit(self: *FlexLayout) void {
         self.children.deinit(self.base.allocator);
+        self.naturals_scratch.deinit(self.base.allocator);
+        self.assigned_scratch.deinit(self.base.allocator);
         self.base.allocator.destroy(self);
     }
 
@@ -627,6 +646,7 @@ pub const FlexLayout = struct {
                     .height = child_main_size,
                 };
 
+            if (!intersectsViewport(child_rect, renderer)) continue;
             child.element.render(renderer, child_rect);
 
             current_position += margin_main_before;
@@ -730,18 +750,22 @@ pub const FlexLayout = struct {
         var max_cross: u16 = 0;
         var total_grow: u32 = 0;
         var total_shrink: u32 = 0;
-
-        const NaturalMeasure = struct {
-            main: u16,
-            min_main: u16,
-            max_main: u16,
-        };
-
         const allocator = self.base.allocator;
-        var naturals = allocator.alloc(NaturalMeasure, child_count) catch {
-            return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
-        };
-        defer allocator.free(naturals);
+
+        self.naturals_scratch.clearRetainingCapacity();
+        self.assigned_scratch.clearRetainingCapacity();
+
+        if (child_count > 0) {
+            self.naturals_scratch.resize(allocator, child_count) catch {
+                return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+            };
+            self.assigned_scratch.resize(allocator, child_count) catch {
+                return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+            };
+        }
+
+        const naturals = self.naturals_scratch.items;
+        var assigned_main = self.assigned_scratch.items;
 
         for (self.children.items, 0..) |*child, idx| {
             const measure = self.measureChild(child, main_limit, cross_limit, null);
@@ -756,11 +780,6 @@ pub const FlexLayout = struct {
             total_grow += child.flex_grow;
             total_shrink += child.flex_shrink;
         }
-
-        var assigned_main = allocator.alloc(u16, child_count) catch {
-            return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
-        };
-        defer allocator.free(assigned_main);
 
         for (naturals, 0..) |natural, idx| {
             assigned_main[idx] = natural.main;
@@ -1451,6 +1470,9 @@ pub const GridLayout = struct {
                             .height = row_sizes[row],
                         };
 
+                        if (!intersectsViewport(cell_rect, renderer)) {
+                            continue;
+                        }
                         cell.render(renderer, cell_rect);
                     }
                 }
@@ -2129,6 +2151,7 @@ pub const ConstraintLayout = struct {
                 .width = child.resolved_rect.width,
                 .height = child.resolved_rect.height,
             };
+            if (!intersectsViewport(adjusted_rect, renderer)) continue;
             child.element.render(renderer, adjusted_rect);
         }
     }

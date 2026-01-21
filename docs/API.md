@@ -40,7 +40,7 @@ while (true) {
     if (try input_handler.pollEvent(16)) |evt| {
         try queue.push(evt); // or dispatch immediately
     }
-    try zit.event.propagation.processEventsWithPropagation(&queue, allocator);
+    try queue.processEventsWithPropagation(allocator);
     try renderer.render();
 }
 ```
