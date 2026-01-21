@@ -1,5 +1,6 @@
 const std = @import("std");
 const text_metrics = @import("text_metrics.zig");
+const term_caps = @import("../terminal/capabilities.zig");
 
 /// Output rendering module
 ///
@@ -563,98 +564,55 @@ pub const TerminalCapabilities = struct {
     double_width: bool = true,
     /// Terminal can display bidi text coherently
     bidi: bool = true,
+    /// Terminal understands the Kitty keyboard protocol
+    kitty_keyboard: bool = false,
+    /// Kitty graphics/extended escapes are accepted
+    kitty_graphics: bool = false,
+    /// iTerm2 proprietary extensions are supported
+    iterm2_integration: bool = false,
+    /// DEC 2026 synchronized output mode supported
+    synchronized_output: bool = false,
+    /// Identified terminal program
+    program: term_caps.TerminalProgram = .unknown,
+    /// Negotiated color depth
+    color_level: term_caps.ColorLevel = .ansi16,
 
     /// Create default capabilities (conservative defaults)
     pub fn init() TerminalCapabilities {
         return TerminalCapabilities{};
     }
 
-    /// Detect capabilities from TERM env variable
+    /// Detect capabilities from environment hints.
     pub fn detect() TerminalCapabilities {
+        return TerminalCapabilities.fromSurvey(term_caps.detect());
+    }
+
+    pub fn detectWithAllocator(allocator: std.mem.Allocator) TerminalCapabilities {
+        return TerminalCapabilities.fromSurvey(term_caps.detectWithAllocator(allocator));
+    }
+
+    pub fn detectFromEnv(env: term_caps.Environment) TerminalCapabilities {
+        return TerminalCapabilities.fromSurvey(term_caps.detectFrom(env));
+    }
+
+    fn fromSurvey(survey: term_caps.CapabilityFlags) TerminalCapabilities {
         var caps = TerminalCapabilities{};
-
-        const term = std.process.getEnvVarOwned(std.heap.page_allocator, "TERM") catch {
-            return caps; // Return default if TERM not found
-        };
-        defer std.heap.page_allocator.free(term);
-
-        // Check terminal type for capabilities
-        if (std.mem.indexOf(u8, term, "256color") != null) {
-            caps.colors_256 = true;
-        }
-
-        if (std.mem.indexOf(u8, term, "xterm") != null or
-            std.mem.indexOf(u8, term, "iterm") != null or
-            std.mem.indexOf(u8, term, "kitty") != null or
-            std.mem.indexOf(u8, term, "alacritty") != null)
-        {
-            caps.rgb_colors = true;
-            caps.italic = true;
-            caps.strikethrough = true;
-        }
-
-        if (std.mem.indexOf(u8, term, "linux") != null) {
-            caps.unicode = false;
-        }
-
-        // Check for COLORTERM env variable
-        var colorterm_buf: [64]u8 = undefined;
-        var colorterm_len: usize = 0;
-
-        const ct = std.process.getEnvVarOwned(std.heap.page_allocator, "COLORTERM") catch null;
-        if (ct) |colorterm| {
-            defer std.heap.page_allocator.free(colorterm);
-            colorterm_len = @min(colorterm.len, colorterm_buf.len - 1);
-            @memcpy(colorterm_buf[0..colorterm_len], colorterm[0..colorterm_len]);
-            colorterm_buf[colorterm_len] = 0;
-        }
-
-        if (colorterm_len > 0) {
-            const colorterm = colorterm_buf[0..colorterm_len];
-            // Check if the colorterm contains truecolor or 24bit
-            var has_truecolor = false;
-            for (colorterm, 0..) |_, i| {
-                if (i + 9 <= colorterm_len and
-                    colorterm[i] == 't' and
-                    colorterm[i + 1] == 'r' and
-                    colorterm[i + 2] == 'u' and
-                    colorterm[i + 3] == 'e' and
-                    colorterm[i + 4] == 'c' and
-                    colorterm[i + 5] == 'o' and
-                    colorterm[i + 6] == 'l' and
-                    colorterm[i + 7] == 'o' and
-                    colorterm[i + 8] == 'r')
-                {
-                    has_truecolor = true;
-                    break;
-                }
-
-                if (i + 4 <= colorterm_len and
-                    colorterm[i] == '2' and
-                    colorterm[i + 1] == '4' and
-                    colorterm[i + 2] == 'b' and
-                    colorterm[i + 3] == 'i' and
-                    colorterm[i + 4] == 't')
-                {
-                    has_truecolor = true;
-                    break;
-                }
-            }
-
-            if (has_truecolor) {
-                caps.rgb_colors = true;
-            }
-        }
-
-        // Feature survey based on environment hints and pragmatic defaults.
-        caps.emoji = text_metrics.measureWidth("✅").has_emoji;
-        caps.double_width = true; // keep accounting for safety
-        caps.ligatures = std.mem.indexOf(u8, term, "kitty") != null or
-            std.mem.indexOf(u8, term, "wezterm") != null or
-            std.mem.indexOf(u8, term, "vscode") != null;
-        caps.bidi = true; // optimistic but sanitizers are available
-        caps.rgb_colors = caps.rgb_colors or text_metrics.detectTrueColor();
-
+        caps.rgb_colors = survey.rgb_colors;
+        caps.colors_256 = survey.colors_256 or survey.rgb_colors;
+        caps.italic = survey.italic;
+        caps.unicode = survey.unicode;
+        caps.underline = survey.underline;
+        caps.strikethrough = survey.strikethrough;
+        caps.emoji = survey.emoji;
+        caps.ligatures = survey.ligatures;
+        caps.double_width = survey.double_width;
+        caps.bidi = survey.bidi;
+        caps.kitty_keyboard = survey.kitty_keyboard;
+        caps.kitty_graphics = survey.kitty_graphics;
+        caps.iterm2_integration = survey.iterm2_integration;
+        caps.synchronized_output = survey.synchronized_output;
+        caps.program = survey.program;
+        caps.color_level = survey.color_level;
         return caps;
     }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const capabilities = @import("capabilities.zig");
 
 /// Terminal abstraction layer
 ///
@@ -29,6 +30,10 @@ pub const Terminal = struct {
     is_mouse_enabled: bool,
     /// Allocator for terminal operations
     allocator: std.mem.Allocator,
+    /// Detected terminal capabilities
+    capabilities: capabilities.CapabilityFlags,
+    /// Whether synchronized output mode (DEC 2026) is active
+    is_sync_output: bool,
 
     // Cross-platform terminal attribute storage
     const OriginalTermAttrs = union(enum) {
@@ -78,6 +83,8 @@ pub const Terminal = struct {
             .is_cursor_visible = true,
             .is_mouse_enabled = false,
             .allocator = allocator,
+            .capabilities = capabilities.detectWithAllocator(allocator),
+            .is_sync_output = false,
         };
 
         try self.updateSize();
@@ -111,6 +118,10 @@ pub const Terminal = struct {
             try self.disableMouseEvents();
         }
 
+        if (self.is_sync_output) {
+            try self.endSynchronizedOutput();
+        }
+
         // Reset all formatting before exit
         try self.resetFormatting();
     }
@@ -142,7 +153,9 @@ pub const Terminal = struct {
             };
 
             // Enable Kitty keyboard protocol
-            self.enableKittyKeyboardProtocol() catch {};
+            if (self.capabilities.kitty_keyboard) {
+                self.enableKittyKeyboardProtocol() catch {};
+            }
 
             self.is_raw_mode = true;
             return;
@@ -261,7 +274,9 @@ pub const Terminal = struct {
         }
 
         // Try to enable the Kitty keyboard protocol for better key handling
-        self.enableKittyKeyboardProtocol() catch {};
+        if (self.capabilities.kitty_keyboard) {
+            self.enableKittyKeyboardProtocol() catch {};
+        }
 
         self.is_raw_mode = true;
     }
@@ -271,7 +286,9 @@ pub const Terminal = struct {
         if (!self.is_raw_mode) return;
 
         // Disable the Kitty keyboard protocol first
-        self.disableKittyKeyboardProtocol() catch {};
+        if (self.capabilities.kitty_keyboard) {
+            self.disableKittyKeyboardProtocol() catch {};
+        }
 
         // For macOS, ensure terminal output is flushed and use a reliable method to restore
         if (@import("builtin").os.tag == .macos) {
@@ -426,6 +443,24 @@ pub const Terminal = struct {
         self.is_mouse_enabled = false;
     }
 
+    /// Enable synchronized output mode (DEC 2026) to reduce flicker during large updates.
+    pub fn beginSynchronizedOutput(self: *Terminal) !void {
+        if (self.is_sync_output or !self.capabilities.synchronized_output) return;
+
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?2026h");
+        self.is_sync_output = true;
+    }
+
+    /// Disable synchronized output mode (DEC 2026).
+    pub fn endSynchronizedOutput(self: *Terminal) !void {
+        if (!self.is_sync_output) return;
+
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?2026l");
+        self.is_sync_output = false;
+    }
+
     /// Hide the cursor
     pub fn hideCursor(self: *Terminal) !void {
         if (!self.is_cursor_visible) return;
@@ -488,46 +523,29 @@ pub const Terminal = struct {
 
     /// Set text style (bold, italic, underline)
     pub fn setStyle(self: *Terminal, bold: bool, italic: bool, underline: bool) !void {
-        _ = self; // Unused parameter
         var stdout = std.fs.File.stdout();
 
         if (bold) {
             try stdout.writeAll("\x1b[1m");
         }
 
-        if (italic) {
+        if (italic and self.capabilities.italic) {
             try stdout.writeAll("\x1b[3m");
         }
 
-        if (underline) {
+        if (underline and self.capabilities.underline) {
             try stdout.writeAll("\x1b[4m");
         }
     }
 
     /// Check if terminal supports 256 colors
     pub fn supports256Colors(self: *Terminal) bool {
-        var env = std.process.getEnvMap(self.allocator) catch {
-            return false;
-        };
-        defer env.deinit();
-
-        const term = env.get("TERM") orelse return false;
-
-        return std.mem.indexOf(u8, term, "256color") != null or
-            std.mem.indexOf(u8, term, "xterm") != null;
+        return self.capabilities.colors_256 or self.capabilities.rgb_colors;
     }
 
     /// Check if terminal supports true color (24-bit)
     pub fn supportsTrueColor(self: *Terminal) bool {
-        var env = std.process.getEnvMap(self.allocator) catch {
-            return false;
-        };
-        defer env.deinit();
-
-        const colorterm = env.get("COLORTERM") orelse return false;
-
-        return std.mem.indexOf(u8, colorterm, "truecolor") != null or
-            std.mem.indexOf(u8, colorterm, "24bit") != null;
+        return self.capabilities.rgb_colors;
     }
 
     /// Set RGB color (if supported)
@@ -543,7 +561,7 @@ pub const Terminal = struct {
 
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
-        _ = self; // Unused parameter
+        if (!self.capabilities.kitty_keyboard) return;
         var stdout = std.fs.File.stdout();
 
         // Enable Kitty keyboard protocol (if the terminal supports it)
@@ -552,7 +570,7 @@ pub const Terminal = struct {
 
     /// Disable Kitty keyboard protocol
     pub fn disableKittyKeyboardProtocol(self: *Terminal) !void {
-        _ = self; // Unused parameter
+        if (!self.capabilities.kitty_keyboard) return;
         var stdout = std.fs.File.stdout();
 
         // Disable Kitty keyboard protocol
