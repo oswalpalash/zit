@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
+const input_mask = @import("../input_mask.zig");
 
 /// Input field widget for text entry
 pub const InputField = struct {
@@ -39,6 +40,22 @@ pub const InputField = struct {
     placeholder: []const u8 = "",
     /// Whether placeholder memory is owned by this widget
     placeholder_owned: bool = false,
+    /// Optional formatter that enforces a masking pattern
+    mask: ?input_mask.Mask = null,
+    /// Validation rules to run against the current value
+    validation_rules: ?[]const form.Rule = null,
+    /// Field name used for validation reporting
+    validation_field_name: []const u8 = "value",
+    validation_field_owned: bool = false,
+    /// Whether to automatically re-run validation on each edit
+    validate_on_change: bool = false,
+    /// Callback invoked after validation completes
+    on_validation: ?*const fn (*InputField, *const form.ValidationResult) void = null,
+    /// Cached validation result (owned)
+    last_validation: ?form.ValidationResult = null,
+    /// Colors used when the input is invalid
+    invalid_fg: render.Color = render.Color{ .named_color = render.NamedColor.white },
+    invalid_bg: render.Color = render.Color{ .named_color = render.NamedColor.red },
     /// On change callback
     on_change: ?*const fn ([]const u8) void = null,
     /// On submit callback
@@ -97,6 +114,11 @@ pub const InputField = struct {
         if (self.placeholder_owned and self.placeholder.len > 0) {
             self.allocator.free(self.placeholder);
         }
+        self.clearMask();
+        self.clearValidationResult();
+        if (self.validation_field_owned and self.validation_field_name.len > 0) {
+            self.allocator.free(self.validation_field_name);
+        }
         self.undo_redo.deinit();
         if (self.owns_clipboard) {
             self.clipboard_storage.deinit();
@@ -126,6 +148,85 @@ pub const InputField = struct {
         self.resetSentinel();
     }
 
+    fn ensureCapacity(self: *InputField, capacity: usize) !void {
+        if (capacity <= self.text.len) return;
+
+        const resized = try self.allocator.realloc(self.text, capacity);
+        if (capacity > self.text.len) {
+            @memset(resized[self.text.len..capacity], 0);
+        }
+        self.text = resized;
+        self.max_length = capacity;
+        self.resetSentinel();
+    }
+
+    fn clearMask(self: *InputField) void {
+        if (self.mask) |*existing| {
+            existing.deinit();
+        }
+        self.mask = null;
+    }
+
+    fn setValidationFieldName(self: *InputField, name: []const u8) !void {
+        if (self.validation_field_owned and self.validation_field_name.len > 0) {
+            self.allocator.free(self.validation_field_name);
+        }
+
+        if (name.len == 0) {
+            self.validation_field_name = "value";
+            self.validation_field_owned = false;
+        } else {
+            self.validation_field_name = try self.allocator.dupe(u8, name);
+            self.validation_field_owned = true;
+        }
+    }
+
+    fn applyMask(self: *InputField) !void {
+        if (self.mask) |*mask_value| {
+            const masked = try mask_value.format(self.allocator, self.currentText());
+            defer self.allocator.free(masked);
+            const copy_len = @min(masked.len, self.text.len);
+            self.writeText(masked[0..copy_len]);
+            self.cursor = self.len;
+        }
+    }
+
+    fn clearValidationResult(self: *InputField) void {
+        if (self.last_validation) |*res| {
+            res.deinit();
+        }
+        self.last_validation = null;
+    }
+
+    fn runValidation(self: *InputField) !void {
+        if (self.validation_rules) |rules| {
+            self.clearValidationResult();
+            const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
+            self.last_validation = result;
+            if (self.on_validation) |callback| {
+                callback(self, &self.last_validation.?);
+            }
+        }
+    }
+
+    fn finalizeChange(self: *InputField, capture_history: bool, force_validate: bool) void {
+        self.applyMask() catch {};
+        self.resetSentinel();
+        self.clampCursor();
+        if (capture_history) self.pushHistory() catch {};
+        if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
+            self.runValidation() catch {};
+        }
+        self.notifyChange();
+    }
+
+    fn hasValidationError(self: *const InputField) bool {
+        if (self.last_validation) |result| {
+            return !result.isValid();
+        }
+        return false;
+    }
+
     fn clampCursor(self: *InputField) void {
         if (self.cursor > self.len) {
             self.cursor = self.len;
@@ -144,7 +245,7 @@ pub const InputField = struct {
 
     fn applySnapshot(self: *InputField, snapshot: []const u8) void {
         self.writeText(snapshot);
-        self.notifyChange();
+        self.finalizeChange(false, self.validate_on_change);
     }
 
     /// Share a clipboard instance between multiple input fields.
@@ -169,8 +270,7 @@ pub const InputField = struct {
     /// Set the input field text
     pub fn setText(self: *InputField, text: []const u8) void {
         self.writeText(text);
-        self.pushHistory() catch {};
-        self.notifyChange();
+        self.finalizeChange(true, self.validate_on_change);
     }
 
     /// Undo the most recent edit, returning true when the buffer changed.
@@ -209,6 +309,25 @@ pub const InputField = struct {
         self.placeholder_owned = true;
     }
 
+    /// Apply a mask pattern (e.g. "(###) ###-####"). The input field owns the mask.
+    pub fn setMaskPattern(self: *InputField, pattern: []const u8) !void {
+        const mask = try input_mask.Mask.init(self.allocator, pattern);
+        self.setMask(mask);
+    }
+
+    /// Assign a pre-built mask (ownership is transferred to the input).
+    pub fn setMask(self: *InputField, mask: input_mask.Mask) void {
+        self.clearMask();
+        self.mask = mask;
+        self.ensureCapacity(self.mask.?.maxLength()) catch {};
+        self.applyMask() catch {};
+    }
+
+    /// Remove the active mask and leave the current text untouched.
+    pub fn disableMask(self: *InputField) void {
+        self.clearMask();
+    }
+
     /// Set the border style
     pub fn setBorder(self: *InputField, border: render.BorderStyle) void {
         self.border = border;
@@ -233,6 +352,37 @@ pub const InputField = struct {
         self.on_submit = callback;
     }
 
+    /// Assign validation rules and a logical field name for error reporting.
+    pub fn setValidation(self: *InputField, field_name: []const u8, rules: []const form.Rule, realtime: bool) !void {
+        try self.setValidationFieldName(field_name);
+        self.validation_rules = rules;
+        self.validate_on_change = realtime;
+        if (realtime) try self.runValidation();
+    }
+
+    /// Clear validation metadata and any cached results.
+    pub fn clearValidation(self: *InputField) void {
+        self.validation_rules = null;
+        self.validate_on_change = false;
+        self.clearValidationResult();
+    }
+
+    /// Manually trigger validation using the configured rules.
+    pub fn revalidate(self: *InputField) !void {
+        try self.runValidation();
+    }
+
+    /// Hook invoked whenever validation runs (manual or real-time).
+    pub fn setOnValidate(self: *InputField, callback: *const fn (*InputField, *const form.ValidationResult) void) void {
+        self.on_validation = callback;
+    }
+
+    /// Access the most recent validation result (owned by the input).
+    pub fn validationState(self: *InputField) ?*const form.ValidationResult {
+        if (self.last_validation) |*res| return res;
+        return null;
+    }
+
     /// Draw implementation for InputField
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*InputField, @ptrCast(@alignCast(widget_ptr)));
@@ -246,8 +396,11 @@ pub const InputField = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
+        const invalid = self.widget.enabled and self.hasValidationError();
         const fg = if (!self.widget.enabled)
             self.disabled_fg
+        else if (invalid)
+            self.invalid_fg
         else if (self.widget.focused)
             self.focused_fg
         else
@@ -255,6 +408,8 @@ pub const InputField = struct {
 
         const bg = if (!self.widget.enabled)
             self.disabled_bg
+        else if (invalid)
+            self.invalid_bg
         else if (self.widget.focused)
             self.focused_bg
         else
@@ -378,8 +533,7 @@ pub const InputField = struct {
 
         try self.clipboard.copy(slice);
         self.writeText("");
-        try self.pushHistory();
-        self.notifyChange();
+        self.finalizeChange(true, false);
         return true;
     }
 
@@ -402,9 +556,7 @@ pub const InputField = struct {
 
         self.len += insert_len;
         self.cursor += insert_len;
-        self.resetSentinel();
-        try self.pushHistory();
-        self.notifyChange();
+        self.finalizeChange(true, false);
         return true;
     }
 
@@ -421,9 +573,7 @@ pub const InputField = struct {
         self.text[self.cursor] = value;
         self.len += 1;
         self.cursor += 1;
-        self.resetSentinel();
-        try self.pushHistory();
-        self.notifyChange();
+        self.finalizeChange(true, false);
     }
 
     /// Event handling implementation for InputField
@@ -467,9 +617,7 @@ pub const InputField = struct {
                         }
                         self.len -= 1;
                         self.cursor -= 1;
-                        self.resetSentinel();
-                        try self.pushHistory();
-                        self.notifyChange();
+                        self.finalizeChange(true, false);
                     }
                     return true;
                 },
@@ -480,9 +628,7 @@ pub const InputField = struct {
                             std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + tail], self.text[self.cursor + 1 .. self.cursor + 1 + tail]);
                         }
                         self.len -= 1;
-                        self.resetSentinel();
-                        try self.pushHistory();
-                        self.notifyChange();
+                        self.finalizeChange(true, false);
                     }
                     return true;
                 },
@@ -535,7 +681,7 @@ pub const InputField = struct {
 
 test "input field placeholder can be replaced safely" {
     const alloc = std.testing.allocator;
-    var field = try InputField.init(alloc, 32);
+    const field = try InputField.init(alloc, 32);
     defer field.deinit();
 
     try field.setPlaceholder("first");
@@ -545,7 +691,7 @@ test "input field placeholder can be replaced safely" {
 
 test "input field supports undo and redo shortcuts" {
     const alloc = std.testing.allocator;
-    var field = try InputField.init(alloc, 32);
+    const field = try InputField.init(alloc, 32);
     defer field.deinit();
     field.widget.focused = true;
 
@@ -563,7 +709,7 @@ test "input field supports undo and redo shortcuts" {
 
 test "input field copy and paste round trips through clipboard" {
     const alloc = std.testing.allocator;
-    var field = try InputField.init(alloc, 32);
+    const field = try InputField.init(alloc, 32);
     defer field.deinit();
     field.widget.focused = true;
 
@@ -580,7 +726,7 @@ test "input field copy and paste round trips through clipboard" {
 
 test "input field undo/redo APIs restore key edits" {
     const alloc = std.testing.allocator;
-    var field = try InputField.init(alloc, 16);
+    const field = try InputField.init(alloc, 16);
     defer field.deinit();
     field.widget.focused = true;
 
@@ -600,4 +746,34 @@ test "input field undo/redo APIs restore key edits" {
     try std.testing.expectEqualStrings("pq", field.getText());
     try std.testing.expect(field.redo());
     try std.testing.expectEqualStrings("p", field.getText());
+}
+
+test "input field applies input mask formatting" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 8);
+    defer field.deinit();
+
+    try field.setMaskPattern("(###) ###-####");
+    field.setText("12345");
+    try std.testing.expectEqualStrings("(123) 45", field.getText());
+}
+
+test "input field can surface real-time validation results" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    const rules = [_]form.Rule{
+        form.required("needed"),
+        form.minLength(4, "too short"),
+    };
+
+    try field.setValidation("name", &rules, true);
+    field.setText("ab");
+    const first_state = field.validationState().?;
+    try std.testing.expect(!first_state.*.isValid());
+
+    field.setText("abcd");
+    const second_state = field.validationState().?;
+    try std.testing.expect(second_state.*.isValid());
 }

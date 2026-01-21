@@ -1375,34 +1375,34 @@ pub const ShortcutRegistry = struct {
     }
 
     pub fn summaries(self: *ShortcutRegistry, allocator: std.mem.Allocator) ![]ShortcutSummary {
-        var list = std.ArrayList(ShortcutSummary).init(allocator);
+        var list = try std.ArrayList(ShortcutSummary).initCapacity(allocator, 0);
         errdefer {
             for (list.items) |entry| {
                 allocator.free(entry.combo);
                 allocator.free(entry.description);
             }
-            list.deinit();
+            list.deinit(allocator);
         }
 
         for (self.shortcuts.items) |entry| {
             const combo_str = try formatCombo(entry.combo, allocator);
             const desc_copy = try allocator.dupe(u8, entry.description);
-            try list.append(.{
+            try list.append(allocator, .{
                 .combo = combo_str,
                 .description = desc_copy,
                 .scope = entry.scope,
             });
         }
-        return list.toOwnedSlice();
+        return list.toOwnedSlice(allocator);
     }
 
     fn formatCombo(combo: KeyCombo, allocator: std.mem.Allocator) ![]const u8 {
-        var buf = std.ArrayList(u8).init(allocator);
-        errdefer buf.deinit();
+        var buf = try std.ArrayList(u8).initCapacity(allocator, 0);
+        errdefer buf.deinit(allocator);
 
         const mods = try combo.modifiers.toString(allocator);
         defer allocator.free(mods);
-        try buf.appendSlice(mods);
+        try buf.appendSlice(allocator, mods);
 
         var key_name: []const u8 = undefined;
         var stack_buf: [8]u8 = undefined;
@@ -1425,8 +1425,8 @@ pub const ShortcutRegistry = struct {
             };
         }
 
-        try buf.appendSlice(key_name);
-        return buf.toOwnedSlice();
+        try buf.appendSlice(allocator, key_name);
+        return buf.toOwnedSlice(allocator);
     }
 };
 

@@ -26,6 +26,16 @@ pub const TextArea = struct {
     show_border: bool = true,
     placeholder: []const u8 = "",
     placeholder_owned: bool = false,
+    selection: ?Selection = null,
+    extra_cursors: std.ArrayList(usize),
+    validation_rules: ?[]const form.Rule = null,
+    validation_field_name: []const u8 = "value",
+    validation_field_owned: bool = false,
+    validate_on_change: bool = false,
+    on_validation: ?*const fn (*TextArea, *const form.ValidationResult) void = null,
+    last_validation: ?form.ValidationResult = null,
+    invalid_fg: render.Color = render.Color{ .named_color = render.NamedColor.white },
+    invalid_bg: render.Color = render.Color{ .named_color = render.NamedColor.red },
     on_change: ?*const fn ([]const u8) void = null,
     on_submit: ?*const fn ([]const u8) void = null,
     submit_on_ctrl_enter: bool = true,
@@ -57,6 +67,7 @@ pub const TextArea = struct {
             .clipboard_storage = input.Clipboard.init(allocator),
             .clipboard = undefined,
             .allocator = allocator,
+            .extra_cursors = std.ArrayList(usize).empty,
         };
 
         self.clipboard = &self.clipboard_storage;
@@ -73,6 +84,11 @@ pub const TextArea = struct {
         if (self.placeholder_owned and self.placeholder.len > 0) {
             self.allocator.free(self.placeholder);
         }
+        self.clearValidationResult();
+        if (self.validation_field_owned and self.validation_field_name.len > 0) {
+            self.allocator.free(self.validation_field_name);
+        }
+        self.extra_cursors.deinit(self.allocator);
         self.undo_redo.deinit();
         if (self.owns_clipboard) {
             self.clipboard_storage.deinit();
@@ -83,8 +99,7 @@ pub const TextArea = struct {
 
     pub fn setText(self: *TextArea, text: []const u8) !void {
         try self.writeText(text);
-        try self.pushHistory();
-        self.notifyChange();
+        self.finalizeChange(true, self.validate_on_change);
     }
 
     pub fn getText(self: *TextArea) []const u8 {
@@ -168,6 +183,321 @@ pub const TextArea = struct {
         }
     }
 
+    pub fn selectionRange(self: *TextArea) ?Selection {
+        return self.normalizedSelection();
+    }
+
+    pub fn selectRange(self: *TextArea, start: usize, end: usize) void {
+        const clamped_start = @min(start, self.buffer.items.len);
+        const clamped_end = @min(end, self.buffer.items.len);
+        self.selection = .{ .start = clamped_start, .end = clamped_end };
+    }
+
+    pub fn clearSelection(self: *TextArea) void {
+        self.selection = null;
+    }
+
+    pub fn selectAll(self: *TextArea) void {
+        self.selection = .{ .start = 0, .end = self.buffer.items.len };
+    }
+
+    pub fn addCursor(self: *TextArea, position: usize) !void {
+        const clamped = @min(position, self.buffer.items.len);
+        if (clamped == self.cursor) return;
+        if (std.mem.indexOfScalar(usize, self.extra_cursors.items, clamped) != null) return;
+        try self.extra_cursors.append(self.allocator, clamped);
+        std.sort.sort(usize, self.extra_cursors.items, {}, std.sort.asc(usize));
+    }
+
+    pub fn clearExtraCursors(self: *TextArea) void {
+        self.extra_cursors.clearRetainingCapacity();
+    }
+
+    pub fn setCursors(self: *TextArea, positions: []const usize) !void {
+        if (positions.len == 0) {
+            self.clearExtraCursors();
+            return;
+        }
+
+        self.cursor = @min(positions[0], self.buffer.items.len);
+        self.clearExtraCursors();
+        for (positions[1..]) |pos| {
+            try self.addCursor(pos);
+        }
+    }
+
+    pub fn setValidation(self: *TextArea, field_name: []const u8, rules: []const form.Rule, realtime: bool) !void {
+        try self.setValidationFieldName(field_name);
+        self.validation_rules = rules;
+        self.validate_on_change = realtime;
+        if (realtime) try self.runValidation();
+    }
+
+    pub fn clearValidation(self: *TextArea) void {
+        self.validation_rules = null;
+        self.validate_on_change = false;
+        self.clearValidationResult();
+    }
+
+    /// Manually trigger validation using the configured rules.
+    pub fn revalidate(self: *TextArea) !void {
+        try self.runValidation();
+    }
+
+    pub fn setOnValidate(self: *TextArea, callback: *const fn (*TextArea, *const form.ValidationResult) void) void {
+        self.on_validation = callback;
+    }
+
+    pub fn validationState(self: *TextArea) ?*const form.ValidationResult {
+        if (self.last_validation) |*res| return res;
+        return null;
+    }
+
+    fn clearValidationResult(self: *TextArea) void {
+        if (self.last_validation) |*res| res.deinit();
+        self.last_validation = null;
+    }
+
+    fn setValidationFieldName(self: *TextArea, name: []const u8) !void {
+        if (self.validation_field_owned and self.validation_field_name.len > 0) {
+            self.allocator.free(self.validation_field_name);
+        }
+
+        if (name.len == 0) {
+            self.validation_field_name = "value";
+            self.validation_field_owned = false;
+        } else {
+            self.validation_field_name = try self.allocator.dupe(u8, name);
+            self.validation_field_owned = true;
+        }
+    }
+
+    fn runValidation(self: *TextArea) !void {
+        if (self.validation_rules) |rules| {
+            self.clearValidationResult();
+            const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
+            self.last_validation = result;
+            if (self.on_validation) |callback| callback(self, &self.last_validation.?);
+        }
+    }
+
+    fn finalizeChange(self: *TextArea, capture_history: bool, force_validate: bool) void {
+        self.clampCursor();
+        self.resetPreferredColumn();
+        if (capture_history) self.pushHistory() catch {};
+        if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
+            self.runValidation() catch {};
+        }
+        self.notifyChange();
+    }
+
+    fn hasValidationError(self: *const TextArea) bool {
+        if (self.last_validation) |result| return !result.isValid();
+        return false;
+    }
+
+    fn normalizedSelection(self: *TextArea) ?Selection {
+        if (self.selection) |sel| {
+            const start = @min(sel.start, sel.end);
+            const end = @max(sel.start, sel.end);
+            if (start == end) return null;
+            return .{ .start = start, .end = end };
+        }
+        return null;
+    }
+
+    fn remainingCapacity(self: *const TextArea) usize {
+        if (self.buffer.items.len >= self.max_bytes) return 0;
+        return self.max_bytes - self.buffer.items.len;
+    }
+
+    const CursorMark = struct { pos: usize, primary: bool };
+
+    fn cursorLess(_: void, a: CursorMark, b: CursorMark) bool {
+        return a.pos < b.pos;
+    }
+
+    fn collectCursorMarks(self: *TextArea) !std.ArrayList(CursorMark) {
+        var marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, self.extra_cursors.items.len + 1);
+        errdefer marks.deinit(self.allocator);
+
+        try marks.append(self.allocator, .{ .pos = @min(self.cursor, self.buffer.items.len), .primary = true });
+        for (self.extra_cursors.items) |pos| {
+            try marks.append(self.allocator, .{ .pos = @min(pos, self.buffer.items.len), .primary = false });
+        }
+
+        std.sort.sort(CursorMark, marks.items, {}, cursorLess);
+
+        var write: usize = 0;
+        var idx: usize = 0;
+        while (idx < marks.items.len) {
+            var merged = marks.items[idx];
+            idx += 1;
+            while (idx < marks.items.len and marks.items[idx].pos == merged.pos) {
+                merged.primary = merged.primary or marks.items[idx].primary;
+                idx += 1;
+            }
+            marks.items[write] = merged;
+            write += 1;
+        }
+        marks.shrinkRetainingCapacity(write);
+        return marks;
+    }
+
+    fn applyCursorMarks(self: *TextArea, marks: []const CursorMark) !void {
+        self.clearExtraCursors();
+        for (marks) |mark| {
+            if (mark.primary) {
+                self.cursor = @min(mark.pos, self.buffer.items.len);
+            } else {
+                try self.extra_cursors.append(self.allocator, @min(mark.pos, self.buffer.items.len));
+            }
+        }
+    }
+
+    fn replaceSelection(self: *TextArea, replacement: []const u8) !bool {
+        const selection_range = self.normalizedSelection() orelse return false;
+        const bounded_end = @min(selection_range.end, self.buffer.items.len);
+        const bounded_start = @min(selection_range.start, bounded_end);
+        const remove_len = bounded_end - bounded_start;
+
+        const max_insert = self.max_bytes - (self.buffer.items.len - remove_len);
+        if (max_insert == 0 and replacement.len > 0) return false;
+        const insert_len = @min(replacement.len, max_insert);
+
+        if (remove_len > 0) {
+            const tail_len = self.buffer.items.len - bounded_end;
+            if (tail_len > 0) {
+                std.mem.copyForwards(u8, self.buffer.items[bounded_start .. bounded_start + tail_len], self.buffer.items[bounded_end .. bounded_end + tail_len]);
+            }
+            self.buffer.items.len -= remove_len;
+        }
+
+        if (insert_len > 0) {
+            try self.buffer.insertSlice(self.allocator, bounded_start, replacement[0..insert_len]);
+        }
+
+        self.cursor = bounded_start + insert_len;
+        self.clearSelection();
+        self.clearExtraCursors();
+        return true;
+    }
+
+    fn insertSliceMulti(self: *TextArea, slice: []const u8) !bool {
+        if (slice.len == 0) return false;
+        var marks = try self.collectCursorMarks();
+        defer marks.deinit(self.allocator);
+
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        defer new_marks.deinit(self.allocator);
+
+        var shift: usize = 0;
+        var inserted_any = false;
+        for (marks.items) |mark| {
+            const available = if (self.buffer.items.len >= self.max_bytes) 0 else self.max_bytes - self.buffer.items.len;
+            if (available == 0) {
+                try new_marks.append(self.allocator, .{ .pos = @min(mark.pos + shift, self.buffer.items.len), .primary = mark.primary });
+                continue;
+            }
+            const insert_len = @min(available, slice.len);
+            const target = mark.pos + shift;
+            try self.buffer.insertSlice(self.allocator, target, slice[0..insert_len]);
+            shift += insert_len;
+            inserted_any = true;
+            try new_marks.append(self.allocator, .{ .pos = target + insert_len, .primary = mark.primary });
+        }
+
+        if (!inserted_any) return false;
+        try self.applyCursorMarks(new_marks.items);
+        self.clearSelection();
+        return true;
+    }
+
+    fn insertTextAtCursors(self: *TextArea, content: []const u8) !bool {
+        if (content.len == 0) return false;
+
+        if (try self.replaceSelection(content)) {
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        if (self.extra_cursors.items.len == 0) {
+            const remaining = self.remainingCapacity();
+            if (remaining == 0) return false;
+            const insert_len = @min(remaining, content.len);
+            try self.buffer.insertSlice(self.allocator, self.cursor, content[0..insert_len]);
+            self.cursor += insert_len;
+            self.clearSelection();
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        if (try self.insertSliceMulti(content)) {
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+        return false;
+    }
+
+    fn deleteBackwardMulti(self: *TextArea) !bool {
+        var marks = try self.collectCursorMarks();
+        defer marks.deinit(self.allocator);
+
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        defer new_marks.deinit(self.allocator);
+
+        var removed: usize = 0;
+        for (marks.items) |mark| {
+            if (mark.pos <= removed or self.buffer.items.len == 0) {
+                try new_marks.append(self.allocator, .{ .pos = 0, .primary = mark.primary });
+                continue;
+            }
+
+            const target = mark.pos - 1 - removed;
+            if (target >= self.buffer.items.len) {
+                try new_marks.append(self.allocator, .{ .pos = self.buffer.items.len, .primary = mark.primary });
+                continue;
+            }
+
+            _ = self.buffer.orderedRemove(target);
+            removed += 1;
+            try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
+        }
+
+        if (removed == 0) return false;
+        try self.applyCursorMarks(new_marks.items);
+        self.clearSelection();
+        self.finalizeChange(true, self.validate_on_change);
+        return true;
+    }
+
+    fn deleteForwardMulti(self: *TextArea) !bool {
+        var marks = try self.collectCursorMarks();
+        defer marks.deinit(self.allocator);
+
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        defer new_marks.deinit(self.allocator);
+
+        var removed: usize = 0;
+        for (marks.items) |mark| {
+            const target = if (mark.pos > removed) mark.pos - removed else 0;
+            if (target >= self.buffer.items.len) {
+                try new_marks.append(self.allocator, .{ .pos = self.buffer.items.len, .primary = mark.primary });
+                continue;
+            }
+
+            _ = self.buffer.orderedRemove(target);
+            removed += 1;
+            try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
+        }
+
+        if (removed == 0) return false;
+        try self.applyCursorMarks(new_marks.items);
+        self.clearSelection();
+        self.finalizeChange(true, self.validate_on_change);
+        return true;
+    }
+
     fn writeText(self: *TextArea, text: []const u8) !void {
         self.buffer.clearRetainingCapacity();
         const copy_len = @min(text.len, self.max_bytes);
@@ -176,6 +506,8 @@ pub const TextArea = struct {
         self.preferred_col = self.cursorPosition().col;
         self.scroll_row = 0;
         self.scroll_col = 0;
+        self.selection = null;
+        self.clearExtraCursors();
     }
 
     fn pushHistory(self: *TextArea) !void {
@@ -192,9 +524,10 @@ pub const TextArea = struct {
 
     fn applySnapshot(self: *TextArea, snapshot: []const u8) !void {
         try self.writeText(snapshot);
-        self.notifyChange();
+        self.finalizeChange(false, self.validate_on_change);
     }
 
+    const Selection = struct { start: usize, end: usize };
     const Position = struct { row: usize, col: usize };
 
     fn positionForIndex(self: *const TextArea, idx: usize) Position {
@@ -374,11 +707,26 @@ pub const TextArea = struct {
     }
 
     fn performCopy(self: *TextArea) anyerror!bool {
+        if (self.normalizedSelection()) |sel| {
+            const slice = self.buffer.items[sel.start..sel.end];
+            try self.clipboard.copy(slice);
+            return slice.len > 0;
+        }
+
         try self.clipboard.copy(self.buffer.items);
         return self.buffer.items.len > 0;
     }
 
     fn performCut(self: *TextArea) anyerror!bool {
+        if (self.normalizedSelection()) |sel| {
+            const slice = self.buffer.items[sel.start..sel.end];
+            if (slice.len == 0) return false;
+            try self.clipboard.copy(slice);
+            _ = try self.replaceSelection(&[_]u8{});
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
         if (self.buffer.items.len == 0) return false;
 
         try self.clipboard.copy(self.buffer.items);
@@ -387,8 +735,9 @@ pub const TextArea = struct {
         self.resetPreferredColumn();
         self.scroll_row = 0;
         self.scroll_col = 0;
-        try self.pushHistory();
-        self.notifyChange();
+        self.clearSelection();
+        self.clearExtraCursors();
+        self.finalizeChange(true, self.validate_on_change);
         return true;
     }
 
@@ -396,44 +745,47 @@ pub const TextArea = struct {
         const pasted = self.clipboard.paste() orelse return false;
         if (pasted.len == 0) return false;
 
-        const remaining = if (self.buffer.items.len >= self.max_bytes) 0 else self.max_bytes - self.buffer.items.len;
-        if (remaining == 0) return false;
-
-        const insert_len = @min(remaining, pasted.len);
-        try self.buffer.insertSlice(self.allocator, self.cursor, pasted[0..insert_len]);
-        self.cursor += insert_len;
-        self.resetPreferredColumn();
-        try self.pushHistory();
-        self.notifyChange();
-        return true;
+        return try self.insertTextAtCursors(pasted);
     }
 
     fn insertByte(self: *TextArea, value: u8) !void {
-        if (self.buffer.items.len >= self.max_bytes) return;
-        try self.buffer.insert(self.allocator, self.cursor, value);
-        self.cursor += 1;
-        self.resetPreferredColumn();
-        try self.pushHistory();
-        self.notifyChange();
+        _ = try self.insertTextAtCursors(&[_]u8{value});
     }
 
     fn deleteBackward(self: *TextArea) !bool {
-        if (self.cursor == 0 or self.buffer.items.len == 0) return false;
-        _ = self.buffer.orderedRemove(self.cursor - 1);
-        self.cursor -= 1;
-        self.resetPreferredColumn();
-        try self.pushHistory();
-        self.notifyChange();
-        return true;
+        if (try self.replaceSelection(&[_]u8{})) {
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        if (self.buffer.items.len == 0) return false;
+        if (self.extra_cursors.items.len == 0) {
+            if (self.cursor == 0) return false;
+            _ = self.buffer.orderedRemove(self.cursor - 1);
+            self.cursor -= 1;
+            self.resetPreferredColumn();
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        return try self.deleteBackwardMulti();
     }
 
     fn deleteForward(self: *TextArea) !bool {
-        if (self.cursor >= self.buffer.items.len) return false;
-        _ = self.buffer.orderedRemove(self.cursor);
-        self.resetPreferredColumn();
-        try self.pushHistory();
-        self.notifyChange();
-        return true;
+        if (try self.replaceSelection(&[_]u8{})) {
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        if (self.extra_cursors.items.len == 0) {
+            if (self.cursor >= self.buffer.items.len) return false;
+            _ = self.buffer.orderedRemove(self.cursor);
+            self.resetPreferredColumn();
+            self.finalizeChange(true, self.validate_on_change);
+            return true;
+        }
+
+        return try self.deleteForwardMulti();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -442,8 +794,11 @@ pub const TextArea = struct {
 
         const rect = self.widget.rect;
 
+        const invalid = self.widget.enabled and self.hasValidationError();
         const fg = if (!self.widget.enabled)
             self.disabled_fg
+        else if (invalid)
+            self.invalid_fg
         else if (self.widget.focused)
             self.focused_fg
         else
@@ -451,6 +806,8 @@ pub const TextArea = struct {
 
         const bg = if (!self.widget.enabled)
             self.disabled_bg
+        else if (invalid)
+            self.invalid_bg
         else if (self.widget.focused)
             self.focused_bg
         else
@@ -470,6 +827,8 @@ pub const TextArea = struct {
             return;
         }
 
+        const selection_range = self.normalizedSelection();
+
         if (self.buffer.items.len == 0 and self.placeholder.len > 0) {
             const clipped = self.placeholder[0..@min(self.placeholder.len, viewport.width)];
             renderer.drawStr(inner_x, inner_y, clipped, fg, bg, self.style);
@@ -480,12 +839,24 @@ pub const TextArea = struct {
                 if (self.lineRange(line_idx)) |range| {
                     if (range.start == range.end and range.start >= self.buffer.items.len) break;
                     const line = self.buffer.items[range.start..range.end];
-                    const visible = if (self.scroll_col >= line.len) "" else blk: {
+                    if (self.scroll_col < line.len) {
                         const slice_start = self.scroll_col;
                         const end = @min(line.len, self.scroll_col + @as(usize, @intCast(viewport.width)));
-                        break :blk line[slice_start..end];
-                    };
-                    renderer.drawStr(inner_x, inner_y + row, visible, fg, bg, self.style);
+                        var col: usize = slice_start;
+                        while (col < end) : (col += 1) {
+                            const ch = line[col];
+                            const global_idx = range.start + col;
+                            var style = self.style;
+                            if (selection_range) |sel| {
+                                if (global_idx >= sel.start and global_idx < sel.end) {
+                                    style.reverse = true;
+                                    style.bold = true;
+                                }
+                            }
+                            const draw_x = inner_x + @as(u16, @intCast(col - slice_start));
+                            renderer.drawChar(draw_x, inner_y + row, ch, fg, bg, style);
+                        }
+                    }
                 } else {
                     break;
                 }
@@ -493,12 +864,18 @@ pub const TextArea = struct {
         }
 
         if (self.widget.focused) {
-            const pos = self.cursorPosition();
-            if (pos.row >= self.scroll_row and pos.row < self.scroll_row + @as(usize, @intCast(viewport.height))) {
-                if (pos.col >= self.scroll_col and pos.col <= self.scroll_col + @as(usize, @intCast(viewport.width))) {
-                    const cx = inner_x + @as(u16, @intCast(pos.col - self.scroll_col));
-                    const cy = inner_y + @as(u16, @intCast(pos.row - self.scroll_row));
-                    renderer.drawChar(cx, cy, '_', fg, bg, render.Style{ .underline = true });
+            var marks = try self.collectCursorMarks();
+            defer marks.deinit(self.allocator);
+            for (marks.items) |mark| {
+                const pos = self.positionForIndex(mark.pos);
+                if (pos.row >= self.scroll_row and pos.row < self.scroll_row + @as(usize, @intCast(viewport.height))) {
+                    if (pos.col >= self.scroll_col and pos.col <= self.scroll_col + @as(usize, @intCast(viewport.width))) {
+                        const cx = inner_x + @as(u16, @intCast(pos.col - self.scroll_col));
+                        const cy = inner_y + @as(u16, @intCast(pos.row - self.scroll_row));
+                        var cursor_style = render.Style{ .underline = true };
+                        if (!mark.primary) cursor_style.italic = true;
+                        renderer.drawChar(cx, cy, '_', fg, bg, cursor_style);
+                    }
                 }
             }
         }
@@ -591,7 +968,7 @@ pub const TextArea = struct {
 
 test "text area inserts newlines and supports undo" {
     const alloc = std.testing.allocator;
-    var area = try TextArea.init(alloc, 128);
+    const area = try TextArea.init(alloc, 128);
     defer area.deinit();
     area.widget.focused = true;
 
@@ -612,7 +989,7 @@ test "text area inserts newlines and supports undo" {
 
 test "text area cursor navigation respects lines" {
     const alloc = std.testing.allocator;
-    var area = try TextArea.init(alloc, 64);
+    const area = try TextArea.init(alloc, 64);
     defer area.deinit();
     area.widget.focused = true;
     try area.setText("hello\nworld");
@@ -638,7 +1015,7 @@ test "text area cursor navigation respects lines" {
 
 test "text area validation surfaces rule failures" {
     const alloc = std.testing.allocator;
-    var area = try TextArea.init(alloc, 32);
+    const area = try TextArea.init(alloc, 32);
     defer area.deinit();
     try area.setText("hi");
 
@@ -653,4 +1030,56 @@ test "text area validation surfaces rule failures" {
     try std.testing.expect(!res.isValid());
     try std.testing.expectEqualStrings("body", res.errors.items[0].field);
     try std.testing.expectEqualStrings("too short", res.errors.items[1].message);
+}
+
+test "text area multi-cursor inserts at every caret" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("abc");
+    area.cursor = 3;
+    try area.addCursor(1);
+
+    try std.testing.expect(try area.insertTextAtCursors("q"));
+    try std.testing.expectEqualStrings("aqbcq", area.getText());
+    try std.testing.expectEqual(@as(usize, 5), area.cursor);
+    try std.testing.expectEqual(@as(usize, 1), area.extra_cursors.items.len);
+}
+
+test "text area selection edits collapse and clear extra cursors" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("hello");
+    area.cursor = 5;
+    try area.addCursor(0);
+    area.selectRange(1, 4);
+
+    try std.testing.expect(try area.deleteBackward());
+    try std.testing.expectEqualStrings("ho", area.getText());
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+    try std.testing.expectEqual(@as(usize, 0), area.extra_cursors.items.len);
+}
+
+test "text area real-time validation caches latest result" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    const rules = [_]form.Rule{
+        form.required("body required"),
+        form.minLength(5, "too short"),
+    };
+
+    try area.setValidation("body", &rules, true);
+    try area.setText("tiny");
+
+    const first = area.validationState().?;
+    try std.testing.expect(!first.*.isValid());
+
+    try area.setText("long enough");
+    const second = area.validationState().?;
+    try std.testing.expect(second.*.isValid());
 }
