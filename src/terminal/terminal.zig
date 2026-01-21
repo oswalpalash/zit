@@ -1,6 +1,12 @@
 const std = @import("std");
 const capabilities = @import("capabilities.zig");
 
+var winch_signal_flag = std.atomic.Value(u8).init(0);
+
+fn handleSigwinch(_: c_int) callconv(.c) void {
+    winch_signal_flag.store(1, .monotonic);
+}
+
 /// Terminal abstraction layer
 ///
 /// This module provides cross-platform terminal handling capabilities including:
@@ -34,6 +40,8 @@ pub const Terminal = struct {
     capabilities: capabilities.CapabilityFlags,
     /// Whether synchronized output mode (DEC 2026) is active
     is_sync_output: bool,
+    /// Whether the terminal is using the alternate screen buffer
+    is_alt_screen: bool,
 
     // Cross-platform terminal attribute storage
     const OriginalTermAttrs = union(enum) {
@@ -85,19 +93,18 @@ pub const Terminal = struct {
             .allocator = allocator,
             .capabilities = capabilities.detectWithAllocator(allocator),
             .is_sync_output = false,
+            .is_alt_screen = false,
         };
 
         try self.updateSize();
 
         // Set up SIGWINCH handling on Unix platforms
         if (@import("builtin").os.tag != .windows) {
-            // Ignore SIGWINCH - we'll handle window size changes manually
-            // This prevents the terminal from getting into a bad state
             const SIG = std.posix.SIG;
             _ = std.posix.sigaction(SIG.WINCH, &std.posix.Sigaction{
-                .handler = .{ .handler = SIG.IGN },
+                .handler = .{ .handler = handleSigwinch },
                 .mask = std.posix.sigemptyset(),
-                .flags = 0,
+                .flags = std.posix.SA.RESTART,
             }, null);
         }
 
@@ -120,6 +127,10 @@ pub const Terminal = struct {
 
         if (self.is_sync_output) {
             try self.endSynchronizedOutput();
+        }
+
+        if (self.is_alt_screen) {
+            try self.exitAlternateScreen();
         }
 
         // Reset all formatting before exit
@@ -198,14 +209,13 @@ pub const Terminal = struct {
                     // Use hardcoded values since std.posix.system constants are not available
                     const ECHO: u64 = 0x00000008;
                     const ICANON: u64 = 0x00000002;
-                    const ISIG: u64 = 0x00000001;
                     const IEXTEN: u64 = 0x00000400;
 
                     // Create a copy in a regular integer (use u32 for 32-bit Linux)
                     var lflag = @as(u32, @bitCast(raw.lflag));
 
                     // Perform operations on the regular integer
-                    const mask: u32 = ECHO | ICANON | ISIG | IEXTEN;
+                    const mask: u32 = ECHO | ICANON | IEXTEN;
                     lflag &= ~mask;
 
                     // Assign back to the packed struct
@@ -238,12 +248,11 @@ pub const Terminal = struct {
                     raw.cflag = @bitCast(cflag);
 
                     // Set read timeout and minimum input to 0 for non-blocking reads
-                    // This is especially important for macOS
-                    const V_TIME: usize = 16; // VTIME index on macOS
-                    const V_MIN: usize = 17; // VMIN index on macOS
+                    const v_time: usize = @intFromEnum(std.posix.V.TIME);
+                    const v_min: usize = @intFromEnum(std.posix.V.MIN);
 
-                    raw.cc[V_TIME] = 0; // No timeout, return immediately
-                    raw.cc[V_MIN] = 0; // Return even if no characters are available
+                    raw.cc[v_time] = 0; // No timeout, return immediately
+                    raw.cc[v_min] = 0; // Return even if no characters are available
 
                     // Apply settings
                     try std.posix.tcsetattr(self.stdin_fd, .FLUSH, raw);
@@ -430,7 +439,8 @@ pub const Terminal = struct {
         if (self.is_mouse_enabled) return;
 
         var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1000h\x1b[?1006h"); // Enable mouse tracking (X10 + SGR)
+        // Enable normal tracking, motion tracking, and SGR encoding
+        try stdout.writeAll("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         self.is_mouse_enabled = true;
     }
 
@@ -439,7 +449,7 @@ pub const Terminal = struct {
         if (!self.is_mouse_enabled) return;
 
         var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1000l\x1b[?1006l"); // Disable mouse tracking
+        try stdout.writeAll("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
         self.is_mouse_enabled = false;
     }
 
@@ -459,6 +469,22 @@ pub const Terminal = struct {
         var stdout = std.fs.File.stdout();
         try stdout.writeAll("\x1b[?2026l");
         self.is_sync_output = false;
+    }
+
+    /// Switch to the alternate screen buffer (DECSET 1049).
+    pub fn enterAlternateScreen(self: *Terminal) !void {
+        if (self.is_alt_screen) return;
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?1049h");
+        self.is_alt_screen = true;
+    }
+
+    /// Return to the primary screen buffer (DECRST 1049).
+    pub fn exitAlternateScreen(self: *Terminal) !void {
+        if (!self.is_alt_screen) return;
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?1049l");
+        self.is_alt_screen = false;
     }
 
     /// Hide the cursor
@@ -582,6 +608,13 @@ pub const Terminal = struct {
         _ = self; // Unused parameter
         var stdout = std.fs.File.stdout();
         try stdout.writeAll(str);
+    }
+
+    /// Consume a pending SIGWINCH and refresh cached size.
+    pub fn takeResize(self: *Terminal) !?struct { width: u16, height: u16 } {
+        if (winch_signal_flag.swap(0, .acq_rel) == 0) return null;
+        try self.updateSize();
+        return .{ .width = self.width, .height = self.height };
     }
 };
 

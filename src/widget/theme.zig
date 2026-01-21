@@ -171,5 +171,19 @@ pub fn adjust(color: Color, amount: i8) Color {
                 clamp.apply(@as(i16, rgb.b) + delta),
             );
         },
+        .ansi_256 => |idx| blk: {
+            const base = render.colorToRgb(Color.ansi256(idx));
+            const clamp = struct {
+                fn apply(value: i16) u8 {
+                    return @intCast(@max(@min(value, 255), 0));
+                }
+            };
+            const delta: i16 = amount;
+            break :blk Color.rgb(
+                clamp.apply(@as(i16, base.r) + delta),
+                clamp.apply(@as(i16, base.g) + delta),
+                clamp.apply(@as(i16, base.b) + delta),
+            );
+        },
     };
 }

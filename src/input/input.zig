@@ -1185,6 +1185,10 @@ pub const InputHandler = struct {
 
     /// Poll for an event with timeout
     pub fn pollEvent(self: *InputHandler, timeout_ms: u64) !?Event {
+        if (try self.term.takeResize()) |size| {
+            return Event{ .resize = ResizeEvent.init(size.width, size.height) };
+        }
+
         if (builtin.os.tag == .macos) {
             // On macOS we need to be extra careful about polling
             // First check if data is available with a very short timeout
@@ -1362,7 +1366,11 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
         sink.put(next_byte);
 
         if (next_byte == '<') {
-            return try parseMouseEvent(reader, sink);
+            return try parseMouseEventSgr(reader, sink);
+        }
+
+        if (param_count == 0 and !has_value and next_byte == 'M') {
+            return try parseMouseEventLegacy(reader, sink);
         }
 
         if (next_byte >= '0' and next_byte <= '9') {
@@ -1396,7 +1404,63 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
     }
 }
 
-fn parseMouseEvent(reader: anytype, sink: anytype) !Event {
+fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
+    // X10/Normal tracking: ESC [ M Cb Cx Cy
+    var bytes: [3]u8 = undefined;
+    var idx: usize = 0;
+
+    while (idx < bytes.len) : (idx += 1) {
+        const b = reader.readByte() catch |err| {
+            if (err == error.WouldBlock or err == error.EndOfStream) {
+                return Event{ .unknown = {} };
+            }
+            return err;
+        };
+        sink.put(b);
+        bytes[idx] = b;
+    }
+
+    const button_param: u16 = @as(u16, bytes[0]) - 32;
+    const x = @as(u16, @intCast(bytes[1] - 32));
+    const y = @as(u16, @intCast(bytes[2] - 32));
+
+    const is_motion = (button_param & 0x20) != 0;
+    const is_scroll = (button_param & 0x40) != 0;
+    const is_release = (button_param & 0x3) == 3 and !is_scroll;
+
+    var scroll_delta: i16 = 0;
+    if (is_scroll) {
+        scroll_delta = if ((button_param & 0x1) != 0) 1 else -1;
+    }
+
+    const button: u8 = if (is_scroll)
+        @intCast(4 + (button_param & 0x1))
+    else if (is_release)
+        0
+    else
+        @intCast((button_param & 0x3) + 1);
+
+    const action: MouseAction = if (is_scroll)
+        (if (scroll_delta > 0) MouseAction.scroll_down else MouseAction.scroll_up)
+    else if (is_motion)
+        MouseAction.move
+    else if (is_release)
+        MouseAction.release
+    else
+        MouseAction.press;
+
+    return Event{
+        .mouse = MouseEvent{
+            .action = action,
+            .x = x,
+            .y = y,
+            .button = button,
+            .scroll_delta = scroll_delta,
+        },
+    };
+}
+
+fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
     // Mouse events in SGR mode are of the form: ESC [ < Cb ; Cx ; Cy ; M/m
     // Where:
     // - Cb is the button number + modifiers
@@ -1453,7 +1517,7 @@ fn parseMouseEvent(reader: anytype, sink: anytype) !Event {
     const y = params[2];
 
     // Decode the button parameter
-    const button = @as(u8, @intCast(button_param & 0x3));
+    const button_code = @as(u8, @intCast(button_param & 0x3));
     const is_motion = (button_param & 0x20) != 0;
     const is_scroll = (button_param & 0x40) != 0 or (button_param & 0x80) != 0;
 
@@ -1464,20 +1528,25 @@ fn parseMouseEvent(reader: anytype, sink: anytype) !Event {
     if (is_scroll) {
         scroll_delta = if ((button_param & 0x1) != 0) 1 else -1;
         action = if (scroll_delta > 0) MouseAction.scroll_down else MouseAction.scroll_up;
+    } else if (final_char == 'm') {
+        action = MouseAction.release;
     } else if (is_motion) {
         action = MouseAction.move;
-    } else if (final_char == 'M') {
-        action = MouseAction.press;
     } else {
-        action = MouseAction.release;
+        action = MouseAction.press;
     }
+
+    const button: u8 = if (is_scroll)
+        @intCast(4 + (button_code & 0x1))
+    else
+        button_code + 1;
 
     return Event{
         .mouse = MouseEvent{
             .action = action,
             .x = x,
             .y = y,
-            .button = button + 1, // Button is 1-indexed
+            .button = button,
             .scroll_delta = scroll_delta,
         },
     };
@@ -1518,4 +1587,31 @@ test "parse mouse scroll delta" {
     try std.testing.expectEqual(@as(i16, -1), mouse_event.scroll_delta);
     try std.testing.expectEqual(@as(u16, 10), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 5), mouse_event.y);
+}
+
+test "parse SGR mouse release preserves button" {
+    var reader = SliceByteReader{ .data = "<0;4;7m" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .mouse), std.meta.activeTag(event));
+
+    const mouse_event = event.mouse;
+    try std.testing.expectEqual(MouseAction.release, mouse_event.action);
+    try std.testing.expectEqual(@as(u8, 1), mouse_event.button);
+    try std.testing.expectEqual(@as(u16, 4), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 7), mouse_event.y);
+}
+
+test "parse legacy mouse press" {
+    const seq = [_]u8{ 'M', 32 + 0, 32 + 5, 32 + 3 };
+    var reader = SliceByteReader{ .data = seq[0..] };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .mouse), std.meta.activeTag(event));
+
+    const mouse_event = event.mouse;
+    try std.testing.expectEqual(MouseAction.press, mouse_event.action);
+    try std.testing.expectEqual(@as(u8, 1), mouse_event.button);
+    try std.testing.expectEqual(@as(u16, 5), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 3), mouse_event.y);
 }

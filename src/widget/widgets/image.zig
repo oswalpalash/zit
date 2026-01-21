@@ -214,6 +214,10 @@ pub const ImageWidget = struct {
     fn toRgb(color: render.Color) [3]u8 {
         return switch (color) {
             .rgb_color => |rgb| .{ rgb.r, rgb.g, rgb.b },
+            .ansi_256 => |idx| blk: {
+                const rgb = render.colorToRgb(render.Color.ansi256(idx));
+                break :blk .{ rgb.r, rgb.g, rgb.b };
+            },
             .named_color => |named| switch (named) {
                 .black => .{ 0, 0, 0 },
                 .red => .{ 205, 49, 49 },
