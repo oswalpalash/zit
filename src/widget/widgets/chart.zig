@@ -316,8 +316,8 @@ pub const Chart = struct {
     fn drawPie(self: *Chart, renderer: *render.Renderer, inner: layout_module.Rect) void {
         if (self.series.items.len == 0 or inner.width == 0 or inner.height == 0) return;
 
-        var totals = std.ArrayList(f32).init(self.allocator);
-        defer totals.deinit();
+        var totals = std.ArrayList(f32).empty;
+        defer totals.deinit(self.allocator);
         totals.ensureTotalCapacityPrecise(self.allocator, self.series.items.len) catch return;
         var total_sum: f32 = 0;
         for (self.series.items) |s| {
@@ -334,9 +334,9 @@ pub const Chart = struct {
 
         // Precompute slice thresholds
         var cumulative: f32 = 0;
-        var thresholds = std.ArrayList(f32).init(self.allocator);
+        var thresholds = std.ArrayList(f32).empty;
         thresholds.ensureTotalCapacityPrecise(self.allocator, totals.items.len) catch return;
-        defer thresholds.deinit();
+        defer thresholds.deinit(self.allocator);
         for (totals.items) |slice_total| {
             cumulative += slice_total / total_sum;
             thresholds.appendAssumeCapacity(cumulative);
