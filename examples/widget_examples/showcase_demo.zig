@@ -8,6 +8,14 @@ const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
 
+fn enterAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049h");
+}
+
+fn exitAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+}
+
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
 const MenuAction = enum {
@@ -329,14 +337,17 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
+    try enterAlternateScreen();
+    defer exitAlternateScreen() catch {};
+
     try term.enableRawMode();
+    defer term.disableRawMode() catch {};
+
     try term.hideCursor();
+    defer term.showCursor() catch {};
+
     try input_handler.enableMouse();
-    defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
-        term.disableRawMode() catch {};
-    }
+    defer input_handler.disableMouse() catch {};
 
     var app = event.Application.init(memory_manager.getArenaAllocator());
     defer app.deinit();
