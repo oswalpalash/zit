@@ -1,6 +1,16 @@
 const std = @import("std");
 const zit = @import("zit");
+const render = zit.render;
+const layout = zit.layout;
 const memory = zit.memory;
+
+fn enterAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049h");
+}
+
+fn exitAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+}
 
 pub fn main() !void {
     // Initialize memory manager
@@ -15,22 +25,26 @@ pub fn main() !void {
     var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
-    // Get terminal size
-    const width = term.width;
-    const height = term.height;
-
     // Initialize renderer with memory manager
-    var renderer = try zit.render.Renderer.init(memory_manager.getArenaAllocator(), width, height);
+    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
     defer renderer.deinit();
+
+    // Initialize input handler with memory manager
+    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
+
+    try enterAlternateScreen();
+    defer exitAlternateScreen() catch {};
 
     // Enable raw mode
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
 
-    // Initialize input handler with memory manager
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
-    // Enable mouse tracking
+    try term.hideCursor();
     try input_handler.enableMouse();
+    defer {
+        input_handler.disableMouse() catch {};
+        term.showCursor() catch {};
+    }
 
     // Create widgets using the widget pool allocator
     var title = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Zit TUI Library");
@@ -82,42 +96,45 @@ pub fn main() !void {
     // Main event loop
     var running = true;
     while (running) {
+        const width = renderer.back.width;
+        const height = renderer.back.height;
+
         // Clear the buffer
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.blue }, render.Style{});
 
         // Draw border
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, zit.render.BorderStyle.single, zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
+        renderer.drawBox(0, 0, width, height, render.BorderStyle.single, render.Color{ .named_color = render.NamedColor.bright_white }, render.Color{ .named_color = render.NamedColor.blue }, render.Style{});
 
         // Create the window title
-        const title_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, 2, 20, 1);
+        const title_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, 2, 20, 1);
         try title.widget.layout(title_rect);
         try title.widget.draw(&renderer);
 
         // Draw the button
-        const button_rect = zit.layout.Rect.init(if (width > 12) (width - 12) / 2 else 0, if (height > 10) height / 2 - 4 else 0, 12, 3);
+        const button_rect = layout.Rect.init(if (width > 12) (width - 12) / 2 else 0, if (height > 10) height / 2 - 4 else 0, 12, 3);
         try button.widget.layout(button_rect);
         try button.widget.draw(&renderer);
 
         // Draw the checkbox
-        const checkbox_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 else 0, 20, 1);
+        const checkbox_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 else 0, 20, 1);
         try checkbox.widget.layout(checkbox_rect);
         try checkbox.widget.draw(&renderer);
 
         // Draw the progress bar
-        const progress_rect = zit.layout.Rect.init(if (width > 30) (width - 30) / 2 else 0, if (height > 10) height / 2 + 2 else 0, 30, 3);
+        const progress_rect = layout.Rect.init(if (width > 30) (width - 30) / 2 else 0, if (height > 10) height / 2 + 2 else 0, 30, 3);
         try progress_bar.widget.layout(progress_rect);
         try progress_bar.widget.draw(&renderer);
 
         // Draw the list
-        const list_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 + 6 else 0, 20, 5);
+        const list_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 + 6 else 0, 20, 5);
         try list.widget.layout(list_rect);
         try list.widget.draw(&renderer);
 
         // Draw the status at the bottom
-        const status_rect = zit.layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 2) height - 2 else 0, 20, 1);
+        const status_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 2) height - 2 else 0, 20, 1);
         try status.widget.layout(status_rect);
         try status.widget.draw(&renderer);
 
@@ -126,15 +143,15 @@ pub fn main() !void {
 
         // Update progress bar (animate it)
         if (progress_increasing) {
-            progress_value += 1;
             if (progress_value >= 100) {
                 progress_increasing = false;
+            } else {
+                progress_value += 1;
             }
+        } else if (progress_value == 0) {
+            progress_increasing = true;
         } else {
             progress_value -= 1;
-            if (progress_value <= 0) {
-                progress_increasing = true;
-            }
         }
         progress_bar.setValue(progress_value);
 

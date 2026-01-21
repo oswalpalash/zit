@@ -184,14 +184,14 @@ pub fn main() !void {
     defer counter_button.deinit();
     const counter_data = struct {
         var button: *Button = undefined;
-        var alloc: std.mem.Allocator = undefined;
+        var label_buf: [32]u8 = undefined;
     };
     counter_data.button = counter_button;
-    counter_data.alloc = memory_manager.getArenaAllocator();
     counter_button.setOnPress(struct {
         fn callback() void {
             counter_state += 1;
-            counter_data.button.setText(std.fmt.allocPrint(counter_data.alloc, "Counter: {}", .{counter_state}) catch unreachable) catch unreachable;
+            const text = std.fmt.bufPrint(&counter_data.label_buf, "Counter: {}", .{counter_state}) catch return;
+            counter_data.button.setText(text) catch {};
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(counter_button.widget.asLayoutElement(), 0));
@@ -201,15 +201,15 @@ pub fn main() !void {
     defer toggle_button.deinit();
     const toggle_data = struct {
         var button: *Button = undefined;
-        var alloc: std.mem.Allocator = undefined;
         var state: bool = false;
+        var label_buf: [32]u8 = undefined;
     };
     toggle_data.button = toggle_button;
-    toggle_data.alloc = memory_manager.getArenaAllocator();
     toggle_button.setOnPress(struct {
         fn callback() void {
             toggle_data.state = !toggle_data.state;
-            toggle_data.button.setText(std.fmt.allocPrint(toggle_data.alloc, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch unreachable) catch unreachable;
+            const text = std.fmt.bufPrint(&toggle_data.label_buf, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch return;
+            toggle_data.button.setText(text) catch {};
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(toggle_button.widget.asLayoutElement(), 0));
@@ -236,14 +236,16 @@ pub fn main() !void {
     // Main event loop
     var running = true;
     while (running) {
-        // Clear the buffer
+        const width = renderer.back.width;
+        const height = renderer.back.height;
+
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, terminal.width, terminal.height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.black }, render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.black }, render.Style{});
 
         // Layout and render the root container
-        try root.widget.layout(layout.Rect.init(0, 0, terminal.width, terminal.height));
+        try root.widget.layout(layout.Rect.init(0, 0, width, height));
         try root.widget.draw(&renderer);
 
         // Present the frame
