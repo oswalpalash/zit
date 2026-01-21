@@ -1244,7 +1244,7 @@ pub const InputHandler = struct {
 
         if (builtin.os.tag == .windows) {
             const max_wait_ms: u64 = std.math.maxInt(std.os.windows.DWORD);
-            const wait_ms: std.os.windows.DWORD = @intCast(std.math.min(timeout_ms, max_wait_ms));
+            const wait_ms: std.os.windows.DWORD = @intCast(@min(timeout_ms, max_wait_ms));
             const wait_result = std.os.windows.kernel32.WaitForSingleObject(self.term.stdin_fd, wait_ms);
 
             switch (wait_result) {
