@@ -37,15 +37,15 @@ pub const Theme = struct {
     pub fn light() Theme {
         return Theme{
             .palette = Palette{
-                .background = Color.named(NamedColor.white),
-                .surface = Color.named(NamedColor.bright_white),
-                .text = Color.named(NamedColor.black),
-                .muted = Color.named(NamedColor.bright_black),
-                .accent = Color.named(NamedColor.blue),
-                .success = Color.named(NamedColor.green),
-                .warning = Color.named(NamedColor.yellow),
-                .danger = Color.named(NamedColor.red),
-                .border = Color.named(NamedColor.black),
+                .background = Color.rgb(245, 247, 251),
+                .surface = Color.rgb(255, 255, 255),
+                .text = Color.rgb(27, 36, 48),
+                .muted = Color.rgb(104, 116, 139),
+                .accent = Color.rgb(59, 130, 246),
+                .success = Color.rgb(16, 185, 129),
+                .warning = Color.rgb(234, 179, 8),
+                .danger = Color.rgb(239, 68, 68),
+                .border = Color.rgb(209, 213, 219),
             },
         };
     }
@@ -54,15 +54,15 @@ pub const Theme = struct {
     pub fn dark() Theme {
         return Theme{
             .palette = Palette{
-                .background = Color.named(NamedColor.black),
-                .surface = Color.named(NamedColor.bright_black),
-                .text = Color.named(NamedColor.white),
-                .muted = Color.named(NamedColor.bright_black),
-                .accent = Color.named(NamedColor.cyan),
-                .success = Color.named(NamedColor.green),
-                .warning = Color.named(NamedColor.yellow),
-                .danger = Color.named(NamedColor.red),
-                .border = Color.named(NamedColor.bright_black),
+                .background = Color.rgb(10, 14, 22),
+                .surface = Color.rgb(19, 27, 38),
+                .text = Color.rgb(229, 231, 235),
+                .muted = Color.rgb(136, 146, 166),
+                .accent = Color.rgb(88, 166, 255),
+                .success = Color.rgb(63, 185, 80),
+                .warning = Color.rgb(210, 153, 34),
+                .danger = Color.rgb(244, 112, 103),
+                .border = Color.rgb(35, 45, 60),
             },
         };
     }
@@ -71,18 +71,69 @@ pub const Theme = struct {
     pub fn highContrast() Theme {
         return Theme{
             .palette = Palette{
-                .background = Color.named(NamedColor.black),
-                .surface = Color.named(NamedColor.black),
-                .text = Color.named(NamedColor.bright_white),
-                .muted = Color.named(NamedColor.white),
-                .accent = Color.named(NamedColor.bright_cyan),
-                .success = Color.named(NamedColor.bright_green),
-                .warning = Color.named(NamedColor.bright_yellow),
-                .danger = Color.named(NamedColor.bright_red),
-                .border = Color.named(NamedColor.white),
+                .background = Color.rgb(0, 0, 0),
+                .surface = Color.rgb(10, 10, 10),
+                .text = Color.rgb(255, 255, 255),
+                .muted = Color.rgb(230, 230, 230),
+                .accent = Color.rgb(255, 213, 0),
+                .success = Color.rgb(0, 255, 140),
+                .warning = Color.rgb(255, 191, 0),
+                .danger = Color.rgb(255, 85, 85),
+                .border = Color.rgb(255, 255, 255),
             },
             .style = render.Style{
                 .bold = true,
+            },
+        };
+    }
+
+    /// Dracula-inspired theme with saturated accents.
+    pub fn dracula() Theme {
+        return Theme{
+            .palette = Palette{
+                .background = Color.rgb(26, 27, 38),
+                .surface = Color.rgb(40, 42, 54),
+                .text = Color.rgb(248, 248, 242),
+                .muted = Color.rgb(124, 127, 156),
+                .accent = Color.rgb(189, 147, 249),
+                .success = Color.rgb(80, 250, 123),
+                .warning = Color.rgb(241, 250, 140),
+                .danger = Color.rgb(255, 85, 85),
+                .border = Color.rgb(68, 71, 90),
+            },
+        };
+    }
+
+    /// Nord-inspired cool theme.
+    pub fn nord() Theme {
+        return Theme{
+            .palette = Palette{
+                .background = Color.rgb(46, 52, 64),
+                .surface = Color.rgb(59, 66, 82),
+                .text = Color.rgb(229, 233, 240),
+                .muted = Color.rgb(167, 173, 186),
+                .accent = Color.rgb(136, 192, 208),
+                .success = Color.rgb(143, 188, 187),
+                .warning = Color.rgb(235, 203, 139),
+                .danger = Color.rgb(191, 97, 106),
+                .border = Color.rgb(76, 86, 106),
+            },
+        };
+    }
+
+    /// Gruvbox-inspired warm theme.
+    pub fn gruvbox() Theme {
+        return Theme{
+            .palette = Palette{
+                .background = Color.rgb(29, 32, 33),
+                .surface = Color.rgb(50, 48, 47),
+                .text = Color.rgb(235, 219, 178),
+                .muted = Color.rgb(189, 174, 147),
+                .accent = Color.rgb(215, 153, 33),
+                .success = Color.rgb(184, 187, 38),
+                .warning = Color.rgb(250, 189, 47),
+                .danger = Color.rgb(251, 73, 52),
+                .border = Color.rgb(80, 73, 69),
             },
         };
     }
