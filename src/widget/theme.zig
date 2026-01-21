@@ -348,8 +348,32 @@ pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8, fallback: Th
 }
 
 fn trimComment(line: []const u8) []const u8 {
-    const hash = std.mem.indexOfScalar(u8, line, '#') orelse return std.mem.trim(u8, line, " \t");
-    return std.mem.trim(u8, line[0..hash], " \t");
+    var idx: usize = 0;
+    while (idx < line.len) : (idx += 1) {
+        if (line[idx] != '#') continue;
+
+        // Skip over hex color literals (e.g. "#aabbcc") so they aren't treated as comments.
+        if (idx + 7 <= line.len and isHexColorLiteral(line[idx .. idx + 7])) {
+            idx += 6; // advance past the color sequence
+            continue;
+        }
+
+        return std.mem.trim(u8, line[0..idx], " \t");
+    }
+
+    return std.mem.trim(u8, line, " \t");
+}
+
+fn isHexColorLiteral(slice: []const u8) bool {
+    if (slice.len < 7 or slice[0] != '#') return false;
+    for (slice[1..7]) |ch| {
+        if (!isHexChar(ch)) return false;
+    }
+    return true;
+}
+
+fn isHexChar(ch: u8) bool {
+    return (ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f') or (ch >= 'A' and ch <= 'F');
 }
 
 fn stringToRole(raw: []const u8) ?ThemeRole {

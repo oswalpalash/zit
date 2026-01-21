@@ -1106,11 +1106,7 @@ pub const Renderer = struct {
         if (width == 0) return;
         if (std.math.add(u32, @as(u32, x), @as(u32, width) - 1) catch std.math.maxInt(u32) >= self.back.width) return;
 
-        const adjusted_fg = self.capabilities.bestColor(fg);
-        const adjusted_bg = self.capabilities.bestColor(bg);
-        const adjusted_style = self.capabilities.bestStyle(style);
-
-        const cell = Cell.initGrapheme(renderable, adjusted_fg, adjusted_bg, adjusted_style);
+        const cell = Cell.initGrapheme(renderable, fg, bg, style);
         self.back.setCell(x, y, cell);
         self.markDirtyRect(x, y, width, 1);
 
@@ -1227,10 +1223,19 @@ pub const Renderer = struct {
         if (clamped_width == 0 or clamped_height == 0) return;
 
         // Fill background first so shadows sit underneath the border.
-        if (box_style.gradient) |grad| {
-            self.fillGradient(x, y, clamped_width, clamped_height, grad.stops, grad.direction, box_style.fill_style);
-        } else {
-            self.fillRect(x, y, clamped_width, clamped_height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+        const has_border = box_style.border != .none;
+        const inset: u16 = if (has_border and clamped_width >= 2 and clamped_height >= 2) 1 else 0;
+        const fill_x = x + inset;
+        const fill_y = y + inset;
+        const fill_width = clamped_width - inset * 2;
+        const fill_height = clamped_height - inset * 2;
+
+        if (fill_width > 0 and fill_height > 0) {
+            if (box_style.gradient) |grad| {
+                self.fillGradient(fill_x, fill_y, fill_width, fill_height, grad.stops, grad.direction, box_style.fill_style);
+            } else {
+                self.fillRect(fill_x, fill_y, fill_width, fill_height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+            }
         }
 
         if (box_style.shadow) |shadow| {
@@ -1399,18 +1404,22 @@ pub const Renderer = struct {
                     // Update styles if needed
                     var need_style_update = false;
 
-                    if (current_fg == null or !std.meta.eql(current_fg.?, back_cell.fg)) {
-                        current_fg = back_cell.fg;
+                    const adjusted_fg = self.capabilities.bestColor(back_cell.fg);
+                    const adjusted_bg = self.capabilities.bestColor(back_cell.bg);
+                    const adjusted_style = self.capabilities.bestStyle(back_cell.style);
+
+                    if (current_fg == null or !std.meta.eql(current_fg.?, adjusted_fg)) {
+                        current_fg = adjusted_fg;
                         need_style_update = true;
                     }
 
-                    if (current_bg == null or !std.meta.eql(current_bg.?, back_cell.bg)) {
-                        current_bg = back_cell.bg;
+                    if (current_bg == null or !std.meta.eql(current_bg.?, adjusted_bg)) {
+                        current_bg = adjusted_bg;
                         need_style_update = true;
                     }
 
-                    if (!std.meta.eql(current_style, back_cell.style)) {
-                        current_style = back_cell.style;
+                    if (!std.meta.eql(current_style, adjusted_style)) {
+                        current_style = adjusted_style;
                         need_style_update = true;
                     }
 
@@ -1418,15 +1427,15 @@ pub const Renderer = struct {
                         self.style_scratch.clearRetainingCapacity();
 
                         try self.style_scratch.appendSlice(self.allocator, "\x1b[");
-                        const style_code = back_cell.style.toAnsi();
+                        const style_code = adjusted_style.toAnsi();
                         try self.style_scratch.appendSlice(self.allocator, style_code.slice());
 
                         try self.style_scratch.appendSlice(self.allocator, ";");
-                        const fg_code = back_cell.fg.toFg();
+                        const fg_code = adjusted_fg.toFg();
                         try self.style_scratch.appendSlice(self.allocator, fg_code.slice());
 
                         try self.style_scratch.appendSlice(self.allocator, ";");
-                        const bg_code = back_cell.bg.toBg();
+                        const bg_code = adjusted_bg.toBg();
                         try self.style_scratch.appendSlice(self.allocator, bg_code.slice());
 
                         try self.style_scratch.appendSlice(self.allocator, "m");

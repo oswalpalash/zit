@@ -11,6 +11,7 @@ pub const Mask = struct {
     allocator: std.mem.Allocator,
     pattern: []const u8,
     tokens: []Token,
+    align_right: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, pattern: []const u8) !Mask {
         const copy = try allocator.dupe(u8, pattern);
@@ -48,7 +49,11 @@ pub const Mask = struct {
 
     pub fn currency(allocator: std.mem.Allocator, symbol: []const u8) !Mask {
         const pattern = try std.fmt.allocPrint(allocator, "{s}###,###.##", .{symbol});
-        return init(allocator, pattern);
+        defer allocator.free(pattern);
+
+        var mask = try init(allocator, pattern);
+        mask.align_right = true;
+        return mask;
     }
 
     /// Maximum formatted length for this mask.
@@ -59,6 +64,10 @@ pub const Mask = struct {
     /// Apply the mask to an arbitrary string. Non-matching characters are skipped
     /// and the output is truncated to the mask's pattern.
     pub fn format(self: *const Mask, allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
+        if (self.align_right) {
+            return self.formatRightAligned(allocator, raw);
+        }
+
         var output = try std.ArrayList(u8).initCapacity(allocator, 0);
         errdefer output.deinit(allocator);
 
@@ -81,6 +90,43 @@ pub const Mask = struct {
         }
 
         return output.toOwnedSlice(allocator);
+    }
+
+    fn formatRightAligned(self: *const Mask, allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
+        var output = try std.ArrayList(u8).initCapacity(allocator, 0);
+        errdefer output.deinit(allocator);
+
+        var input_idx: usize = raw.len;
+        var has_written_placeholder = false;
+
+        const raw_has_decimal = std.mem.indexOfScalar(u8, raw, '.') != null;
+        var last_token: isize = @as(isize, @intCast(self.tokens.len)) - 1;
+        if (!raw_has_decimal) {
+            if (std.mem.indexOfScalar(u8, self.pattern, '.')) |dot| {
+                if (dot > 0) last_token = @as(isize, @intCast(dot)) - 1;
+            }
+        }
+
+        var idx: isize = last_token;
+        while (idx >= 0) : (idx -= 1) {
+            const token = self.tokens[@intCast(idx)];
+            switch (token.kind) {
+                .literal => {
+                    if (has_written_placeholder or hasPriorInput(raw, @intCast(input_idx), self.tokens[0..@intCast(idx)])) {
+                        try output.append(allocator, token.literal);
+                    }
+                },
+                else => {
+                    const ch = prevMatching(raw, &input_idx, token.kind) orelse continue;
+                    try output.append(allocator, ch);
+                    has_written_placeholder = true;
+                },
+            }
+        }
+
+        const slice = try output.toOwnedSlice(allocator);
+        std.mem.reverse(u8, slice);
+        return slice;
     }
 };
 
@@ -138,6 +184,33 @@ fn hasUpcomingInput(raw: []const u8, start_idx: usize, tokens: []const Token) bo
         }
     }
     return false;
+}
+
+fn hasPriorInput(raw: []const u8, end_idx: usize, tokens: []const Token) bool {
+    if (tokens.len == 0 or end_idx == 0) return false;
+
+    var i: usize = 0;
+    while (i < end_idx) : (i += 1) {
+        const ch = raw[i];
+        for (tokens) |token| {
+            if (token.kind == .literal) continue;
+            if (matches(token.kind, ch)) return true;
+        }
+    }
+    return false;
+}
+
+fn prevMatching(raw: []const u8, idx: *usize, kind: TokenKind) ?u8 {
+    var i = idx.*;
+    while (i > 0) {
+        i -= 1;
+        const ch = raw[i];
+        if (matches(kind, ch)) {
+            idx.* = i;
+            return ch;
+        }
+    }
+    return null;
 }
 
 test "mask formats partial and complete phone numbers" {
