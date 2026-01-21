@@ -485,6 +485,21 @@ list.setSelectedIndex(0);
 list.setOnSelect(onListSelect);
 list.setColors(normal_fg, normal_bg, selected_fg, selected_bg);
 list.setBorder(.single);
+
+// Autocomplete text input
+var autocomplete = try zit.widget.AutocompleteInput.init(allocator, 64);
+try autocomplete.setSuggestions(&[_][]const u8{ "alpha", "beta", "gamma" });
+
+// Drop-in charts (bar, line, area)
+var chart = try zit.widget.Chart.init(allocator);
+chart.setType(.bar);
+try chart.addSeries("Throughput", &[_]f32{ 1.0, 2.0, 3.5, 4.0 }, null, null);
+
+// Context menu opened at arbitrary coordinates
+var ctx = try zit.widget.ContextMenu.init(allocator);
+try ctx.addItem("Copy", true, null);
+try ctx.addItem("Delete", false, null);
+ctx.openAt(10, 4);
 ```
 
 ## License
