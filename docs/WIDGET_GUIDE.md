@@ -44,6 +44,12 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 - The accessibility manager now includes ARIA-like roles (`progressbar`, `slider`, `tab*`, `alert`, `status`, `tooltip`), richer focus/state announcements, and a high contrast preference bit.
 - Call `Manager.setHighContrast(true)` and `Manager.highContrastTheme()` to flip UI palettes for screen readers or low-vision users; `prefersHighContrast()` lets widgets opt into bolder styles.
 
+## Styling and Theming
+- Built-in palettes now include Solarized (light/dark), Monokai, and Catppuccin variants; resolve by name with `widget.theme.Theme.fromName("catppuccin")`.
+- User themes can be loaded from simple config files (`background=#0a0e16`, `accent=#ff00aa`, `extends=dark`, `style.bold=true`) via `widget.theme.loadFromFile`; hook `theme_hot_reload.ThemeHotReloader.start` to hot-reload on file saves.
+- The CSS helper (`widget.css.StyleSheet`) supports inheritance and pseudo-states: use `:hover`, `:focus`, `:active`, `:disabled` in selectors and pass parent styles into `resolveWithParent` to cascade fg/bg/style values.
+- For depth and polish, `render.BoxStyle` accepts gradients and richer borders (`dashed`, `double_rounded`) and still works with drop shadows for layered panels.
+
 ## Example: A Minimal Counter Widget
 ```zig
 const Counter = struct {

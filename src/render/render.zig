@@ -679,6 +679,8 @@ pub const BorderStyle = enum {
     double,
     rounded,
     thick,
+    dashed,
+    double_rounded,
 
     /// Get the characters for this border style
     pub fn getChars(self: BorderStyle) [8]u21 {
@@ -688,6 +690,8 @@ pub const BorderStyle = enum {
             .double => [_]u21{ '╔', '╗', '╚', '╝', '═', '═', '║', '║' },
             .rounded => [_]u21{ '╭', '╮', '╰', '╯', '─', '─', '│', '│' },
             .thick => [_]u21{ '┏', '┓', '┗', '┛', '━', '━', '┃', '┃' },
+            .dashed => [_]u21{ '┌', '┐', '└', '┘', '╌', '╌', '┊', '┊' },
+            .double_rounded => [_]u21{ '╭', '╮', '╰', '╯', '═', '═', '║', '║' },
         };
     }
 };
@@ -712,6 +716,13 @@ pub const BoxStyle = struct {
     style: Style = Style{},
     fill_style: Style = Style{},
     shadow: ?ShadowStyle = null,
+    gradient: ?GradientFill = null,
+};
+
+/// Optional gradient fill for styled boxes.
+pub const GradientFill = struct {
+    stops: []const GradientStop,
+    direction: GradientDirection = .vertical,
 };
 
 /// Visual treatment for focused widgets.
@@ -1149,7 +1160,11 @@ pub const Renderer = struct {
         if (clamped_width == 0 or clamped_height == 0) return;
 
         // Fill background first so shadows sit underneath the border.
-        self.fillRect(x, y, clamped_width, clamped_height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+        if (box_style.gradient) |grad| {
+            self.fillGradient(x, y, clamped_width, clamped_height, grad.stops, grad.direction, box_style.fill_style);
+        } else {
+            self.fillRect(x, y, clamped_width, clamped_height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+        }
 
         if (box_style.shadow) |shadow| {
             const shade: u21 = if (shadow.soft) '░' else '▒';
@@ -1494,6 +1509,28 @@ test "fillGradient paints interpolated colors" {
     const bottom = vertical_renderer.back.getCell(0, 1).bg;
     try std.testing.expect(std.meta.eql(top, Color.rgb(0, 0, 0)));
     try std.testing.expect(std.meta.eql(bottom, Color.rgb(255, 0, 0)));
+}
+
+test "styled box supports gradient fill" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+
+    const stops = [_]GradientStop{
+        .{ .position = 0.0, .color = Color.rgb(0, 0, 0) },
+        .{ .position = 1.0, .color = Color.rgb(0, 0, 255) },
+    };
+
+    renderer.drawStyledBox(0, 0, 6, 3, BoxStyle{
+        .border = BorderStyle.single,
+        .border_color = Color.named(NamedColor.white),
+        .gradient = GradientFill{ .stops = &stops, .direction = GradientDirection.horizontal },
+    });
+
+    const left_bg = renderer.back.getCell(1, 1).bg;
+    const right_bg = renderer.back.getCell(4, 1).bg;
+    try std.testing.expect(std.meta.eql(left_bg, Color.rgb(0, 0, 0)));
+    try std.testing.expect(std.meta.eql(right_bg, Color.rgb(0, 0, 255)));
 }
 
 test "ansi helpers produce stable sequences" {
