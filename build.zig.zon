@@ -1,0 +1,17 @@
+.{
+    .name = .zit,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .fingerprint = 0x4570515fbe594aa5,
+    .paths = .{
+        "",
+        "build.zig",
+        "src",
+        "examples",
+        "docs",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+    },
+}
