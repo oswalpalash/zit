@@ -190,8 +190,10 @@ fn ioEventDataCleanup(data: *anyopaque) void {
     const io_data = @as(*IoEventData, @ptrCast(@alignCast(data)));
 
     // Free error message if owned
-    if (io_data.owns_error_message and io_data.error_message) |msg| {
-        io_data.allocator.free(msg);
+    if (io_data.owns_error_message) {
+        if (io_data.error_message) |msg| {
+            io_data.allocator.free(msg);
+        }
     }
 
     // Call cleanup function for inner data if present

@@ -85,6 +85,7 @@ _ = try app.scheduleTimer(1000, 1000, struct {
     }
 }.tick, spark);
 ```
+`tickOnce()`/`pollUntil()` keep event processing non-blocking when you embed Zit in another loop, and `startBackgroundTask()` emits a completion event once background work finishes (or is cancelled) without stalling the UI thread.
 
 ## Comparison
 

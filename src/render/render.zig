@@ -419,6 +419,13 @@ pub fn colorToRgb(color: Color) RgbColor {
     };
 }
 
+/// Linearly blend two colors, clamping the factor between 0 and 1.
+pub fn mixColor(start: Color, end: Color, t_in: f32) Color {
+    const t = std.math.clamp(t_in, 0, 1);
+    const blended = lerpColor(colorToRgb(start), colorToRgb(end), t);
+    return Color.rgb(blended.r, blended.g, blended.b);
+}
+
 fn lerpChannel(a: u8, b: u8, t: f32) u8 {
     const start = @as(f32, @floatFromInt(a));
     const end = @as(f32, @floatFromInt(b));
@@ -1221,6 +1228,16 @@ test "renderer draws box outlines" {
     try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).char);
     try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).char);
     try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).char);
+}
+
+test "mixColor blends rgb endpoints" {
+    const red = Color.rgb(255, 0, 0);
+    const blue = Color.rgb(0, 0, 255);
+    const mid = mixColor(red, blue, 0.5);
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .rgb_color), std.meta.activeTag(mid));
+    try std.testing.expectEqual(@as(u8, 128), mid.rgb_color.r);
+    try std.testing.expectEqual(@as(u8, 0), mid.rgb_color.g);
+    try std.testing.expectEqual(@as(u8, 128), mid.rgb_color.b);
 }
 
 test "bestColor maps rgb to ansi256 palette when needed" {

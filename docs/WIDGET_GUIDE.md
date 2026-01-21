@@ -30,6 +30,20 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 - Call `Renderer.render()` once per frame; draw functions should only touch the back buffer.
 - Surface IDs/classes via `setId`/`setClass` to integrate with theme helpers and logging.
 
+## Animations and Transitions
+- Use `widget.Animator` plus `animation.ValueDriver` to tween scalars like progress, slider positions, or opacity. Drivers call back on every frame so widgets can repaint without blocking.
+- Widgets can now fade/slide on show/hide via `Widget.animateVisibility`; the base widget tints rendered cells during fade and shifts the rect during slides while ignoring input on the way out.
+- `ProgressBar.attachAnimator` smooths value changes and `transitionFillColors` animates palette swaps, keeping updates visually fluid.
+
+## Async Patterns
+- `Application.tickOnce()`/`pollUntil()` let you pump events, animations, and timers from an external loop without sleeping the current thread.
+- `Application.startBackgroundTask()` runs work on a helper thread and emits a `BACKGROUND_TASK_EVENT_ID` custom event carrying a `BackgroundTaskResult` (success/failed/cancelled). Use `cancelBackgroundTask()` to flip the shared stop flag and `releaseBackgroundTaskHandle()` once you no longer need the handle.
+- Timers stay central for periodic updates: pair `scheduleTimer()` with `TimerManager` ticks to drive clock widgets or auto-refresh data.
+
+## Accessibility and High Contrast
+- The accessibility manager now includes ARIA-like roles (`progressbar`, `slider`, `tab*`, `alert`, `status`, `tooltip`), richer focus/state announcements, and a high contrast preference bit.
+- Call `Manager.setHighContrast(true)` and `Manager.highContrastTheme()` to flip UI palettes for screen readers or low-vision users; `prefersHighContrast()` lets widgets opt into bolder styles.
+
 ## Example: A Minimal Counter Widget
 ```zig
 const Counter = struct {
