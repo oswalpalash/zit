@@ -726,7 +726,7 @@ pub const Breadcrumbs = struct {
         width: u16,
     };
 
-    fn remaining(cursor: i16, limit: i16) usize {
+    fn remaining(cursor: u16, limit: u16) usize {
         if (cursor >= limit) return 0;
         return @intCast(limit - cursor);
     }
@@ -758,10 +758,10 @@ pub const Breadcrumbs = struct {
         const rect = self.widget.rect;
         var segments = std.ArrayListUnmanaged(VisibleSegment){};
         defer segments.deinit(self.allocator);
-        try self.computeVisible(@intCast(rect.width), &segments);
+        try self.computeVisible(rect.width, &segments);
 
-        var cursor: i16 = rect.x;
-        const limit = rect.x + rect.width;
+        var cursor: u16 = rect.x;
+        const limit: u16 = rect.x + rect.width;
         for (segments.items, 0..) |seg, idx| {
             if (seg.idx) |real_idx| {
                 const part = self.parts.items[real_idx];
@@ -791,7 +791,7 @@ pub const Breadcrumbs = struct {
             if (idx + 1 < segments.items.len and cursor < limit) {
                 const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
                 renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
-                cursor += @as(i16, @intCast(sep_draw.len));
+                cursor += @intCast(sep_draw.len);
             }
         }
     }
@@ -802,26 +802,26 @@ pub const Breadcrumbs = struct {
         if (event != .mouse) return false;
         const mouse = event.mouse;
         if (mouse.action != .press or mouse.button != 1) return false;
-        const mx: i16 = @intCast(mouse.x);
-        const my: i16 = @intCast(mouse.y);
+        const mx = mouse.x;
+        const my = mouse.y;
         if (my != self.widget.rect.y) return false;
 
         var segments = std.ArrayListUnmanaged(VisibleSegment){};
         defer segments.deinit(self.allocator);
-        try self.computeVisible(@intCast(self.widget.rect.width), &segments);
+        try self.computeVisible(self.widget.rect.width, &segments);
 
-        var cursor: i16 = self.widget.rect.x;
-        const limit = self.widget.rect.x + self.widget.rect.width;
+        var cursor: u16 = self.widget.rect.x;
+        const limit: u16 = self.widget.rect.x + self.widget.rect.width;
         for (segments.items) |seg| {
             if (seg.idx) |idx| {
                 const start = cursor;
-                const end = cursor + @as(i16, @intCast(seg.width));
+                const end: u16 = cursor + seg.width;
                 if (mx >= start and mx < end) {
                     self.on_click.?(idx);
                     return true;
                 }
             }
-            cursor += @as(i16, @intCast(seg.width));
+            cursor += seg.width;
             if (cursor < limit) {
                 cursor += @intCast(@min(self.separator.len, remaining(cursor, limit)));
             }
