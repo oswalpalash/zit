@@ -101,8 +101,8 @@ pub const WidgetInspector = struct {
 
         try writer.writeAll(")\n");
 
-        var children = std.ArrayList(*widget.Widget).init(self.allocator);
-        defer children.deinit();
+        var children = try std.ArrayList(*widget.Widget).initCapacity(self.allocator, 0);
+        defer children.deinit(self.allocator);
         try collectChildren(self.allocator, node, &children);
 
         for (children.items) |child| {
@@ -123,8 +123,8 @@ pub const LayoutDebugger = struct {
     pub fn outline(renderer: *render.Renderer, root: *widget.Widget, options: Options) void {
         drawNode(renderer, root, 0, options);
 
-        var children = std.ArrayList(*widget.Widget).init(renderer.allocator);
-        defer children.deinit();
+        var children = try std.ArrayList(*widget.Widget).initCapacity(renderer.allocator, 0);
+        defer children.deinit(renderer.allocator);
         collectChildren(renderer.allocator, root, &children) catch return;
 
         for (children.items) |child| {
