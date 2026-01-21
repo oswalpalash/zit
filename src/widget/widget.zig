@@ -29,6 +29,8 @@ pub const List = @import("widgets/list.zig").List;
 pub const TabView = @import("widgets/tab_view.zig").TabView;
 pub const ScrollContainer = @import("widgets/scroll_container.zig").ScrollContainer;
 pub const DropdownMenu = @import("widgets/dropdown_menu.zig").DropdownMenu;
+pub const ContextMenu = @import("widgets/context_menu.zig").ContextMenu;
+pub const ContextMenuItem = @import("widgets/context_menu.zig").MenuItem;
 pub const Table = @import("widgets/table.zig").Table;
 pub const Modal = @import("widgets/modal.zig").Modal;
 pub const TreeView = @import("widgets/tree_view.zig").TreeView;
@@ -189,6 +191,11 @@ pub fn createTable(allocator: std.mem.Allocator) !*Table {
 /// Create a new dropdown menu
 pub fn createDropdownMenu(allocator: std.mem.Allocator) !*DropdownMenu {
     return DropdownMenu.init(allocator);
+}
+
+/// Create a new context menu
+pub fn createContextMenu(allocator: std.mem.Allocator) !*ContextMenu {
+    return ContextMenu.init(allocator);
 }
 
 /// Create a new tree view
