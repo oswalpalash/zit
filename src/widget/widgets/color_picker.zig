@@ -206,7 +206,7 @@ test "color picker handles mouse and keyboard selection" {
     };
     picker.setOnChange(Callbacks.onChange, &change_called);
 
-    const mouse_event = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, picker.widget.rect.x + picker.swatch_width + 1, picker.widget.rect.y + 1, 1) };
+    const mouse_event = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, picker.widget.rect.x + picker.swatch_width + 1, picker.widget.rect.y + 1, 1, 0) };
     try std.testing.expect(try picker.widget.handleEvent(mouse_event));
     try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
     try std.testing.expect(change_called);

@@ -512,14 +512,29 @@ pub const Table = struct {
                     return true;
                 }
             } else if ((mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) and rect.contains(mouse_event.x, mouse_event.y)) {
-                if (mouse_event.action == .scroll_up) {
-                    if (self.first_visible_row > 0) {
-                        self.first_visible_row -= 1;
+                const scroll_step: i16 = if (mouse_event.scroll_delta != 0)
+                    mouse_event.scroll_delta
+                else if (mouse_event.action == .scroll_up)
+                    -1
+                else
+                    1;
+                const step = @as(usize, @intCast(@abs(scroll_step)));
+
+                if (scroll_step < 0) {
+                    const decrease = @min(self.first_visible_row, step);
+                    if (decrease > 0) {
+                        self.first_visible_row -= decrease;
                         return true;
                     }
-                } else if (self.first_visible_row + self.getVisibleRowCount() < self.rows.items.len) {
-                    self.first_visible_row += 1;
-                    return true;
+                } else {
+                    const visible_count = self.getVisibleRowCount();
+                    const available_rows = if (self.rows.items.len > visible_count) self.rows.items.len - visible_count else 0;
+                    if (self.first_visible_row < available_rows) {
+                        const remaining = available_rows - self.first_visible_row;
+                        const increase = @min(remaining, step);
+                        self.first_visible_row += increase;
+                        return increase > 0;
+                    }
                 }
             }
         }
