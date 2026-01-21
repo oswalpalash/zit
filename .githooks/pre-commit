@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+if ! command -v zig >/dev/null 2>&1; then
+  echo "zig not found; install Zig before committing."
+  exit 1
+fi
+
+echo "Running zig build..."
+if ! zig build; then
+  echo "zig build failed; aborting commit."
+  exit 1
+fi
