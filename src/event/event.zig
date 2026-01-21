@@ -4,6 +4,7 @@ pub const widget = @import("../widget/widget.zig");
 const animation = @import("../widget/animation.zig");
 const timer = @import("timer.zig");
 const accessibility = @import("../widget/accessibility.zig");
+const render = @import("../render/render.zig");
 
 const event_loop_sleep_ms: u64 = 10;
 const focus_history_limit: usize = 10;
@@ -28,6 +29,14 @@ pub const EventType = enum {
     mouse_move,
     /// Mouse wheel event
     mouse_wheel,
+    /// Dragging started
+    drag_start,
+    /// Drag position updated
+    drag_update,
+    /// Drag ended
+    drag_end,
+    /// Drop event
+    drop,
     /// Window resize event
     resize,
     /// Focus change event
@@ -77,6 +86,14 @@ pub const Event = struct {
         mouse_move: MouseEventData,
         /// Mouse wheel event data
         mouse_wheel: MouseWheelEventData,
+        /// Dragging start
+        drag_start: DragEventData,
+        /// Dragging updates
+        drag_update: DragEventData,
+        /// Dragging end
+        drag_end: DragEventData,
+        /// Drop payload
+        drop: DragEventData,
         /// Window resize event data
         resize: ResizeEventData,
         /// Focus change event data
@@ -147,6 +164,23 @@ pub const MouseWheelEventData = struct {
     dy: i8,
     /// Key modifiers
     modifiers: input.KeyModifiers,
+};
+
+/// Drag payload used for drop handlers.
+pub const DragPayload = struct {
+    data: ?*anyopaque = null,
+    destructor: ?*const fn (*anyopaque) void = null,
+};
+
+/// Dragging lifecycle data.
+pub const DragEventData = struct {
+    start_x: u16,
+    start_y: u16,
+    x: u16,
+    y: u16,
+    button: u8,
+    source: ?*widget.Widget,
+    payload: DragPayload = .{},
 };
 
 /// Resize event data
@@ -474,6 +508,19 @@ pub const EventQueue = struct {
         try self.pushEvent(event);
     }
 
+    pub fn createDragEvent(self: *EventQueue, event_type: EventType, data: DragEventData, target: ?*widget.Widget) !void {
+        const payload = switch (event_type) {
+            .drag_start => Event.EventData{ .drag_start = data },
+            .drag_update => Event.EventData{ .drag_update = data },
+            .drag_end => Event.EventData{ .drag_end = data },
+            .drop => Event.EventData{ .drop = data },
+            else => return error.InvalidDragEventType,
+        };
+
+        const event = Event.init(event_type, target, payload);
+        try self.pushEvent(event);
+    }
+
     /// Create a resize event
     pub fn createResizeEvent(self: *EventQueue, width: u16, height: u16, target: ?*widget.Widget) !void {
         const event = Event.init(.resize, target, Event.EventData{
@@ -652,6 +699,126 @@ pub const FocusRequestData = struct {
 /// Focus request event ID
 pub const FOCUS_REQUEST_EVENT_ID = 0x46435351; // "FCSQ"
 
+/// Helper to emit drag lifecycle events and manage payload cleanup.
+pub const DragManager = struct {
+    active: bool = false,
+    source: ?*widget.Widget = null,
+    payload: DragPayload = .{},
+    start_x: u16 = 0,
+    start_y: u16 = 0,
+    last_x: u16 = 0,
+    last_y: u16 = 0,
+    button: u8 = 0,
+    queue: *EventQueue,
+
+    pub fn init(queue: *EventQueue) DragManager {
+        return DragManager{
+            .queue = queue,
+        };
+    }
+
+    pub fn begin(self: *DragManager, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
+        if (self.active) self.cancel();
+        self.active = true;
+        self.source = source;
+        self.payload = payload;
+        self.start_x = x;
+        self.start_y = y;
+        self.last_x = x;
+        self.last_y = y;
+        self.button = button;
+
+        try self.queue.createDragEvent(.drag_start, self.eventData(x, y), source);
+    }
+
+    pub fn update(self: *DragManager, x: u16, y: u16, target: ?*widget.Widget) !void {
+        if (!self.active) return;
+        self.last_x = x;
+        self.last_y = y;
+        try self.queue.createDragEvent(.drag_update, self.eventData(x, y), target);
+    }
+
+    pub fn end(self: *DragManager, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
+        if (!self.active) return;
+        self.last_x = x;
+        self.last_y = y;
+        try self.queue.createDragEvent(.drag_end, self.eventData(x, y), self.source);
+        try self.queue.createDragEvent(.drop, self.eventData(x, y), drop_target);
+        self.cleanupPayload();
+        self.active = false;
+    }
+
+    pub fn cancel(self: *DragManager) void {
+        if (!self.active) return;
+        self.cleanupPayload();
+        self.active = false;
+    }
+
+    fn eventData(self: *const DragManager, x: u16, y: u16) DragEventData {
+        return DragEventData{
+            .start_x = self.start_x,
+            .start_y = self.start_y,
+            .x = x,
+            .y = y,
+            .button = self.button,
+            .source = self.source,
+            .payload = self.payload,
+        };
+    }
+
+    fn cleanupPayload(self: *DragManager) void {
+        if (self.payload.destructor) |d| {
+            if (self.payload.data) |p| {
+                d(p);
+            }
+        }
+        self.payload = .{};
+    }
+};
+
+test "drag manager enqueues lifecycle events" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: @import("../layout/layout.zig").Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!@import("../layout/layout.zig").Size {
+                return @import("../layout/layout.zig").Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return false;
+            }
+        }.can,
+    };
+
+    var stub = widget.Widget.init(&dummy_vtable);
+    var mgr = DragManager.init(&queue);
+
+    try mgr.begin(&stub, 1, 1, 1, .{});
+    try mgr.update(2, 2, &stub);
+    try mgr.end(3, 3, &stub);
+
+    try std.testing.expectEqual(@as(usize, 4), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.drag_start, queue.queue.items[0].type);
+    try std.testing.expectEqual(EventType.drag_update, queue.queue.items[1].type);
+    try std.testing.expectEqual(EventType.drag_end, queue.queue.items[2].type);
+    try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
+}
+
 /// Application class for managing the event loop and UI components
 pub const Application = struct {
     /// Event queue
@@ -676,6 +843,8 @@ pub const Application = struct {
     timer_manager: timer.TimerManager,
     /// Accessibility manager (optional)
     accessibility: ?*accessibility.Manager = null,
+    /// Drag-and-drop coordinator
+    drag_manager: DragManager,
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -688,6 +857,7 @@ pub const Application = struct {
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
+        app.drag_manager = DragManager.init(&app.event_queue);
 
         return app;
     }
@@ -838,6 +1008,21 @@ pub const Application = struct {
         return self.animator.cancel(handle);
     }
 
+    /// Begin a drag gesture and emit the start event.
+    pub fn beginDrag(self: *Application, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
+        try self.drag_manager.begin(source, x, y, button, payload);
+    }
+
+    /// Update an in-flight drag gesture.
+    pub fn updateDrag(self: *Application, x: u16, y: u16, target: ?*widget.Widget) !void {
+        try self.drag_manager.update(x, y, target);
+    }
+
+    /// Finish a drag gesture and emit drop events.
+    pub fn endDrag(self: *Application, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
+        try self.drag_manager.end(x, y, drop_target);
+    }
+
     /// Schedule a timer callback
     pub fn scheduleTimer(self: *Application, delay_ms: u64, repeat_ms: ?u64, callback: timer.TimerCallback, ctx: ?*anyopaque) !timer.TimerHandle {
         const now_ms: u64 = @intCast(std.time.milliTimestamp());
@@ -894,8 +1079,26 @@ pub const Application = struct {
             .key => |key_event| {
                 // Determine if this is a press or release event
                 // For simplicity, we'll treat all key events as press events
-                try self.event_queue.createKeyPressEvent(key_event.key, key_event.modifiers, 0, // We don't have raw key codes in our input system
-                    @ptrCast(self.root.?));
+                const target: *widget.Widget = &self.root.?.widget;
+                try self.event_queue.createKeyPressEvent(key_event.key, key_event.modifiers, 0, target);
+            },
+            .mouse => |mouse_event| {
+                const target: *widget.Widget = &self.root.?.widget;
+                switch (mouse_event.action) {
+                    .press => {
+                        try self.event_queue.createMousePressEvent(mouse_event.x, mouse_event.y, mouse_event.button, 1, .{}, target);
+                        try self.beginDrag(target, mouse_event.x, mouse_event.y, mouse_event.button, .{});
+                    },
+                    .release => {
+                        try self.event_queue.createMouseReleaseEvent(mouse_event.x, mouse_event.y, mouse_event.button, 1, .{}, target);
+                        try self.endDrag(mouse_event.x, mouse_event.y, target);
+                    },
+                    .move => {
+                        try self.event_queue.createMouseMoveEvent(mouse_event.x, mouse_event.y, mouse_event.button, .{}, target);
+                        try self.updateDrag(mouse_event.x, mouse_event.y, target);
+                    },
+                    .scroll_up, .scroll_down => {},
+                }
             },
             // Add other input event conversions here
             else => {},
