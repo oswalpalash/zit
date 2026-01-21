@@ -3,6 +3,24 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const animation = @import("../animation.zig");
+const event_module = @import("../../event/event.zig");
+
+const ActiveDrag = struct {
+    source: *List,
+    from_index: usize,
+    text: []const u8,
+};
+
+var active_drag: ?ActiveDrag = null;
+
+pub const ItemProvider = struct {
+    ctx: ?*anyopaque = null,
+    count: *const fn (?*anyopaque) usize,
+    item_at: *const fn (usize, ?*anyopaque) []const u8,
+};
+
+pub const CrossDropMode = enum { move, copy };
 
 /// List widget for displaying and selecting items with incremental typeahead search
 pub const List = struct {
@@ -10,6 +28,8 @@ pub const List = struct {
     widget: base.Widget,
     /// List items
     items: std.ArrayList([]const u8),
+    /// Optional virtual data provider (avoids storing all items)
+    item_provider: ?ItemProvider = null,
     /// Selected item index
     selected_index: usize = 0,
     /// First visible item index
@@ -46,6 +66,32 @@ pub const List = struct {
     search_timeout_ms: u64 = 900,
     /// Clock source (primarily overridden in tests)
     clock: *const fn () i64 = std.time.milliTimestamp,
+    /// Optional shared animator for smooth scrolling
+    animator: ?*animation.Animator = null,
+    /// Smooth scroll driver
+    scroll_driver: animation.ValueDriver = .{},
+    /// Duration for scroll easing
+    scroll_duration_ms: u64 = 120,
+    /// Momentum multiplier applied to wheel deltas
+    momentum_multiplier: f32 = 3,
+    /// Limit how many virtual rows are sampled for preferred size calculations
+    virtual_sample_limit: usize = 256,
+    /// Enable drag-to-reorder
+    enable_reorder: bool = false,
+    /// Whether the current drag originated from this list
+    dragging: bool = false,
+    /// Drag origin index
+    drag_start_index: ?usize = null,
+    /// Current drop preview index
+    drag_hover_index: ?usize = null,
+    /// Whether this list can accept drops from other lists
+    accept_external_drops: bool = true,
+    /// Buffer that owns the active drag payload text
+    drag_payload: ?[]u8 = null,
+    /// Callback fired after a reorder happens (local or external)
+    on_reorder: ?*const fn (from: usize, to: usize, source: *List, target: *List) void = null,
+    /// Behavior for external drops
+    cross_drop_mode: CrossDropMode = .move,
 
     /// Virtual method table for List
     pub const vtable = base.Widget.VTable{
@@ -71,6 +117,7 @@ pub const List = struct {
 
     /// Clean up list resources
     pub fn deinit(self: *List) void {
+        self.clearDragPayload();
         // Free all items
         for (self.items.items) |item| {
             self.allocator.free(item);
@@ -81,6 +128,7 @@ pub const List = struct {
 
     /// Add an item to the list
     pub fn addItem(self: *List, item: []const u8) !void {
+        if (self.item_provider != null) return error.VirtualDataActive;
         try self.items.ensureUnusedCapacity(self.allocator, 1);
         const item_copy = try self.allocator.dupe(u8, item);
         self.items.appendAssumeCapacity(item_copy);
@@ -88,6 +136,7 @@ pub const List = struct {
 
     /// Remove an item from the list
     pub fn removeItem(self: *List, index: usize) void {
+        if (self.item_provider != null) return;
         if (index >= self.items.items.len) {
             return;
         }
@@ -106,6 +155,7 @@ pub const List = struct {
 
     /// Clear all items from the list
     pub fn clear(self: *List) void {
+        self.clearDragPayload();
         // Free all items
         for (self.items.items) |item| {
             self.allocator.free(item);
@@ -117,7 +167,8 @@ pub const List = struct {
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *List, index: usize) void {
-        if (self.items.items.len == 0) {
+        const count = self.itemCount();
+        if (count == 0) {
             self.selected_index = 0;
             return;
         }
@@ -127,7 +178,7 @@ pub const List = struct {
         }
 
         const old_index = self.selected_index;
-        self.selected_index = @min(index, self.items.items.len - 1);
+        self.selected_index = @min(index, count - 1);
 
         // Ensure the selected item is visible
         self.ensureItemVisible(self.selected_index);
@@ -145,18 +196,18 @@ pub const List = struct {
 
     /// Get the selected item text
     pub fn getSelectedItem(self: *List) ?[]const u8 {
-        if (self.items.items.len == 0) {
+        if (self.itemCount() == 0) {
             return null;
         }
-        return self.items.items[self.selected_index];
+        return self.itemAt(self.selected_index);
     }
 
     /// Ensure the item at the given index is visible
     fn ensureItemVisible(self: *List, index: usize) void {
         if (index < self.first_visible_index) {
-            self.first_visible_index = index;
-        } else if (index >= self.first_visible_index + self.visible_items_count) {
-            self.first_visible_index = index - self.visible_items_count + 1;
+            self.scrollTo(@floatFromInt(index));
+        } else if (self.visible_items_count > 0 and index >= self.first_visible_index + self.visible_items_count) {
+            self.scrollTo(@floatFromInt(index - self.visible_items_count + 1));
         }
     }
 
@@ -199,6 +250,201 @@ pub const List = struct {
         self.clock = clock;
     }
 
+    /// Attach a shared animator to enable smooth scrolling and drop previews.
+    pub fn attachAnimator(self: *List, animator: *animation.Animator) void {
+        self.animator = animator;
+        self.scroll_driver.snap(@floatFromInt(self.first_visible_index));
+    }
+
+    /// Enable virtualized rendering with an external item provider.
+    pub fn useItemProvider(self: *List, provider: ItemProvider) void {
+        self.clear();
+        self.items.clearRetainingCapacity();
+        self.item_provider = provider;
+        self.syncScrollFromDriver();
+    }
+
+    /// Return to the owned item storage model.
+    pub fn clearItemProvider(self: *List) void {
+        self.item_provider = null;
+        self.syncScrollFromDriver();
+    }
+
+    /// Enable or disable drag-to-reorder behavior.
+    pub fn setReorderable(self: *List, enabled: bool) void {
+        self.enable_reorder = enabled;
+    }
+
+    /// Decide how cross-list drops are handled (move vs copy).
+    pub fn setCrossDropMode(self: *List, mode: CrossDropMode) void {
+        self.cross_drop_mode = mode;
+    }
+
+    /// Allow or block drops coming from other lists.
+    pub fn setAcceptExternalDrops(self: *List, enabled: bool) void {
+        self.accept_external_drops = enabled;
+    }
+
+    /// Notify consumers when a reorder happens.
+    pub fn setOnReorder(self: *List, callback: *const fn (from: usize, to: usize, source: *List, target: *List) void) void {
+        self.on_reorder = callback;
+    }
+
+    fn clearDragPayload(self: *List) void {
+        if (self.drag_payload) |buf| {
+            self.allocator.free(buf);
+            self.drag_payload = null;
+        }
+    }
+
+    fn itemCount(self: *List) usize {
+        if (self.item_provider) |provider| {
+            return provider.count(provider.ctx);
+        }
+        return self.items.items.len;
+    }
+
+    fn itemAt(self: *List, index: usize) []const u8 {
+        if (self.item_provider) |provider| {
+            return provider.item_at(index, provider.ctx);
+        }
+        return self.items.items[index];
+    }
+
+    fn clampScroll(self: *List) void {
+        const max_offset = if (self.visible_items_count > 0 and self.itemCount() > self.visible_items_count)
+            self.itemCount() - self.visible_items_count
+        else
+            0;
+        const clamped = std.math.clamp(self.scroll_driver.current, 0, @as(f32, @floatFromInt(max_offset)));
+        self.scroll_driver.current = clamped;
+        self.first_visible_index = @as(usize, @intFromFloat(std.math.floor(clamped)));
+    }
+
+    fn syncScrollFromDriver(self: *List) void {
+        self.first_visible_index = @as(usize, @intFromFloat(std.math.floor(self.scroll_driver.current)));
+    }
+
+    fn scrollTo(self: *List, target: f32) void {
+        const max_offset = if (self.visible_items_count > 0 and self.itemCount() > self.visible_items_count)
+            self.itemCount() - self.visible_items_count
+        else
+            0;
+        const clamped = std.math.clamp(target, 0, @as(f32, @floatFromInt(max_offset)));
+        if (self.animator) |anim| {
+            const onChange = struct {
+                fn apply(value: f32, ctx: ?*anyopaque) void {
+                    const list = @as(*List, @ptrCast(@alignCast(ctx.?)));
+                    list.scroll_driver.current = value;
+                    list.syncScrollFromDriver();
+                }
+            }.apply;
+
+            _ = self.scroll_driver.animate(
+                anim,
+                self.scroll_driver.current,
+                clamped,
+                self.scroll_duration_ms,
+                animation.Easing.easeInOutQuad,
+                onChange,
+                @ptrCast(self),
+            ) catch {
+                self.scroll_driver.snap(clamped);
+                self.syncScrollFromDriver();
+            };
+        } else {
+            self.scroll_driver.snap(clamped);
+            self.syncScrollFromDriver();
+        }
+    }
+
+    fn scrollBy(self: *List, delta: f32) void {
+        self.scrollTo(self.scroll_driver.current + delta * self.momentum_multiplier);
+    }
+
+    fn startDrag(self: *List, index: usize) void {
+        if (!self.enable_reorder) return;
+        if (active_drag) |_|
+            active_drag = null;
+
+        self.dragging = true;
+        self.drag_start_index = index;
+        self.drag_hover_index = index;
+        self.clearDragPayload();
+
+        const owned = self.allocator.dupe(u8, self.itemAt(index)) catch null;
+        if (owned) |buf| {
+            self.drag_payload = buf;
+            active_drag = ActiveDrag{ .source = self, .from_index = index, .text = buf };
+        } else {
+            active_drag = ActiveDrag{ .source = self, .from_index = index, .text = self.itemAt(index) };
+        }
+    }
+
+    fn endDrag(self: *List) void {
+        if (active_drag) |drag| {
+            if (drag.source == self) {
+                active_drag = null;
+            }
+        }
+        self.dragging = false;
+        self.drag_start_index = null;
+        self.drag_hover_index = null;
+        self.clearDragPayload();
+    }
+
+    fn reorderInPlace(self: *List, from: usize, to_unclamped: usize) void {
+        if (self.item_provider != null) {
+            if (self.on_reorder) |cb| cb(from, to_unclamped, self, self);
+            return;
+        }
+        if (from >= self.items.items.len) return;
+
+        const target_cap = @min(to_unclamped, self.items.items.len);
+        var to = target_cap;
+        if (to == from or (from + 1 == to)) {
+            return;
+        }
+
+        const moved = self.items.orderedRemove(from);
+        if (to > from) {
+            to -= 1;
+        }
+
+        self.items.insert(self.allocator, to, moved) catch {
+            // Try to restore original ordering if insert fails.
+            _ = self.items.insert(self.allocator, from, moved) catch {};
+            return;
+        };
+
+        self.setSelectedIndex(to);
+        if (self.on_reorder) |cb| cb(from, to, self, self);
+        active_drag = null;
+    }
+
+    fn acceptExternalDrop(self: *List, drag: ActiveDrag, drop_index: usize) void {
+        if (!self.accept_external_drops) return;
+
+        if (self.item_provider == null) {
+            const target_idx = @min(drop_index, self.itemCount());
+            const copy = self.allocator.dupe(u8, drag.text) catch return;
+            self.items.insert(self.allocator, target_idx, copy) catch {
+                self.allocator.free(copy);
+                return;
+            };
+            if (self.cross_drop_mode == .move and drag.source.item_provider == null) {
+                drag.source.removeItem(drag.from_index);
+            }
+            self.setSelectedIndex(target_idx);
+        }
+
+        if (self.on_reorder) |cb| {
+            cb(drag.from_index, drop_index, drag.source, self);
+        }
+
+        active_drag = null;
+    }
+
     /// Draw implementation for List
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
@@ -214,25 +460,29 @@ pub const List = struct {
 
         // Calculate visible items
         self.visible_items_count = @intCast(@as(usize, rect.height));
-        if (self.visible_items_count == 0) {
+        if (self.visible_items_count == 0 or rect.height == 0 or rect.width == 0) {
             return;
         }
 
+        self.clampScroll();
+
         // Ensure the first visible index is valid
-        if (self.first_visible_index + self.visible_items_count > self.items.items.len) {
-            self.first_visible_index = if (self.items.items.len > self.visible_items_count)
-                self.items.items.len - self.visible_items_count
+        const total_items = self.itemCount();
+        if (self.first_visible_index + self.visible_items_count > total_items) {
+            self.first_visible_index = if (total_items > self.visible_items_count)
+                total_items - self.visible_items_count
             else
                 0;
+            self.scroll_driver.snap(@floatFromInt(self.first_visible_index));
         }
 
         // Draw visible items
-        const last_visible_index = @min(self.first_visible_index + self.visible_items_count, self.items.items.len);
+        const last_visible_index = @min(self.first_visible_index + self.visible_items_count, total_items);
 
         var y = rect.y;
         var i = self.first_visible_index;
         while (i < last_visible_index) : (i += 1) {
-            const item = self.items.items[i];
+            const item = self.itemAt(i);
             const is_selected = i == self.selected_index;
 
             // Choose colors based on selection and focus state
@@ -263,14 +513,40 @@ pub const List = struct {
             y += 1;
         }
 
+        // Draw drop preview indicator for reorder/drops
+        if (self.drag_hover_index) |hover| {
+            const clamped_hover = @min(hover, total_items);
+            const indicator_y: u16 = rect.y + @as(u16, @intCast(clamped_hover - self.first_visible_index));
+            if (indicator_y >= rect.y and indicator_y < rect.y + rect.height) {
+                const state = if (active_drag != null and active_drag.?.source != self)
+                    event_module.DropVisuals.State.valid
+                else
+                    event_module.DropVisuals.State.idle;
+                const colors = event_module.DropVisuals.Colors{
+                    .border = self.fg,
+                    .fill = self.bg,
+                    .valid = render.Color{ .named_color = render.NamedColor.green },
+                    .invalid = render.Color{ .named_color = render.NamedColor.red },
+                    .text = self.fg,
+                };
+                event_module.DropVisuals.outline(renderer, layout_module.Rect{
+                    .x = rect.x,
+                    .y = indicator_y,
+                    .width = rect.width,
+                    .height = 1,
+                }, state, colors);
+            }
+        }
+
         self.widget.drawFocusRing(renderer);
     }
 
     /// Event handling implementation for List
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const total_items = self.itemCount();
 
-        if (!self.widget.visible or !self.widget.enabled or self.items.items.len == 0) {
+        if (!self.widget.visible or !self.widget.enabled) {
             return false;
         }
 
@@ -278,17 +554,44 @@ pub const List = struct {
         if (event == .mouse) {
             const mouse_event = event.mouse;
             const rect = self.widget.rect;
+            const inside = rect.contains(mouse_event.x, mouse_event.y);
+
+            // External drag hover/drop
+            if (active_drag) |drag| {
+                if (inside and self.accept_external_drops and (drag.source != self or self.enable_reorder)) {
+                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(rect.y));
+                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(rect.height)))));
+                    self.drag_hover_index = @min(drop_index, total_items);
+
+                    if (mouse_event.action == .release) {
+                        if (drag.source == self) {
+                            if (self.drag_start_index) |start_idx| {
+                                self.reorderInPlace(start_idx, self.drag_hover_index.?);
+                            }
+                        } else {
+                            self.acceptExternalDrop(drag, self.drag_hover_index.?);
+                        }
+                        self.endDrag();
+                        return true;
+                    }
+                } else if (!self.dragging) {
+                    self.drag_hover_index = null;
+                }
+            }
 
             // Check if mouse is within list bounds
-            if (rect.contains(mouse_event.x, mouse_event.y)) {
+            if (inside and total_items > 0) {
                 // Convert y position to item index
                 const item_index = self.first_visible_index + @as(usize, @intCast(mouse_event.y - rect.y));
 
-                if (item_index < self.items.items.len) {
+                if (item_index < total_items) {
                     // Mouse click selects item
                     if (mouse_event.action == .press and mouse_event.button == 1) {
                         self.setSelectedIndex(item_index);
-                        if (self.on_item_activated != null) {
+                        if (self.enable_reorder) {
+                            self.startDrag(item_index);
+                        }
+                        if (self.on_item_activated != null and !self.dragging) {
                             self.on_item_activated.?(self.selected_index);
                         }
                         return true;
@@ -303,25 +606,36 @@ pub const List = struct {
                         -1
                     else
                         1;
-                    const step = @as(usize, @intCast(@abs(scroll_step)));
 
-                    if (scroll_step < 0) {
-                        const decrease = @min(self.first_visible_index, step);
-                        self.first_visible_index -= decrease;
-                    } else if (self.first_visible_index + self.visible_items_count < self.items.items.len) {
-                        const remaining = self.items.items.len - (self.first_visible_index + self.visible_items_count);
-                        const increase = @min(remaining, step);
-                        self.first_visible_index += increase;
-                    }
+                    self.scrollBy(@as(f32, @floatFromInt(scroll_step)));
+                    return true;
+                }
+
+                // Drag updates
+                if (mouse_event.action == .move and self.dragging) {
+                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(rect.y));
+                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(rect.height)))));
+                    self.drag_hover_index = @min(drop_index, total_items);
+                    return true;
+                }
+
+                // Finish drag
+                if (mouse_event.action == .release and self.dragging) {
+                    const drop_index = self.drag_hover_index orelse item_index;
+                    self.reorderInPlace(self.drag_start_index orelse item_index, drop_index);
+                    self.endDrag();
                     return true;
                 }
 
                 return true; // Capture all mouse events within bounds
+            } else if (mouse_event.action == .release and self.dragging) {
+                // Cancel drag if released outside
+                self.endDrag();
             }
         }
 
         // Handle key events
-        if (event == .key and self.widget.focused) {
+        if (event == .key and self.widget.focused and total_items > 0) {
             const key_event = event.key;
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
@@ -332,7 +646,7 @@ pub const List = struct {
             if (input.editorActionForEvent(key_event, &profiles)) |action| {
                 switch (action) {
                     .cursor_down => {
-                        if (self.selected_index < self.items.items.len - 1) {
+                        if (self.selected_index + 1 < total_items) {
                             self.setSelectedIndex(self.selected_index + 1);
                         }
                         self.resetTypeahead();
@@ -346,7 +660,7 @@ pub const List = struct {
                         return true;
                     },
                     .page_down => {
-                        const new_index = @min(self.selected_index + self.visible_items_count, self.items.items.len - 1);
+                        const new_index = @min(self.selected_index + self.visible_items_count, total_items - 1);
                         self.setSelectedIndex(new_index);
                         self.resetTypeahead();
                         return true;
@@ -366,7 +680,7 @@ pub const List = struct {
                         return true;
                     },
                     .line_end => {
-                        self.setSelectedIndex(self.items.items.len - 1);
+                        self.setSelectedIndex(total_items - 1);
                         self.resetTypeahead();
                         return true;
                     },
@@ -394,7 +708,7 @@ pub const List = struct {
     }
 
     fn handleTypeaheadKey(self: *List, byte: u8) bool {
-        if (self.items.items.len == 0) {
+        if (self.itemCount() == 0) {
             return false;
         }
 
@@ -421,9 +735,10 @@ pub const List = struct {
 
         const start = self.selected_index;
         var i: usize = 0;
-        while (i < self.items.items.len) : (i += 1) {
-            const idx = (start + i) % self.items.items.len;
-            if (startsWithIgnoreCase(self.items.items[idx], needle)) {
+        const total = self.itemCount();
+        while (i < total) : (i += 1) {
+            const idx = (start + i) % total;
+            if (startsWithIgnoreCase(self.itemAt(idx), needle)) {
                 self.setSelectedIndex(idx);
                 return true;
             }
@@ -454,6 +769,7 @@ pub const List = struct {
         // Update visible items count
         self.visible_items_count = @intCast(@as(usize, rect.height));
 
+        self.clampScroll();
         // Ensure selected item is visible
         self.ensureItemVisible(self.selected_index);
     }
@@ -464,12 +780,15 @@ pub const List = struct {
 
         // Find the longest item
         var max_width: u16 = 10; // Minimum width
-        for (self.items.items) |item| {
-            max_width = @max(max_width, @as(u16, @intCast(item.len)));
+        const total = self.itemCount();
+        const sample_len = @min(total, self.virtual_sample_limit);
+        var i: usize = 0;
+        while (i < sample_len) : (i += 1) {
+            max_width = @max(max_width, @as(u16, @intCast(self.itemAt(i).len)));
         }
 
         // Preferred height depends on number of items, with a minimum of 1
-        const preferred_height = @as(u16, @intCast(@max(1, @min(10, @as(i16, @intCast(self.items.items.len))))));
+        const preferred_height = @as(u16, @intCast(@max(1, @min(10, @as(i16, @intCast(total))))));
 
         return layout_module.Size.init(max_width, preferred_height);
     }
@@ -477,7 +796,7 @@ pub const List = struct {
     /// Can focus implementation for List
     fn canFocusFn(widget_ptr: *anyopaque) bool {
         const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
-        return self.widget.enabled and self.items.items.len > 0;
+        return self.widget.enabled and self.itemCount() > 0;
     }
 };
 
