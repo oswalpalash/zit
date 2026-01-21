@@ -570,6 +570,14 @@ try ctx.addItem("Delete", false, null);
 ctx.openAt(10, 4);
 ```
 
+## Development
+
+Configure Git to use the repo's hooks so the pre-commit `zig build` check runs locally:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
