@@ -81,6 +81,7 @@ pub const AccessibilityManager = accessibility.Manager;
 pub const AccessibilityRole = accessibility.Role;
 pub const AccessibleNode = accessibility.AccessibleNode;
 pub const form = @import("form.zig");
+pub const input_mask = @import("input_mask.zig");
 pub const builders = @import("builders.zig");
 
 // For when a new file is needed
