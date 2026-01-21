@@ -661,9 +661,13 @@ pub const Toolbar = struct {
 /// Breadcrumbs print hierarchical navigation with separators.
 pub const Breadcrumbs = struct {
     widget: base.Widget,
-    parts: std.ArrayListUnmanaged([]const u8),
+    parts: std.ArrayListUnmanaged(Part),
     separator: []const u8 = " / ",
+    overflow_token: []const u8 = "...",
+    on_click: ?*const fn (usize) void = null,
     allocator: std.mem.Allocator,
+
+    pub const Part = struct { label: []const u8, icon: ?[]const u8 = null };
 
     pub const vtable = base.Widget.VTable{
         .draw = drawFn,
@@ -681,36 +685,147 @@ pub const Breadcrumbs = struct {
             .allocator = allocator,
         };
         for (parts) |part| {
-            try self.parts.append(self.allocator, try allocator.dupe(u8, part));
+            try self.parts.append(self.allocator, .{ .label = try allocator.dupe(u8, part) });
         }
         return self;
     }
 
     pub fn deinit(self: *Breadcrumbs) void {
-        for (self.parts.items) |p| self.allocator.free(p);
+        for (self.parts.items) |p| {
+            self.allocator.free(p.label);
+            if (p.icon) |ic| self.allocator.free(ic);
+        }
         self.parts.deinit(self.allocator);
         self.allocator.destroy(self);
+    }
+
+    pub fn setOnClick(self: *Breadcrumbs, cb: *const fn (usize) void) void {
+        self.on_click = cb;
+    }
+
+    pub fn setParts(self: *Breadcrumbs, parts: []const Part) !void {
+        for (self.parts.items) |p| {
+            self.allocator.free(p.label);
+            if (p.icon) |ic| self.allocator.free(ic);
+        }
+        self.parts.clearRetainingCapacity();
+        for (parts) |p| {
+            const label = try self.allocator.dupe(u8, p.label);
+            const icon = if (p.icon) |ic| try self.allocator.dupe(u8, ic) else null;
+            try self.parts.append(self.allocator, .{ .label = label, .icon = icon });
+        }
+    }
+
+    fn segmentWidth(part: Part) u16 {
+        const icon_width: u16 = if (part.icon) |ic| @intCast(ic.len + 1) else 0;
+        return icon_width + @as(u16, @intCast(part.label.len));
+    }
+
+    const VisibleSegment = struct {
+        idx: ?usize,
+        width: u16,
+    };
+
+    fn remaining(cursor: i16, limit: i16) usize {
+        if (cursor >= limit) return 0;
+        return @intCast(limit - cursor);
+    }
+
+    fn computeVisible(self: *Breadcrumbs, available: u16, visible: *std.ArrayListUnmanaged(VisibleSegment)) !void {
+        visible.clearRetainingCapacity();
+        if (self.parts.items.len == 0 or available == 0) return;
+        const sep_width: u16 = @intCast(self.separator.len);
+        var used: u16 = 0;
+        var idx: usize = self.parts.items.len;
+        while (idx > 0) {
+            idx -= 1;
+            const width = segmentWidth(self.parts.items[idx]);
+            const extra = if (visible.items.len > 0) sep_width else 0;
+            if (visible.items.len > 0 and used + width + extra > available) break;
+            used += width + extra;
+            try visible.append(self.allocator, .{ .idx = idx, .width = width });
+        }
+        std.mem.reverse(VisibleSegment, visible.items);
+        if (visible.items.len < self.parts.items.len and visible.items.len > 0) {
+            const overflow_width: u16 = @intCast(@min(self.overflow_token.len, @as(usize, available)));
+            try visible.insert(self.allocator, 0, .{ .idx = null, .width = overflow_width });
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*Breadcrumbs, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        var cursor = rect.x;
-        for (self.parts.items, 0..) |part, idx| {
-            if (cursor >= rect.x + rect.width) break;
-            const draw_part = part[0..@min(part.len, rect.width - (cursor - rect.x))];
-            renderer.drawStr(cursor, rect.y, draw_part, render.Color.named(.cyan), render.Color.named(.default), render.Style{ .bold = true });
-            cursor += @as(u16, @intCast(draw_part.len));
-            if (idx + 1 < self.parts.items.len and cursor < rect.x + rect.width) {
-                const sep_draw = self.separator[0..@min(self.separator.len, rect.width - (cursor - rect.x))];
+        var segments = std.ArrayListUnmanaged(VisibleSegment){};
+        defer segments.deinit(self.allocator);
+        try self.computeVisible(@intCast(rect.width), &segments);
+
+        var cursor: i16 = rect.x;
+        const limit = rect.x + rect.width;
+        for (segments.items, 0..) |seg, idx| {
+            if (seg.idx) |real_idx| {
+                const part = self.parts.items[real_idx];
+                if (part.icon) |icon_text| {
+                    const icon_draw_len = @min(icon_text.len, remaining(cursor, limit));
+                    const icon_draw = icon_text[0..icon_draw_len];
+                    renderer.drawStr(cursor, rect.y, icon_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+                    cursor += @intCast(icon_draw_len);
+                    if (cursor < limit and remaining(cursor, limit) > 0) {
+                        renderer.drawChar(cursor, rect.y, ' ', render.Color.named(.default), render.Color.named(.default), render.Style{});
+                        cursor += 1;
+                    }
+                }
+
+                const draw_part = part.label[0..@min(part.label.len, remaining(cursor, limit))];
+                const is_last = idx == segments.items.len - 1;
+                const color = if (is_last) render.Color.named(.white) else render.Color.named(.cyan);
+                const style = if (is_last) render.Style{ .bold = true } else render.Style{};
+                renderer.drawStr(cursor, rect.y, draw_part, color, render.Color.named(.default), style);
+                cursor += @intCast(draw_part.len);
+            } else {
+                const overflow_draw = self.overflow_token[0..@min(self.overflow_token.len, remaining(cursor, limit))];
+                renderer.drawStr(cursor, rect.y, overflow_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+                cursor += @intCast(overflow_draw.len);
+            }
+
+            if (idx + 1 < segments.items.len and cursor < limit) {
+                const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
                 renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
-                cursor += @as(u16, @intCast(sep_draw.len));
+                cursor += @as(i16, @intCast(sep_draw.len));
             }
         }
     }
 
-    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+    fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
+        const self = @as(*Breadcrumbs, @ptrCast(@alignCast(widget_ptr)));
+        if (!self.widget.enabled or self.on_click == null or self.parts.items.len == 0) return false;
+        if (event != .mouse) return false;
+        const mouse = event.mouse;
+        if (mouse.action != .press or mouse.button != 1) return false;
+        const mx: i16 = @intCast(mouse.x);
+        const my: i16 = @intCast(mouse.y);
+        if (my != self.widget.rect.y) return false;
+
+        var segments = std.ArrayListUnmanaged(VisibleSegment){};
+        defer segments.deinit(self.allocator);
+        try self.computeVisible(@intCast(self.widget.rect.width), &segments);
+
+        var cursor: i16 = self.widget.rect.x;
+        const limit = self.widget.rect.x + self.widget.rect.width;
+        for (segments.items) |seg| {
+            if (seg.idx) |idx| {
+                const start = cursor;
+                const end = cursor + @as(i16, @intCast(seg.width));
+                if (mx >= start and mx < end) {
+                    self.on_click.?(idx);
+                    return true;
+                }
+            }
+            cursor += @as(i16, @intCast(seg.width));
+            if (cursor < limit) {
+                cursor += @intCast(@min(self.separator.len, remaining(cursor, limit)));
+            }
+        }
         return false;
     }
 
@@ -723,7 +838,7 @@ pub const Breadcrumbs = struct {
         const self = @as(*Breadcrumbs, @ptrCast(@alignCast(widget_ptr)));
         var width: usize = 0;
         for (self.parts.items, 0..) |part, idx| {
-            width += part.len;
+            width += part.label.len + (if (part.icon) |ic| ic.len + 1 else 0);
             if (idx + 1 < self.parts.items.len) width += self.separator.len;
         }
         return layout_module.Size.init(@as(u16, @intCast(@min(width, 200))), 1);
