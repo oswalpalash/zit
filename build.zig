@@ -226,6 +226,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "file_browser", .description = "Run the file browser widget example", .path = "examples/widget_examples/file_browser_example.zig", .step_name = "file-browser-example" },
         .{ .name = "file_manager", .description = "Run the tree+list file manager example", .path = "examples/widget_examples/file_manager_example.zig", .step_name = "file-manager-example" },
         .{ .name = "form_wizard", .description = "Run the multi-step form example with validation", .path = "examples/widget_examples/form_wizard_example.zig", .step_name = "form-wizard-example" },
+        .{ .name = "system_monitor", .description = "Run the live system monitor dashboard example", .path = "examples/widget_examples/system_monitor_example.zig", .step_name = "system-monitor-example" },
     };
 
     for (widget_examples) |example| {
