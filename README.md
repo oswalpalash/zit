@@ -49,6 +49,67 @@ const button = try zit.widget.ButtonBuilder.init(allocator)
     .build();
 ```
 
+## Why Zit over other TUIs?
+
+| Capability | Zit | Typical terminal UI libs |
+| --- | --- | --- |
+| Widgets | 36+ built-ins (gauges, steppers, charts, typeahead lists/tables, palettes, menus) | Often 5-15 primitives; complex widgets assembled manually |
+| Navigation aids | Typeahead on lists/tables/file browser, focus rings, wizard stepper | Usually manual filtering or custom key handlers |
+| Theming | Light/dark/high-contrast palettes + per-widget overrides | Global color constants or app-defined palettes |
+| Motion & feedback | Animator with easing/yoyo, timers, toasts, notification center | Rare or needs external crates |
+| Pointer UX | Mouse + drag-and-drop with payloads, context menus anywhere | Frequently keyboard-only |
+| Accessibility | Focus announcements and annotated roles built in | Typically omitted or ad-hoc |
+
+## Common patterns
+
+Split panes and quick theming:
+
+```zig
+var pane = try zit.widget.SplitPane.init(allocator);
+pane.setOrientation(.horizontal);
+pane.setRatio(0.35);
+pane.setFirst(&tree.widget);
+pane.setSecond(&table.widget);
+
+const palette = zit.widget.theme.Theme.highContrast();
+tree.setTheme(palette);
+table.header_bg = palette.color(.accent);
+table.header_fg = palette.color(.background);
+try pane.widget.layout(zit.layout.Rect.init(1, 1, width - 2, height - 2));
+try pane.widget.draw(&renderer);
+```
+
+Table/list typeahead (works out of the box; just set timeouts to taste):
+
+```zig
+var services = try zit.widget.Table.init(allocator);
+defer services.deinit();
+try services.addColumn("Service", 20, true);
+try services.addColumn("Owner", 12, true);
+try services.addRow(&.{ "gateway", "alice" });
+try services.addRow(&.{ "search", "carmen" });
+services.setTypeaheadTimeout(700); // milliseconds
+services.widget.focused = true;    // type to jump
+```
+
+Context menus anywhere you can point or right-click:
+
+```zig
+var ctx = try zit.widget.ContextMenu.init(allocator);
+defer ctx.deinit();
+try ctx.addItem("Copy", true, null);
+try ctx.addItem("Delete", false, null);
+ctx.setOnSelect(struct {
+    fn choose(_: usize, item: zit.widget.ContextMenuItem, _: ?*anyopaque) void {
+        std.debug.print("picked: {s}\n", .{item.label});
+    }
+}.choose, null);
+
+// Open beside the cursor (e.g. on right-click)
+ctx.openAt(mouse_x, mouse_y);
+if (ctx.open) try ctx.widget.draw(&renderer);
+```
+
 ## Memory Management
 
 Zit provides a sophisticated memory management system designed for optimal performance and safety in TUI applications. The system includes:
@@ -213,7 +274,14 @@ try app.registerAccessibleNode(.{
 
 ## Examples and benchmarks
 
-- Widget demos: `zig build notifications-example` (popups, toasts, menu bar, canvas), `button-example`, `dashboard-example`, plus new `table-example` and `file-browser-example` to try typeahead navigation.
+- Widget demos in `examples/widget_examples/`:
+  - `zig build notifications-example` – popups, toasts, menu bar, canvas, drag-and-drop payloads.
+  - `zig build dashboard-example` – tree + sparkline + gauge with theme toggles.
+  - `zig build table-example` – typeahead navigation on tables.
+  - `zig build file-browser-example` – explore folders with incremental search.
+  - `zig build file-manager-example` – tree + list + context menu mini file manager.
+  - `zig build form-wizard-example` – multi-step form with validation and toggles.
+  - `zig build system-monitor-example` – gauges, sparkline, live process table.
 - Realistic screens: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Rendering benchmark: `zig build bench` runs `examples/benchmarks/render_bench.zig` to gauge draw throughput.
 
