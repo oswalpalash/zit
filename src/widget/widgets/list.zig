@@ -296,14 +296,22 @@ pub const List = struct {
                 }
 
                 // Mouse wheel scrolls list
-                if (mouse_event.action == .scroll_up) {
-                    if (self.first_visible_index > 0) {
-                        self.first_visible_index -= 1;
-                    }
-                    return true;
-                } else if (mouse_event.action == .scroll_down) {
-                    if (self.first_visible_index + self.visible_items_count < self.items.items.len) {
-                        self.first_visible_index += 1;
+                if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
+                    const scroll_step: i16 = if (mouse_event.scroll_delta != 0)
+                        mouse_event.scroll_delta
+                    else if (mouse_event.action == .scroll_up)
+                        -1
+                    else
+                        1;
+                    const step = @as(usize, @intCast(@abs(scroll_step)));
+
+                    if (scroll_step < 0) {
+                        const decrease = @min(self.first_visible_index, step);
+                        self.first_visible_index -= decrease;
+                    } else if (self.first_visible_index + self.visible_items_count < self.items.items.len) {
+                        const remaining = self.items.items.len - (self.first_visible_index + self.visible_items_count);
+                        const increase = @min(remaining, step);
+                        self.first_visible_index += increase;
                     }
                     return true;
                 }

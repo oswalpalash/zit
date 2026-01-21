@@ -186,14 +186,17 @@ pub const MouseEvent = struct {
     y: u16,
     /// Which button was involved (1 = left, 2 = middle, 3 = right)
     button: u8,
+    /// Scroll delta (positive for down/right, negative for up/left)
+    scroll_delta: i16 = 0,
 
     /// Create a new mouse event
-    pub fn init(action: MouseAction, x: u16, y: u16, button: u8) MouseEvent {
+    pub fn init(action: MouseAction, x: u16, y: u16, button: u8, scroll_delta: i16) MouseEvent {
         return MouseEvent{
             .action = action,
             .x = x,
             .y = y,
             .button = button,
+            .scroll_delta = scroll_delta,
         };
     }
 };
@@ -825,6 +828,59 @@ pub const FocusManager = struct {
     }
 };
 
+fn readFileByte(file: std.fs.File) !u8 {
+    var buf: [1]u8 = undefined;
+    const bytes_read = try file.read(&buf);
+    if (bytes_read == 0) return error.EndOfStream;
+    return buf[0];
+}
+
+const BufferSink = struct {
+    buffer: *[32]u8,
+    pos: *usize,
+
+    fn put(self: *BufferSink, byte: u8) void {
+        if (self.pos.* >= self.buffer.len) return;
+        self.buffer[self.pos.*] = byte;
+        self.pos.* += 1;
+    }
+};
+
+const NullSink = struct {
+    fn put(_: *NullSink, _: u8) void {}
+};
+
+const FileByteReader = struct {
+    file: std.fs.File,
+
+    fn readByte(self: *FileByteReader) !u8 {
+        return readFileByte(self.file);
+    }
+};
+
+const PosixByteReader = struct {
+    fd: std.posix.fd_t,
+
+    fn readByte(self: *PosixByteReader) !u8 {
+        var buf: [1]u8 = undefined;
+        const amount = std.posix.read(self.fd, buf[0..1]) catch |err| return err;
+        if (amount == 0) return error.WouldBlock;
+        return buf[0];
+    }
+};
+
+const SliceByteReader = struct {
+    data: []const u8,
+    index: usize = 0,
+
+    fn readByte(self: *SliceByteReader) !u8 {
+        if (self.index >= self.data.len) return error.EndOfStream;
+        const byte = self.data[self.index];
+        self.index += 1;
+        return byte;
+    }
+};
+
 /// Input handler for processing terminal input
 pub const InputHandler = struct {
     /// Allocator for input operations
@@ -888,6 +944,9 @@ pub const InputHandler = struct {
 
     /// Read an event from input
     pub fn readEvent(self: *InputHandler) !Event {
+        self.buffer_pos = 0;
+        var sink = BufferSink{ .buffer = &self.buffer, .pos = &self.buffer_pos };
+
         // On macOS, we need to use a different approach for robust input handling
         if (builtin.os.tag == .macos) {
             var buffer: [1]u8 = undefined;
@@ -920,16 +979,11 @@ pub const InputHandler = struct {
                 return error.WouldBlock;
             }
 
-            // Reset buffer position first
-            self.buffer_pos = 0;
-
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = buffer[0];
-            self.buffer_pos += 1;
+            sink.put(buffer[0]);
 
             // Check for escape sequence
             if (buffer[0] == 0x1b) {
-                return try self.parseEscapeSequence();
+                return try self.parseEscapeSequenceMac(&sink);
             }
 
             if (buffer[0] == KeyCode.BACKSPACE or buffer[0] == 8) {
@@ -979,512 +1033,152 @@ pub const InputHandler = struct {
                     .modifiers = KeyModifiers{},
                 },
             };
-        } else {
-            // For all other platforms, use the standard implementation
-            const stdin = std.fs.File.stdin();
+        }
 
-            // Reset buffer position
-            self.buffer_pos = 0;
+        const stdin = std.fs.File.stdin();
+        var reader = FileByteReader{ .file = stdin };
 
-            // Read a single byte
-            const byte = readByte(stdin) catch |err| {
-                // Handle all possible non-blocking errors consistently
-                if (err == error.WouldBlock or err == error.Again or
-                    err == error.InputOutput or err == error.NotOpenForReading)
-                {
-                    return error.WouldBlock; // Normalize all non-blocking errors
-                }
-                return err;
-            };
-
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = byte;
-            self.buffer_pos += 1;
-
-            // Check for escape sequence
-            if (byte == 0x1b) {
-                return try self.parseEscapeSequence();
+        // Read a single byte
+        const byte = reader.readByte() catch |err| {
+            // Handle all possible non-blocking errors consistently
+            if (err == error.WouldBlock or err == error.Again or
+                err == error.InputOutput or err == error.NotOpenForReading)
+            {
+                return error.WouldBlock; // Normalize all non-blocking errors
             }
+            return err;
+        };
 
-            if (byte == KeyCode.BACKSPACE or byte == 8) {
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.BACKSPACE,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            }
+        sink.put(byte);
 
-            if (byte == KeyCode.TAB) {
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.TAB,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            }
+        // Check for escape sequence
+        if (byte == 0x1b) {
+            return try self.parseEscapeSequenceStandard(&reader, &sink);
+        }
 
-            // Check for control characters
-            if (byte < 32) {
-                // Special handling for newline and carriage return
-                if (byte == '\n' or byte == '\r') {
-                    return Event{
-                        .key = KeyEvent{
-                            .key = KeyCode.ENTER,
-                            .modifiers = KeyModifiers{},
-                        },
-                    };
-                }
-
-                return Event{
-                    .key = KeyEvent{
-                        .key = byte,
-                        .modifiers = KeyModifiers{
-                            .ctrl = true,
-                        },
-                    },
-                };
-            }
-
-            // Regular key press
+        if (byte == KeyCode.BACKSPACE or byte == 8) {
             return Event{
                 .key = KeyEvent{
-                    .key = byte,
+                    .key = KeyCode.BACKSPACE,
                     .modifiers = KeyModifiers{},
                 },
             };
         }
-    }
 
-    fn readByte(file: std.fs.File) !u8 {
-        var buf: [1]u8 = undefined;
-        const bytes_read = try file.read(&buf);
-        if (bytes_read == 0) return error.EndOfStream;
-        return buf[0];
-    }
-
-    /// Parse an escape sequence
-    fn parseEscapeSequence(self: *InputHandler) !Event {
-        // On macOS, use a specialized approach
-        if (builtin.os.tag == .macos) {
-            // Try to read the next byte with a very small delay
-            var buffer: [1]u8 = undefined;
-            var poll_fds = [_]std.posix.pollfd{
-                .{
-                    .fd = self.term.stdin_fd,
-                    .events = std.posix.POLL.IN,
-                    .revents = 0,
-                },
-            };
-
-            // Poll with a very short timeout (5ms)
-            // This is crucial for detecting solo ESC key presses vs sequences
-            const poll_result = std.posix.poll(&poll_fds, 5) catch {
-                // If poll fails, it's a simple ESC key
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.ESCAPE,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            };
-
-            // If no input is available, it's a solo ESC key
-            if (poll_result <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.ESCAPE,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            }
-
-            // Read the next byte
-            const amount = std.posix.read(self.term.stdin_fd, buffer[0..1]) catch {
-                // If read fails, it's a simple ESC key
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.ESCAPE,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            };
-
-            if (amount == 0) {
-                // If no data, it's a simple ESC key
-                return Event{
-                    .key = KeyEvent{
-                        .key = KeyCode.ESCAPE,
-                        .modifiers = KeyModifiers{},
-                    },
-                };
-            }
-
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = buffer[0];
-            self.buffer_pos += 1;
-
-            // Check for CSI sequence (ESC [)
-            if (buffer[0] == '[') {
-                return try self.parseCSISequence();
-            }
-
-            // Check for Alt+key combination (ESC followed by a key)
+        if (byte == KeyCode.TAB) {
             return Event{
                 .key = KeyEvent{
-                    .key = buffer[0],
-                    .modifiers = KeyModifiers{
-                        .alt = true,
-                    },
+                    .key = KeyCode.TAB,
+                    .modifiers = KeyModifiers{},
                 },
             };
-        } else {
-            // Standard implementation for other platforms
-            const stdin = std.fs.File.stdin();
+        }
 
-            // Try to read the next byte with special handling for macOS
-            const next_byte = readByte(stdin) catch |err| {
-                if (err == error.WouldBlock or err == error.Again or
-                    err == error.InputOutput)
-                {
-                    // If we can't read more, it's just an escape key
-                    // This is especially common on macOS
-                    return Event{
-                        .key = KeyEvent{
-                            .key = KeyCode.ESCAPE,
-                            .modifiers = KeyModifiers{},
-                        },
-                    };
-                }
-                return err;
-            };
-
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = next_byte;
-            self.buffer_pos += 1;
-
-            // Check for CSI sequence (ESC [)
-            if (next_byte == '[') {
-                return try self.parseCSISequence();
+        // Check for control characters
+        if (byte < 32) {
+            // Special handling for newline and carriage return
+            if (byte == '\n' or byte == '\r') {
+                return Event{
+                    .key = KeyEvent{
+                        .key = KeyCode.ENTER,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
             }
 
-            // Check for Alt+key combination (ESC followed by a key)
             return Event{
                 .key = KeyEvent{
-                    .key = next_byte,
+                    .key = byte,
                     .modifiers = KeyModifiers{
-                        .alt = true,
+                        .ctrl = true,
                     },
                 },
             };
         }
+
+        // Regular key press
+        return Event{
+            .key = KeyEvent{
+                .key = byte,
+                .modifiers = KeyModifiers{},
+            },
+        };
     }
 
-    /// Parse a CSI (Control Sequence Introducer) sequence
-    fn parseCSISequence(self: *InputHandler) !Event {
-        // On macOS, use direct read for better reliability
-        if (builtin.os.tag == .macos) {
-            // Read the next byte directly
-            var next_byte: [1]u8 = undefined;
-            const amount = std.posix.read(self.term.stdin_fd, next_byte[0..1]) catch {
-                return Event{ .unknown = {} };
-            };
+    fn parseEscapeSequenceMac(self: *InputHandler, sink: anytype) !Event {
+        const escape_event = Event{
+            .key = KeyEvent{
+                .key = KeyCode.ESCAPE,
+                .modifiers = KeyModifiers{},
+            },
+        };
 
-            if (amount == 0) {
-                return Event{ .unknown = {} };
-            }
+        var buffer: [1]u8 = undefined;
+        var poll_fds = [_]std.posix.pollfd{
+            .{
+                .fd = self.term.stdin_fd,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+        };
 
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = next_byte[0];
-            self.buffer_pos += 1;
+        // Poll with a very short timeout (5ms) to distinguish solo ESC from sequences
+        const poll_result = std.posix.poll(&poll_fds, 5) catch {
+            return escape_event;
+        };
 
-            // Check for mouse events (ESC [ <)
-            if (next_byte[0] == '<') {
-                return try self.parseMouseEvent();
-            }
-
-            // Check for arrow keys and other special keys
-            switch (next_byte[0]) {
-                'A' => return Event{ .key = KeyEvent{ .key = KeyCode.UP, .modifiers = KeyModifiers{} } },
-                'B' => return Event{ .key = KeyEvent{ .key = KeyCode.DOWN, .modifiers = KeyModifiers{} } },
-                'C' => return Event{ .key = KeyEvent{ .key = KeyCode.RIGHT, .modifiers = KeyModifiers{} } },
-                'D' => return Event{ .key = KeyEvent{ .key = KeyCode.LEFT, .modifiers = KeyModifiers{} } },
-                'H' => return Event{ .key = KeyEvent{ .key = KeyCode.HOME, .modifiers = KeyModifiers{} } },
-                'F' => return Event{ .key = KeyEvent{ .key = KeyCode.END, .modifiers = KeyModifiers{} } },
-                '5' => {
-                    // Read the next byte (should be ~)
-                    var tilde: [1]u8 = undefined;
-                    const tilde_amount = std.posix.read(self.term.stdin_fd, tilde[0..1]) catch {
-                        return Event{ .unknown = {} };
-                    };
-
-                    if (tilde_amount == 0) {
-                        return Event{ .unknown = {} };
-                    }
-
-                    if (tilde[0] == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.PAGE_UP, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '6' => {
-                    // Read the next byte (should be ~)
-                    var tilde: [1]u8 = undefined;
-                    const tilde_amount = std.posix.read(self.term.stdin_fd, tilde[0..1]) catch {
-                        return Event{ .unknown = {} };
-                    };
-
-                    if (tilde_amount == 0) {
-                        return Event{ .unknown = {} };
-                    }
-
-                    if (tilde[0] == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.PAGE_DOWN, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '2' => {
-                    // Read the next byte (should be ~)
-                    var tilde: [1]u8 = undefined;
-                    const tilde_amount = std.posix.read(self.term.stdin_fd, tilde[0..1]) catch {
-                        return Event{ .unknown = {} };
-                    };
-
-                    if (tilde_amount == 0) {
-                        return Event{ .unknown = {} };
-                    }
-
-                    if (tilde[0] == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.INSERT, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '3' => {
-                    // Read the next byte (should be ~)
-                    var tilde: [1]u8 = undefined;
-                    const tilde_amount = std.posix.read(self.term.stdin_fd, tilde[0..1]) catch {
-                        return Event{ .unknown = {} };
-                    };
-
-                    if (tilde_amount == 0) {
-                        return Event{ .unknown = {} };
-                    }
-
-                    if (tilde[0] == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.DELETE, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                else => {},
-            }
-
-            // Unknown escape sequence
-            return Event{ .unknown = {} };
-        } else {
-            // Original implementation for other platforms
-            const stdin = std.fs.File.stdin();
-
-            // Read the next byte
-            const next_byte = readByte(stdin) catch |err| {
-                if (err == error.WouldBlock) {
-                    return Event{ .unknown = {} };
-                }
-                return err;
-            };
-
-            // Store the byte in the buffer
-            self.buffer[self.buffer_pos] = next_byte;
-            self.buffer_pos += 1;
-
-            // Check for mouse events (ESC [ <)
-            if (next_byte == '<') {
-                return try self.parseMouseEvent();
-            }
-
-            // Check for arrow keys and other special keys
-            switch (next_byte) {
-                'A' => return Event{ .key = KeyEvent{ .key = KeyCode.UP, .modifiers = KeyModifiers{} } },
-                'B' => return Event{ .key = KeyEvent{ .key = KeyCode.DOWN, .modifiers = KeyModifiers{} } },
-                'C' => return Event{ .key = KeyEvent{ .key = KeyCode.RIGHT, .modifiers = KeyModifiers{} } },
-                'D' => return Event{ .key = KeyEvent{ .key = KeyCode.LEFT, .modifiers = KeyModifiers{} } },
-                'H' => return Event{ .key = KeyEvent{ .key = KeyCode.HOME, .modifiers = KeyModifiers{} } },
-                'F' => return Event{ .key = KeyEvent{ .key = KeyCode.END, .modifiers = KeyModifiers{} } },
-                '5' => {
-                    // Read the next byte (should be ~)
-                    const tilde = readByte(stdin) catch |err| {
-                        if (err == error.WouldBlock) {
-                            return Event{ .unknown = {} };
-                        }
-                        return err;
-                    };
-
-                    if (tilde == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.PAGE_UP, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '6' => {
-                    // Read the next byte (should be ~)
-                    const tilde = readByte(stdin) catch |err| {
-                        if (err == error.WouldBlock) {
-                            return Event{ .unknown = {} };
-                        }
-                        return err;
-                    };
-
-                    if (tilde == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.PAGE_DOWN, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '2' => {
-                    // Read the next byte (should be ~)
-                    const tilde = readByte(stdin) catch |err| {
-                        if (err == error.WouldBlock) {
-                            return Event{ .unknown = {} };
-                        }
-                        return err;
-                    };
-
-                    if (tilde == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.INSERT, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                '3' => {
-                    // Read the next byte (should be ~)
-                    const tilde = readByte(stdin) catch |err| {
-                        if (err == error.WouldBlock) {
-                            return Event{ .unknown = {} };
-                        }
-                        return err;
-                    };
-
-                    if (tilde == '~') {
-                        return Event{ .key = KeyEvent{ .key = KeyCode.DELETE, .modifiers = KeyModifiers{} } };
-                    }
-                },
-                else => {},
-            }
-
-            // Check for function keys
-            if (next_byte >= '0' and next_byte <= '9') {
-                var num_str: [3]u8 = undefined;
-                num_str[0] = next_byte;
-                var num_len: usize = 1;
-
-                // Read until we get a non-digit or ~
-                while (num_len < 3) {
-                    const digit = readByte(stdin) catch |err| {
-                        if (err == error.WouldBlock) {
-                            break;
-                        }
-                        return err;
-                    };
-
-                    if (digit == '~') {
-                        // Parse the number
-                        const num = try std.fmt.parseInt(u8, num_str[0..num_len], 10);
-
-                        // Map to function keys
-                        return switch (num) {
-                            11 => Event{ .key = KeyEvent{ .key = KeyCode.F1, .modifiers = KeyModifiers{} } },
-                            12 => Event{ .key = KeyEvent{ .key = KeyCode.F2, .modifiers = KeyModifiers{} } },
-                            13 => Event{ .key = KeyEvent{ .key = KeyCode.F3, .modifiers = KeyModifiers{} } },
-                            14 => Event{ .key = KeyEvent{ .key = KeyCode.F4, .modifiers = KeyModifiers{} } },
-                            15 => Event{ .key = KeyEvent{ .key = KeyCode.F5, .modifiers = KeyModifiers{} } },
-                            17 => Event{ .key = KeyEvent{ .key = KeyCode.F6, .modifiers = KeyModifiers{} } },
-                            18 => Event{ .key = KeyEvent{ .key = KeyCode.F7, .modifiers = KeyModifiers{} } },
-                            19 => Event{ .key = KeyEvent{ .key = KeyCode.F8, .modifiers = KeyModifiers{} } },
-                            20 => Event{ .key = KeyEvent{ .key = KeyCode.F9, .modifiers = KeyModifiers{} } },
-                            21 => Event{ .key = KeyEvent{ .key = KeyCode.F10, .modifiers = KeyModifiers{} } },
-                            23 => Event{ .key = KeyEvent{ .key = KeyCode.F11, .modifiers = KeyModifiers{} } },
-                            24 => Event{ .key = KeyEvent{ .key = KeyCode.F12, .modifiers = KeyModifiers{} } },
-                            else => Event{ .unknown = {} },
-                        };
-                    } else if (digit >= '0' and digit <= '9') {
-                        num_str[num_len] = digit;
-                        num_len += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            // Unknown escape sequence
-            return Event{ .unknown = {} };
-        }
-    }
-
-    /// Parse a mouse event
-    fn parseMouseEvent(_: *InputHandler) !Event {
-        const stdin = std.fs.File.stdin();
-
-        // Mouse events in SGR mode are of the form: ESC [ < Cb ; Cx ; Cy ; M/m
-        // Where:
-        // - Cb is the button number + modifiers
-        // - Cx is the X coordinate (1-based)
-        // - Cy is the Y coordinate (1-based)
-        // - M indicates button press, m indicates button release
-
-        var params: [3]u16 = undefined;
-        var param_index: usize = 0;
-        var param_value: u16 = 0;
-        var final_char: u8 = 0;
-
-        // Parse parameters
-        while (param_index < 3) {
-            const c = readByte(stdin) catch |err| {
-                if (err == error.WouldBlock) {
-                    return Event{ .unknown = {} };
-                }
-                return err;
-            };
-
-            if (c >= '0' and c <= '9') {
-                // Append digit to parameter value
-                param_value = param_value * 10 + (c - '0');
-            } else if (c == ';') {
-                // End of parameter
-                params[param_index] = param_value;
-                param_index += 1;
-                param_value = 0;
-            } else if (c == 'M' or c == 'm') {
-                // End of mouse sequence
-                params[param_index] = param_value;
-                final_char = c;
-                break;
-            } else {
-                // Unexpected character
-                return Event{ .unknown = {} };
-            }
+        if (poll_result <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+            return escape_event;
         }
 
-        if (param_index < 2 or final_char == 0) {
-            return Event{ .unknown = {} };
+        const amount = std.posix.read(self.term.stdin_fd, buffer[0..1]) catch {
+            return escape_event;
+        };
+
+        if (amount == 0) {
+            return escape_event;
         }
 
-        // Extract the button, x and y values
-        const button_param = params[0];
-        const x = params[1];
-        const y = params[2];
+        sink.put(buffer[0]);
 
-        // Decode the button parameter
-        const button = @as(u8, @intCast(button_param & 0x3));
-        const is_motion = (button_param & 0x20) != 0;
-        const is_scroll = (button_param & 0x40) != 0 or (button_param & 0x80) != 0;
-
-        // Determine the action based on the final character and flags
-        var action: MouseAction = undefined;
-        if (is_scroll) {
-            action = if ((button_param & 0x1) != 0) MouseAction.scroll_down else MouseAction.scroll_up;
-        } else if (is_motion) {
-            action = MouseAction.move;
-        } else if (final_char == 'M') {
-            action = MouseAction.press;
-        } else {
-            action = MouseAction.release;
+        if (buffer[0] == '[') {
+            var reader = PosixByteReader{ .fd = self.term.stdin_fd };
+            return try parseCSISequence(&reader, sink);
         }
 
         return Event{
-            .mouse = MouseEvent{
-                .action = action,
-                .x = x,
-                .y = y,
-                .button = button + 1, // Button is 1-indexed
+            .key = KeyEvent{
+                .key = buffer[0],
+                .modifiers = KeyModifiers{ .alt = true },
+            },
+        };
+    }
+
+    fn parseEscapeSequenceStandard(_: *InputHandler, reader: anytype, sink: anytype) !Event {
+        const escape_event = Event{
+            .key = KeyEvent{
+                .key = KeyCode.ESCAPE,
+                .modifiers = KeyModifiers{},
+            },
+        };
+
+        const next_byte = reader.readByte() catch |err| {
+            if (err == error.WouldBlock or err == error.Again or err == error.InputOutput or err == error.EndOfStream) {
+                return escape_event;
+            }
+            return err;
+        };
+
+        sink.put(next_byte);
+
+        if (next_byte == '[') {
+            return try parseCSISequence(reader, sink);
+        }
+
+        return Event{
+            .key = KeyEvent{
+                .key = next_byte,
+                .modifiers = KeyModifiers{ .alt = true },
             },
         };
     }
@@ -1571,3 +1265,257 @@ pub const InputHandler = struct {
         return .{ .x = adjusted_x, .y = adjusted_y };
     }
 };
+
+fn decodeModifierParam(param: u16) KeyModifiers {
+    if (param <= 1) return KeyModifiers{};
+    const value = param - 1;
+    return KeyModifiers{
+        .shift = (value & 0x1) != 0,
+        .alt = (value & 0x2) != 0,
+        .ctrl = (value & 0x4) != 0,
+    };
+}
+
+fn modifiersFromParams(params: []const u16) KeyModifiers {
+    if (params.len < 2) return KeyModifiers{};
+    return decodeModifierParam(params[params.len - 1]);
+}
+
+fn decodeCSIKey(final_char: u8, params: []const u16) ?KeyEvent {
+    switch (final_char) {
+        'A', 'B', 'C', 'D', 'H', 'F' => {
+            const modifiers = modifiersFromParams(params);
+            const key_code: u21 = switch (final_char) {
+                'A' => KeyCode.UP,
+                'B' => KeyCode.DOWN,
+                'C' => KeyCode.RIGHT,
+                'D' => KeyCode.LEFT,
+                'H' => KeyCode.HOME,
+                else => KeyCode.END,
+            };
+
+            return KeyEvent{
+                .key = key_code,
+                .modifiers = modifiers,
+            };
+        },
+        'Z' => {
+            return KeyEvent{
+                .key = KeyCode.TAB,
+                .modifiers = KeyModifiers{ .shift = true },
+            };
+        },
+        '~' => {
+            if (params.len == 0) return null;
+            const code = params[0];
+            const modifiers = if (params.len > 1) decodeModifierParam(params[1]) else KeyModifiers{};
+
+            const key_code: ?u21 = switch (code) {
+                1, 7 => KeyCode.HOME,
+                2 => KeyCode.INSERT,
+                3 => KeyCode.DELETE,
+                4, 8 => KeyCode.END,
+                5 => KeyCode.PAGE_UP,
+                6 => KeyCode.PAGE_DOWN,
+                11 => KeyCode.F1,
+                12 => KeyCode.F2,
+                13 => KeyCode.F3,
+                14 => KeyCode.F4,
+                15 => KeyCode.F5,
+                17 => KeyCode.F6,
+                18 => KeyCode.F7,
+                19 => KeyCode.F8,
+                20 => KeyCode.F9,
+                21 => KeyCode.F10,
+                23 => KeyCode.F11,
+                24 => KeyCode.F12,
+                else => null,
+            };
+
+            if (key_code) |key| {
+                return KeyEvent{
+                    .key = key,
+                    .modifiers = modifiers,
+                };
+            }
+        },
+        else => {},
+    }
+
+    return null;
+}
+
+fn parseCSISequence(reader: anytype, sink: anytype) !Event {
+    var params: [6]u16 = undefined;
+    var param_count: usize = 0;
+    var current: u16 = 0;
+    var has_value = false;
+
+    while (true) {
+        const next_byte = reader.readByte() catch |err| {
+            if (err == error.WouldBlock or err == error.EndOfStream) {
+                return Event{ .unknown = {} };
+            }
+            return err;
+        };
+
+        sink.put(next_byte);
+
+        if (next_byte == '<') {
+            return try parseMouseEvent(reader, sink);
+        }
+
+        if (next_byte >= '0' and next_byte <= '9') {
+            current = current * 10 + (next_byte - '0');
+            has_value = true;
+            continue;
+        }
+
+        if (next_byte == ';') {
+            if (param_count < params.len) {
+                params[param_count] = current;
+                param_count += 1;
+            }
+            current = 0;
+            has_value = false;
+            continue;
+        }
+
+        if (has_value or param_count > 0) {
+            if (param_count < params.len) {
+                params[param_count] = current;
+                param_count += 1;
+            }
+        }
+
+        if (decodeCSIKey(next_byte, params[0..param_count])) |key| {
+            return Event{ .key = key };
+        }
+
+        return Event{ .unknown = {} };
+    }
+}
+
+fn parseMouseEvent(reader: anytype, sink: anytype) !Event {
+    // Mouse events in SGR mode are of the form: ESC [ < Cb ; Cx ; Cy ; M/m
+    // Where:
+    // - Cb is the button number + modifiers
+    // - Cx is the X coordinate (1-based)
+    // - Cy is the Y coordinate (1-based)
+    // - M indicates button press, m indicates button release
+
+    var params: [3]u16 = undefined;
+    var param_index: usize = 0;
+    var param_value: u16 = 0;
+    var final_char: u8 = 0;
+
+    // Parse parameters
+    while (param_index < 3) {
+        const c = reader.readByte() catch |err| {
+            if (err == error.WouldBlock or err == error.EndOfStream) {
+                return Event{ .unknown = {} };
+            }
+            return err;
+        };
+
+        sink.put(c);
+
+        if (c >= '0' and c <= '9') {
+            // Append digit to parameter value
+            param_value = param_value * 10 + (c - '0');
+        } else if (c == ';') {
+            // End of parameter
+            if (param_index < params.len) {
+                params[param_index] = param_value;
+            }
+            param_index += 1;
+            param_value = 0;
+        } else if (c == 'M' or c == 'm') {
+            // End of mouse sequence
+            if (param_index < params.len) {
+                params[param_index] = param_value;
+            }
+            final_char = c;
+            break;
+        } else {
+            // Unexpected character
+            return Event{ .unknown = {} };
+        }
+    }
+
+    if (param_index < 2 or final_char == 0) {
+        return Event{ .unknown = {} };
+    }
+
+    // Extract the button, x and y values
+    const button_param = params[0];
+    const x = params[1];
+    const y = params[2];
+
+    // Decode the button parameter
+    const button = @as(u8, @intCast(button_param & 0x3));
+    const is_motion = (button_param & 0x20) != 0;
+    const is_scroll = (button_param & 0x40) != 0 or (button_param & 0x80) != 0;
+
+    var scroll_delta: i16 = 0;
+
+    // Determine the action based on the final character and flags
+    var action: MouseAction = undefined;
+    if (is_scroll) {
+        scroll_delta = if ((button_param & 0x1) != 0) 1 else -1;
+        action = if (scroll_delta > 0) MouseAction.scroll_down else MouseAction.scroll_up;
+    } else if (is_motion) {
+        action = MouseAction.move;
+    } else if (final_char == 'M') {
+        action = MouseAction.press;
+    } else {
+        action = MouseAction.release;
+    }
+
+    return Event{
+        .mouse = MouseEvent{
+            .action = action,
+            .x = x,
+            .y = y,
+            .button = button + 1, // Button is 1-indexed
+            .scroll_delta = scroll_delta,
+        },
+    };
+}
+
+test "parse CSI arrow modifiers" {
+    var reader = SliceByteReader{ .data = "1;5A" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .key), std.meta.activeTag(event));
+
+    const key_event = event.key;
+    try std.testing.expectEqual(@as(u21, KeyCode.UP), key_event.key);
+    try std.testing.expect(key_event.modifiers.ctrl);
+    try std.testing.expect(!key_event.modifiers.alt);
+    try std.testing.expect(!key_event.modifiers.shift);
+}
+
+test "parse CSI shift tab" {
+    var reader = SliceByteReader{ .data = "Z" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .key), std.meta.activeTag(event));
+
+    const key_event = event.key;
+    try std.testing.expectEqual(@as(u21, KeyCode.TAB), key_event.key);
+    try std.testing.expect(key_event.modifiers.shift);
+}
+
+test "parse mouse scroll delta" {
+    var reader = SliceByteReader{ .data = "<64;10;5M" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .mouse), std.meta.activeTag(event));
+
+    const mouse_event = event.mouse;
+    try std.testing.expectEqual(MouseAction.scroll_up, mouse_event.action);
+    try std.testing.expectEqual(@as(i16, -1), mouse_event.scroll_delta);
+    try std.testing.expectEqual(@as(u16, 10), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 5), mouse_event.y);
+}

@@ -257,7 +257,7 @@ test "context menu closes on outside click" {
     menu.openAt(0, 0);
     try menu.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
 
-    const click = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, 20, 20, 1) };
+    const click = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, 20, 20, 1, 0) };
     _ = try menu.widget.handleEvent(click);
     try std.testing.expect(!menu.open);
 }

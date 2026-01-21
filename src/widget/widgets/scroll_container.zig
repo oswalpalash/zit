@@ -393,7 +393,13 @@ pub const ScrollContainer = struct {
                 if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
                     if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
                         const scroll_amount: i16 = 3;
-                        const delta = if (mouse_event.action == .scroll_up) -scroll_amount else scroll_amount;
+                        const steps: i16 = if (mouse_event.scroll_delta != 0)
+                            mouse_event.scroll_delta
+                        else if (mouse_event.action == .scroll_up)
+                            -1
+                        else
+                            1;
+                        const delta = scroll_amount * steps;
                         self.applyVOffset(self.v_offset + delta);
                         return true;
                     }

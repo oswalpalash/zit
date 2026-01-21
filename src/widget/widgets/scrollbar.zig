@@ -175,11 +175,14 @@ pub const Scrollbar = struct {
                     return true;
                 }
                 // Mouse wheel scrolls
-                else if (mouse_event.action == .scroll_up) {
-                    self.setValue(self.value - 0.1);
-                    return true;
-                } else if (mouse_event.action == .scroll_down) {
-                    self.setValue(self.value + 0.1);
+                else if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
+                    const step: f32 = @as(f32, @floatFromInt(if (mouse_event.scroll_delta != 0)
+                        mouse_event.scroll_delta
+                    else if (mouse_event.action == .scroll_up)
+                        -1
+                    else
+                        1));
+                    self.setValue(self.value + (0.1 * step));
                     return true;
                 }
             }
