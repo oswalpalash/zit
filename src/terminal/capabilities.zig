@@ -62,6 +62,7 @@ pub const CapabilityFlags = struct {
     ligatures: bool = false,
     double_width: bool = true,
     bidi: bool = true,
+    bracketed_paste: bool = false,
     kitty_keyboard: bool = false,
     kitty_graphics: bool = false,
     iterm2_integration: bool = false,
@@ -100,6 +101,7 @@ pub fn detectFrom(env: Environment) CapabilityFlags {
     caps.kitty_graphics = caps.program == .kitty or caps.program == .wezterm;
     caps.iterm2_integration = caps.program == .iterm2;
     caps.synchronized_output = detectSyncSupport(env, caps.program);
+    caps.bracketed_paste = programSupportsBracketedPaste(caps.program);
 
     caps.emoji = unicode_width.measure("✅").has_emoji;
     caps.double_width = true;
@@ -203,6 +205,13 @@ fn programSupportsKittyKeyboard(program: TerminalProgram) bool {
     };
 }
 
+fn programSupportsBracketedPaste(program: TerminalProgram) bool {
+    return switch (program) {
+        .dumb, .linux_console => false,
+        else => true,
+    };
+}
+
 fn parseVteVersion(vte: ?[]const u8) ?u32 {
     if (vte) |raw| {
         return std.fmt.parseUnsigned(u32, raw, 10) catch null;
@@ -259,6 +268,7 @@ test "linux console stays conservative" {
     try std.testing.expect(!caps.unicode);
     try std.testing.expect(!caps.rgb_colors);
     try std.testing.expect(!caps.synchronized_output);
+    try std.testing.expect(!caps.bracketed_paste);
 }
 
 test "xterm style terminals support synchronized output" {

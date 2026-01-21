@@ -66,6 +66,8 @@ pub const CommandPalette = @import("widgets/advanced_controls.zig").CommandPalet
 pub const NotificationCenter = @import("widgets/advanced_controls.zig").NotificationCenter;
 pub const Accordion = @import("widgets/advanced_controls.zig").Accordion;
 pub const WizardStepper = @import("widgets/advanced_controls.zig").WizardStepper;
+pub const Block = @import("widgets/block.zig").Block;
+pub const Paragraph = @import("widgets/paragraph.zig").Paragraph;
 pub const animation = @import("animation.zig");
 pub const Animator = animation.Animator;
 pub const AnimationSpec = animation.AnimationSpec;
@@ -252,6 +254,16 @@ pub fn createCanvas(allocator: std.mem.Allocator, width: u16, height: u16) !*Can
 /// Create a new color picker
 pub fn createColorPicker(allocator: std.mem.Allocator, palette: []const render.Color) !*ColorPicker {
     return ColorPicker.init(allocator, palette);
+}
+
+/// Create a new paragraph
+pub fn createParagraph(allocator: std.mem.Allocator, text: []const u8) !*Paragraph {
+    return Paragraph.init(allocator, text);
+}
+
+/// Create a new block container
+pub fn createBlock(allocator: std.mem.Allocator) !*Block {
+    return Block.init(allocator);
 }
 
 /// Convenience function to focus a widget

@@ -576,6 +576,12 @@ var ctx = try zit.widget.ContextMenu.init(allocator);
 try ctx.addItem("Copy", true, null);
 try ctx.addItem("Delete", false, null);
 ctx.openAt(10, 4);
+
+// Layout-friendly block + paragraph (ratatui-style primitives)
+var para = try zit.widget.Paragraph.init(allocator, "Wrapped body text");
+var block = try zit.widget.Block.init(allocator);
+block.setChild(&para.widget);
+try block.setTitle("Details");
 ```
 
 ## Development
