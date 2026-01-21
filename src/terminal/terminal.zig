@@ -89,25 +89,20 @@ pub const Terminal = struct {
         const stdin_fd = std.fs.File.stdin().handle;
         const stdout_fd = std.fs.File.stdout().handle;
 
-        var original_termios: OriginalTermAttrs = undefined;
+        var original_termios: OriginalTermAttrs = .none;
         const is_windows = builtin.os.tag == .windows;
         var windows_vt_enabled = true;
 
         if (is_windows) {
             ensureWindowsUnicodeSupport();
-            if (std.os.windows.kernel32.GetConsoleMode(stdin_fd, @ptrCast(&original_termios.windows.in_mode)) != 0) {
-                if (std.os.windows.kernel32.GetConsoleMode(stdout_fd, @ptrCast(&original_termios.windows.out_mode)) != 0) {
-                    original_termios = .{ .windows = .{
-                        .in_mode = original_termios.windows.in_mode,
-                        .out_mode = original_termios.windows.out_mode,
-                    } };
-                    windows_vt_enabled = enableWindowsVirtualTerminal(stdout_fd);
-                } else {
-                    original_termios = .{ .none = {} };
-                    windows_vt_enabled = false;
-                }
+            var in_mode: std.os.windows.DWORD = undefined;
+            var out_mode: std.os.windows.DWORD = undefined;
+            if (std.os.windows.kernel32.GetConsoleMode(stdin_fd, @ptrCast(&in_mode)) != 0 and
+                std.os.windows.kernel32.GetConsoleMode(stdout_fd, @ptrCast(&out_mode)) != 0)
+            {
+                original_termios = .{ .windows = .{ .in_mode = in_mode, .out_mode = out_mode } };
+                windows_vt_enabled = enableWindowsVirtualTerminal(stdout_fd);
             } else {
-                original_termios = .{ .none = {} };
                 windows_vt_enabled = false;
             }
         } else {
