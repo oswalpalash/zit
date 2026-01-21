@@ -88,7 +88,8 @@ fn normalizeLineEndings(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
         }
         out += 1;
     }
-    return normalized[0..out];
+    // Shrink to actual size so free() gets the right length
+    return allocator.realloc(normalized, out) catch normalized[0..out];
 }
 
 /// Compare a snapshot against a golden file with optional auto-update.
