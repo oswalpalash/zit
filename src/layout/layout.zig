@@ -2221,6 +2221,78 @@ test "constraint layout resolves anchored and centered children" {
     try std.testing.expectEqual(@as(u16, 1), layout.children.items[2].resolved_rect.height);
 }
 
+/// LayoutGuide provides composable helpers for consistent spacing.
+pub const LayoutGuide = struct {
+    /// Padding to apply around computed regions
+    padding: EdgeInsets = EdgeInsets.all(0),
+    /// Gap between stacked regions
+    gap: u16 = 1,
+
+    pub const Regions = struct { header: Rect, content: Rect, footer: Rect };
+
+    pub fn init(padding: EdgeInsets, gap: u16) LayoutGuide {
+        return .{ .padding = padding, .gap = gap };
+    }
+
+    /// Apply padding to a rectangle.
+    pub fn inset(self: LayoutGuide, rect: Rect) Rect {
+        return rect.shrink(self.padding);
+    }
+
+    /// Compute header/content/footer rectangles inside a container.
+    pub fn headerContentFooter(self: LayoutGuide, rect: Rect, header_height: u16, footer_height: u16) Regions {
+        const inner = self.inset(rect);
+        const total_gap: u16 = if (inner.height >= self.gap * 2) self.gap * 2 else 0;
+        const usable_height = if (inner.height > total_gap) inner.height - total_gap else inner.height;
+
+        const capped_header = @min(header_height, usable_height);
+        const capped_footer = @min(footer_height, usable_height - capped_header);
+        const remaining = if (usable_height > capped_header + capped_footer) usable_height - capped_header - capped_footer else 0;
+
+        const header_rect = Rect.init(inner.x, inner.y, inner.width, capped_header);
+        const content_y = header_rect.y + header_rect.height + (if (header_rect.height > 0) self.gap else 0);
+        const content_rect = Rect.init(inner.x, content_y, inner.width, remaining);
+        const footer_y = content_rect.y + content_rect.height + (if (capped_footer > 0) self.gap else 0);
+        const footer_rect = Rect.init(inner.x, footer_y, inner.width, capped_footer);
+
+        return .{ .header = header_rect, .content = content_rect, .footer = footer_rect };
+    }
+
+    /// Split a region into row rectangles using fixed heights.
+    /// Returns the number of rows written into `out`.
+    pub fn splitRows(self: LayoutGuide, rect: Rect, heights: []const u16, out: []Rect) usize {
+        if (heights.len == 0 or out.len == 0) return 0;
+        const inner = self.inset(rect);
+        var cursor_y = inner.y;
+        var count: usize = 0;
+
+        for (heights, 0..) |h, idx| {
+            if (idx >= out.len) break;
+            if (cursor_y >= inner.y + inner.height) break;
+            if (h == 0) continue;
+
+            const remaining_height = inner.y + inner.height - cursor_y;
+            const row_height = @min(h, remaining_height);
+            out[count] = Rect.init(inner.x, cursor_y, inner.width, row_height);
+            count += 1;
+
+            if (remaining_height <= row_height + self.gap) break;
+            cursor_y += row_height + self.gap;
+        }
+
+        return count;
+    }
+};
+
+test "layout guide splits header content footer with padding" {
+    const guide = LayoutGuide.init(EdgeInsets.all(1), 1);
+    const regions = guide.headerContentFooter(Rect.init(0, 0, 20, 10), 2, 3);
+    try std.testing.expectEqual(@as(u16, 2), regions.header.height);
+    try std.testing.expectEqual(@as(u16, 3), regions.footer.height);
+    try std.testing.expectEqual(@as(u16, 18), regions.header.width);
+    try std.testing.expect(regions.content.height > 0);
+}
+
 /// Reflow manager for handling terminal resize events
 pub const ReflowManager = struct {
     /// Root layout element
