@@ -1,3 +1,5 @@
+// Demo: multi-widget screen with mouse input, buttons, checkbox, progress, and list on an alternate screen.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

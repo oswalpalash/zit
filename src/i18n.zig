@@ -14,10 +14,26 @@ pub const MessageCatalog = struct {
     strings: std.StringHashMapUnmanaged([]const u8) = .{},
     locale: Locale,
 
+    /// Create a catalog for a specific locale.
+    ///
+    /// Parameters:
+    /// - `allocator`: backing allocator used to store duplicated strings.
+    /// - `locale`: language/region metadata that accompanies stored entries.
+    /// Returns: catalog with no initial strings.
+    /// Example:
+    /// ```zig
+    /// var catalog = MessageCatalog.init(alloc, .{ .language = "en", .region = "US" });
+    /// defer catalog.deinit();
+    /// ```
     pub fn init(allocator: std.mem.Allocator, locale: Locale) MessageCatalog {
         return MessageCatalog{ .allocator = allocator, .locale = locale };
     }
 
+    /// Free all stored strings and invalidate the catalog.
+    ///
+    /// Parameters:
+    /// - `self`: catalog returned by `init`.
+    /// Returns: nothing. The catalog must not be reused after deinit.
     pub fn deinit(self: *MessageCatalog) void {
         var it = self.strings.iterator();
         while (it.next()) |entry| {

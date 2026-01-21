@@ -1,3 +1,5 @@
+// Input test: logs keyboard, mouse, and resize events from InputHandler.
+
 const std = @import("std");
 const zit = @import("zit");
 const memory = zit.memory;

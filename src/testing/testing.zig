@@ -73,6 +73,17 @@ fn printDiff(golden_path: []const u8, expected: []const u8, actual: []const u8) 
 }
 
 /// Compare a snapshot against a golden file with optional auto-update.
+///
+/// Parameters:
+/// - `allocator`: allocator used for reading/writing golden files.
+/// - `snapshot`: rendered buffer produced by `renderWidget` or friends.
+/// - `golden_path`: path to the golden file on disk.
+/// - `opts`: controls update behavior and environment toggle.
+/// Returns: `SnapshotError.GoldenMissing` when the golden is absent and updates are disabled; writer or fs errors otherwise.
+/// Example:
+/// ```zig
+/// try expectSnapshotMatch(alloc, snap, "goldens/button.txt", .{ .env_var = "UPDATE" });
+/// ```
 pub fn expectSnapshotMatch(
     allocator: std.mem.Allocator,
     snapshot: Snapshot,
@@ -154,6 +165,16 @@ pub const Snapshot = struct {
     }
 
     /// Assert that this snapshot matches a golden file.
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator used to load/create the golden file.
+    /// - `golden_path`: path relative to the repo root or cwd.
+    /// - `opts`: controls update behavior (env var, allow create).
+    /// Returns: `SnapshotError.GoldenMissing` or fs errors.
+    /// Example:
+    /// ```zig
+    /// try snap.expectGolden(alloc, "goldens/table.txt", .{ .update = std.debug.runtime_safety });
+    /// ```
     pub fn expectGolden(
         self: Snapshot,
         allocator: std.mem.Allocator,
@@ -305,6 +326,12 @@ pub const WidgetHarness = struct {
     size: layout.Size,
     terminal: MockTerminal,
 
+    /// Construct a harness with a mock terminal sized to `size`.
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator forwarded into the mock terminal.
+    /// - `size`: initial renderer dimensions.
+    /// Returns: ready-to-use harness; call `deinit` when done.
     pub fn init(allocator: std.mem.Allocator, size: layout.Size) !WidgetHarness {
         return WidgetHarness{
             .allocator = allocator,
@@ -313,10 +340,16 @@ pub const WidgetHarness = struct {
         };
     }
 
+    /// Release renderer buffers and cursor state.
     pub fn deinit(self: *WidgetHarness) void {
         self.terminal.deinit();
     }
 
+    /// Resize the backing mock terminal and future layouts.
+    ///
+    /// Parameters:
+    /// - `size`: new width/height to apply to the renderer.
+    /// Returns: any renderer allocation error on resize.
     pub fn resize(self: *WidgetHarness, size: layout.Size) !void {
         self.size = size;
         try self.terminal.resize(size.width, size.height);

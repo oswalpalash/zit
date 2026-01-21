@@ -1,3 +1,5 @@
+// Render test: paints boxes/gradients and responds to keyboard/mouse updates.
+
 const std = @import("std");
 const zit = @import("zit");
 

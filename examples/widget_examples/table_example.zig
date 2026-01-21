@@ -1,3 +1,5 @@
+// Example: sortable/typeahead table with keyboard navigation.
+
 const std = @import("std");
 const zit = @import("zit");
 

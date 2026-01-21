@@ -72,10 +72,31 @@ pub const WidgetInspector = struct {
         show_flags: bool = true,
     };
 
+    /// Create a reusable inspector.
+    ///
+    /// Parameters:
+    /// - `allocator`: backing allocator for child collection while traversing.
+    /// Returns: initialized inspector with no retained state.
+    /// Example:
+    /// ```zig
+    /// var inspector = zit.debug.WidgetInspector.init(alloc);
+    /// try inspector.printTree(root, std.io.getStdOut().writer(), .{});
+    /// ```
     pub fn init(allocator: std.mem.Allocator) WidgetInspector {
         return .{ .allocator = allocator };
     }
 
+    /// Print a formatted outline of the widget tree.
+    ///
+    /// Parameters:
+    /// - `root`: widget to start traversal from.
+    /// - `writer`: output sink receiving the outline.
+    /// - `options`: toggle rectangle/flag details.
+    /// Returns: any writer error.
+    /// Example:
+    /// ```zig
+    /// try inspector.printTree(&my_root.widget, std.io.getStdErr().writer(), .{ .show_flags = false });
+    /// ```
     pub fn printTree(self: *WidgetInspector, root: *widget.Widget, writer: anytype, options: Options) !void {
         try writer.writeAll("widget tree (root first):\n");
         try self.printNode(writer, root, 0, options);
@@ -120,6 +141,17 @@ pub const LayoutDebugger = struct {
         show_ids: bool = true,
     };
 
+    /// Draw outlines around every widget to help diagnose layout issues.
+    ///
+    /// Parameters:
+    /// - `renderer`: renderer to draw into (typically the active frame buffer).
+    /// - `root`: root widget whose descendants will be annotated.
+    /// - `options`: colors and label toggles for the overlay.
+    /// Returns: nothing; errors are ignored so debugging cannot crash a UI.
+    /// Example:
+    /// ```zig
+    /// debug.LayoutDebugger.outline(&renderer, &root.widget, .{ .show_ids = true });
+    /// ```
     pub fn outline(renderer: *render.Renderer, root: *widget.Widget, options: Options) void {
         drawNode(renderer, root, 0, options);
 
@@ -165,10 +197,28 @@ pub const EventTracer = struct {
     include_payloads: bool = true,
     include_path: bool = true,
 
+    /// Create a tracer that prints every event dispatched through the UI.
+    ///
+    /// Parameters:
+    /// - `writer`: destination for logs (stdout, file writer, etc).
+    /// Returns: tracer with payload/path logging enabled by default.
+    /// Example:
+    /// ```zig
+    /// var tracer = zit.debug.EventTracer.init(std.io.getStdErr().writer());
+    /// const hooks = tracer.hooks();
+    /// app.debug_hooks = hooks;
+    /// ```
     pub fn init(writer: anytype) EventTracer {
         return .{ .writer = std.io.anyWriter(writer) };
     }
 
+    /// Convert the tracer into `event.DebugHooks` used by `Application`.
+    ///
+    /// Returns: hook struct that can be assigned to `Application.debug_hooks`.
+    /// Example:
+    /// ```zig
+    /// app.debug_hooks = tracer.hooks();
+    /// ```
     pub fn hooks(self: *EventTracer) event_mod.DebugHooks {
         return .{ .event_trace = trace, .trace_ctx = self };
     }

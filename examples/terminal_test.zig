@@ -1,3 +1,5 @@
+// Terminal test: explores raw terminal capabilities, colors, and cursor movement.
+
 const std = @import("std");
 const zit = @import("zit");
 

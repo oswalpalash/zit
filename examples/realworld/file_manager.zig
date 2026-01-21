@@ -1,3 +1,5 @@
+// Real-world demo: dual-pane file manager with previews.
+
 const std = @import("std");
 const zit = @import("zit");
 

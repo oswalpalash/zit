@@ -1,3 +1,5 @@
+// Widget test: navigable collection of common widgets (dropdown, table, progress, buttons).
+
 const std = @import("std");
 const zit = @import("zit");
 const widget_theme = zit.widget.theme;

@@ -1,3 +1,5 @@
+// Real-world demo: minimal text editor with cursor movement and save prompts.
+
 const std = @import("std");
 const zit = @import("zit");
 

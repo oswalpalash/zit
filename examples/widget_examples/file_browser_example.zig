@@ -1,3 +1,5 @@
+// Example: FileBrowser widget with navigation and typeahead.
+
 const std = @import("std");
 const zit = @import("zit");
 
