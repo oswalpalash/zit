@@ -49,17 +49,17 @@ pub fn main() !void {
     tree.nodes.items[api].expanded = true;
     tree.nodes.items[data].expanded = true;
     tree.nodes.items[ui].expanded = true;
-    tree.setTheme(theme.Theme.dark());
+    try tree.setTheme(theme.Theme.dark());
 
     var gauge = try widget.Gauge.init(memory_manager.getWidgetPoolAllocator());
     defer gauge.deinit();
     gauge.setRange(0, 100);
-    gauge.setTheme(theme.Theme.highContrast());
+    try gauge.setTheme(theme.Theme.highContrast());
     try gauge.setLabel("Usage: 0%");
 
     var sparkline = try widget.Sparkline.init(memory_manager.getWidgetPoolAllocator());
     defer sparkline.deinit();
-    sparkline.setTheme(theme.Theme.dark());
+    try sparkline.setTheme(theme.Theme.dark());
     sparkline.setMaxSamples(80);
 
     var metrics_split = try widget.SplitPane.init(memory_manager.getWidgetPoolAllocator());
@@ -115,9 +115,9 @@ pub fn main() !void {
                     } else if (key.key == 't') {
                         dark_mode = !dark_mode;
                         const next_theme = if (dark_mode) theme.Theme.dark() else theme.Theme.light();
-                        tree.setTheme(next_theme);
-                        sparkline.setTheme(next_theme);
-                        gauge.setTheme(next_theme);
+                        try tree.setTheme(next_theme);
+                        try sparkline.setTheme(next_theme);
+                        try gauge.setTheme(next_theme);
                     } else {
                         _ = try main_split.widget.handleEvent(event);
                     }

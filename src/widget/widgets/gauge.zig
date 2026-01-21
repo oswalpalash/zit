@@ -56,7 +56,7 @@ pub const Gauge = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setTheme(self: *Gauge, theme_value: theme.Theme) void {
+    pub fn setTheme(self: *Gauge, theme_value: theme.Theme) !void {
         self.fg = theme_value.color(.text);
         self.bg = theme_value.color(.surface);
         self.fill = theme_value.color(.accent);

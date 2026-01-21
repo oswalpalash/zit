@@ -197,10 +197,10 @@ fn handleDragEvent(ev: *event.Event) bool {
     return false;
 }
 
-fn applyTheme(current: theme.Theme, chart: *widget.Chart, autocomplete: *widget.AutocompleteInput, ctx_menu: *widget.ContextMenu) void {
-    chart.setTheme(current);
-    autocomplete.setTheme(current);
-    ctx_menu.setTheme(current);
+fn applyTheme(current: theme.Theme, chart: *widget.Chart, autocomplete: *widget.AutocompleteInput, ctx_menu: *widget.ContextMenu) !void {
+    try chart.setTheme(current);
+    try autocomplete.setTheme(current);
+    try ctx_menu.setTheme(current);
 }
 
 fn pointInRect(x: u16, y: u16, rect: layout.Rect) bool {
@@ -427,7 +427,7 @@ pub fn main() !void {
         theme.Theme.light(),
         theme.Theme.highContrast(),
     };
-    applyTheme(themes[state.theme_index], chart, autocomplete, ctx_menu);
+    try applyTheme(themes[state.theme_index], chart, autocomplete, ctx_menu);
 
     try chart.addSeries("Throughput", &[_]f32{ 42, 48, 45, 51, 57, 64 }, null, null);
     try chart.addSeries("Latency", &[_]f32{ 120, 110, 130, 125, 135, 128 }, null, null);
@@ -441,7 +441,7 @@ pub fn main() !void {
     var running = true;
     while (running) {
         const current_theme = themes[state.theme_index];
-        applyTheme(current_theme, chart, autocomplete, ctx_menu);
+        try applyTheme(current_theme, chart, autocomplete, ctx_menu);
         ctx_menu.widget.setFocus(ctx_menu.open);
 
         const bg = current_theme.color(.background);

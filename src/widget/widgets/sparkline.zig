@@ -42,7 +42,7 @@ pub const Sparkline = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setTheme(self: *Sparkline, theme_value: theme.Theme) void {
+    pub fn setTheme(self: *Sparkline, theme_value: theme.Theme) !void {
         self.theme_value = theme_value;
         self.fg = theme_value.color(.accent);
         self.bg = theme_value.color(.surface);

@@ -56,7 +56,7 @@ pub const Chart = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setTheme(self: *Chart, t: theme.Theme) void {
+    pub fn setTheme(self: *Chart, t: theme.Theme) !void {
         self.theme_value = t;
     }
 

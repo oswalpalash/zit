@@ -121,17 +121,17 @@ pub fn main() !void {
     tree.nodes.items[services].expanded = true;
     tree.nodes.items[api].expanded = true;
     tree.nodes.items[data].expanded = true;
-    tree.setTheme(widget_theme.Theme.dark());
+    try tree.setTheme(widget_theme.Theme.dark());
 
     var sparkline = try zit.widget.Sparkline.init(allocator);
     defer sparkline.deinit();
-    sparkline.setTheme(widget_theme.Theme.dark());
+    try sparkline.setTheme(widget_theme.Theme.dark());
     sparkline.setMaxSamples(80);
 
     var gauge = try zit.widget.Gauge.init(allocator);
     defer gauge.deinit();
     gauge.setRange(0, 100);
-    gauge.setTheme(widget_theme.Theme.light());
+    try gauge.setTheme(widget_theme.Theme.light());
     try gauge.setLabel("Load 0%");
 
     var metrics_split = try zit.widget.SplitPane.init(allocator);

@@ -47,7 +47,7 @@ pub const SplitPane = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setTheme(self: *SplitPane, value: theme.Theme) void {
+    pub fn setTheme(self: *SplitPane, value: theme.Theme) !void {
         self.palette = value;
         self.divider_color = value.color(.border);
     }

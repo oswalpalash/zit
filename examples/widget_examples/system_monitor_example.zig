@@ -214,9 +214,9 @@ pub fn main() !void {
         const warning = current_theme.color(.warning);
         const danger = current_theme.color(.danger);
 
-        cpu.setTheme(current_theme);
-        mem.setTheme(current_theme);
-        spark.setTheme(current_theme);
+        try cpu.setTheme(current_theme);
+        try mem.setTheme(current_theme);
+        try spark.setTheme(current_theme);
         table.fg = text;
         table.bg = surface;
         table.header_bg = theme.adjust(accent, -8);

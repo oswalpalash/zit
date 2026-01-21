@@ -79,7 +79,7 @@ pub const AutocompleteInput = struct {
         self.on_select = callback;
     }
 
-    pub fn setTheme(self: *AutocompleteInput, t: theme.Theme) void {
+    pub fn setTheme(self: *AutocompleteInput, t: theme.Theme) !void {
         self.theme_value = t;
     }
 
