@@ -92,8 +92,8 @@ pub fn dispatchWithPropagation(dispatcher: *event.EventDispatcher, event_item: *
 
 /// Dispatch all events from a queue with propagation
 pub fn processEventsWithPropagation(queue: *event.EventQueue, allocator: std.mem.Allocator) !void {
-    while (queue.queue.items.len > 0) {
-        var event_item = queue.queue.orderedRemove(0);
+    while (queue.popFront()) |event_val| {
+        var event_item = event_val;
 
         _ = try dispatchWithPropagation(&queue.dispatcher, &event_item, allocator);
 

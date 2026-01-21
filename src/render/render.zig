@@ -801,6 +801,17 @@ pub const Renderer = struct {
     cursor_y: u16 = 0,
     /// Whether the cursor is visible
     cursor_visible: bool = true,
+    /// Last cursor state for detecting changes
+    last_cursor_x: u16 = 0,
+    last_cursor_y: u16 = 0,
+    last_cursor_visible: bool = true,
+    /// Dirty region tracking (inclusive bounds)
+    dirty_min_x: u16 = 0,
+    dirty_min_y: u16 = 0,
+    dirty_max_x: u16 = 0,
+    dirty_max_y: u16 = 0,
+    has_dirty: bool = false,
+    cursor_dirty: bool = true,
     /// Terminal capabilities
     capabilities: TerminalCapabilities,
 
@@ -809,12 +820,14 @@ pub const Renderer = struct {
         const front = try Buffer.init(allocator, width, height);
         const back = try Buffer.init(allocator, width, height);
 
-        return Renderer{
+        var renderer = Renderer{
             .front = front,
             .back = back,
             .allocator = allocator,
             .capabilities = TerminalCapabilities.detect(),
         };
+        renderer.resetDirty();
+        return renderer;
     }
 
     /// Clean up renderer resources
@@ -832,6 +845,36 @@ pub const Renderer = struct {
         // Create new buffers with the new size
         self.front = try Buffer.init(self.allocator, width, height);
         self.back = try Buffer.init(self.allocator, width, height);
+        self.resetDirty();
+        self.markDirtyRect(0, 0, width, height);
+    }
+
+    fn resetDirty(self: *Renderer) void {
+        self.dirty_min_x = self.back.width;
+        self.dirty_min_y = self.back.height;
+        self.dirty_max_x = 0;
+        self.dirty_max_y = 0;
+        self.has_dirty = false;
+        self.cursor_dirty = false;
+    }
+
+    fn markDirtyRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) void {
+        if (width == 0 or height == 0 or self.back.width == 0 or self.back.height == 0) return;
+        const max_x = @min(x + width - 1, self.back.width - 1);
+        const max_y = @min(y + height - 1, self.back.height - 1);
+        self.dirty_min_x = @min(self.dirty_min_x, x);
+        self.dirty_min_y = @min(self.dirty_min_y, y);
+        self.dirty_max_x = @max(self.dirty_max_x, max_x);
+        self.dirty_max_y = @max(self.dirty_max_y, max_y);
+        self.has_dirty = true;
+    }
+
+    fn writeAllGeneric(writer: anytype, data: []const u8) !void {
+        var remaining = data;
+        while (remaining.len > 0) {
+            const written = try writer.write(remaining);
+            remaining = remaining[written..];
+        }
     }
 
     /// Draw a character at the specified position with capability fallbacks
@@ -844,6 +887,7 @@ pub const Renderer = struct {
 
         const cell = Cell.init(adjusted_char, adjusted_fg, adjusted_bg, adjusted_style);
         self.back.setCell(x, y, cell);
+        self.markDirtyRect(x, y, 1, 1);
     }
 
     /// Draw a string at the specified position
@@ -967,6 +1011,7 @@ pub const Renderer = struct {
     pub fn fillRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16, fill_char: u21, fg: Color, bg: Color, style: Style) void {
         const cell = Cell.init(fill_char, fg, bg, style);
         self.back.fillRect(x, y, width, height, cell);
+        self.markDirtyRect(x, y, width, height);
     }
 
     /// Fill a rectangular area with a linear gradient background
@@ -1002,147 +1047,131 @@ pub const Renderer = struct {
 
     /// Set cursor position
     pub fn setCursor(self: *Renderer, x: u16, y: u16) void {
-        self.cursor_x = x;
-        self.cursor_y = y;
+        if (self.cursor_x != x or self.cursor_y != y) {
+            self.cursor_dirty = true;
+            self.cursor_x = x;
+            self.cursor_y = y;
+        }
     }
 
     /// Show or hide cursor
     pub fn showCursor(self: *Renderer, visible: bool) void {
-        self.cursor_visible = visible;
+        if (self.cursor_visible != visible) {
+            self.cursor_visible = visible;
+            self.cursor_dirty = true;
+        }
     }
 
     /// Render the back buffer to the terminal
     pub fn render(self: *Renderer) !void {
-        var stdout = std.fs.File.stdout();
-        var style_buf = std.ArrayList(u8).empty;
+        const stdout = std.fs.File.stdout();
+        try self.renderToWriter(stdout);
+    }
+
+    /// Render the back buffer to a provided writer (useful for tests)
+    pub fn renderToWriter(self: *Renderer, writer: anytype) !void {
+        if (!self.has_dirty and !self.cursor_dirty) return;
+
+        var style_buf = std.ArrayListUnmanaged(u8){};
         defer style_buf.deinit(self.allocator);
 
-        // Hide cursor during rendering to prevent flicker
-        try stdout.writeAll("\x1b[?25l");
-
         // Buffer for batched writes to reduce syscalls
-        var output_buffer = std.ArrayList(u8).empty;
+        var output_buffer = std.ArrayListUnmanaged(u8){};
         defer output_buffer.deinit(self.allocator);
 
         var current_fg: ?Color = null;
         var current_bg: ?Color = null;
         var current_style = Style{};
-        // Perform diff-based updates between front and back buffers
-        for (0..self.back.height) |y| {
-            for (0..self.back.width) |x| {
-                const back_cell = self.back.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
-                const front_cell = self.front.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
+        // Hide cursor during rendering to prevent flicker
+        try writeAllGeneric(writer, "\x1b[?25l");
 
-                // Skip if cell hasn't changed
-                if (front_cell.eql(back_cell.*)) continue;
+        if (self.has_dirty) {
+            const dirty_start_y: u16 = self.dirty_min_y;
+            const dirty_end_y: u16 = self.dirty_max_y + 1;
+            const dirty_start_x: u16 = self.dirty_min_x;
+            const dirty_end_x: u16 = self.dirty_max_x + 1;
 
-                // Position cursor
-                try std.fmt.format(output_buffer.writer(self.allocator), "\x1b[{};{}H", .{ y + 1, x + 1 });
+            // Perform diff-based updates between front and back buffers
+            for (dirty_start_y..dirty_end_y) |y| {
+                for (dirty_start_x..dirty_end_x) |x| {
+                    const back_cell = self.back.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
+                    const front_cell = self.front.getCell(@as(u16, @intCast(x)), @as(u16, @intCast(y)));
 
-                // Update styles if needed
-                var need_style_update = false;
+                    // Skip if cell hasn't changed
+                    if (front_cell.eql(back_cell.*)) continue;
 
-                if (current_fg == null or !std.meta.eql(current_fg.?, back_cell.fg)) {
-                    current_fg = back_cell.fg;
-                    need_style_update = true;
-                }
+                    // Position cursor
+                    try std.fmt.format(output_buffer.writer(self.allocator), "\x1b[{};{}H", .{ y + 1, x + 1 });
 
-                if (current_bg == null or !std.meta.eql(current_bg.?, back_cell.bg)) {
-                    current_bg = back_cell.bg;
-                    need_style_update = true;
-                }
+                    // Update styles if needed
+                    var need_style_update = false;
 
-                if (!std.meta.eql(current_style, back_cell.style)) {
-                    current_style = back_cell.style;
-                    need_style_update = true;
-                }
+                    if (current_fg == null or !std.meta.eql(current_fg.?, back_cell.fg)) {
+                        current_fg = back_cell.fg;
+                        need_style_update = true;
+                    }
 
-                if (need_style_update) {
-                    style_buf.clearRetainingCapacity();
+                    if (current_bg == null or !std.meta.eql(current_bg.?, back_cell.bg)) {
+                        current_bg = back_cell.bg;
+                        need_style_update = true;
+                    }
 
-                    try style_buf.appendSlice(self.allocator, "\x1b[");
-                    const style_code = back_cell.style.toAnsi();
-                    try style_buf.appendSlice(self.allocator, style_code.slice());
+                    if (!std.meta.eql(current_style, back_cell.style)) {
+                        current_style = back_cell.style;
+                        need_style_update = true;
+                    }
 
-                    try style_buf.appendSlice(self.allocator, ";");
-                    const fg_code = back_cell.fg.toFg();
-                    try style_buf.appendSlice(self.allocator, fg_code.slice());
+                    if (need_style_update) {
+                        style_buf.clearRetainingCapacity();
 
-                    try style_buf.appendSlice(self.allocator, ";");
-                    const bg_code = back_cell.bg.toBg();
-                    try style_buf.appendSlice(self.allocator, bg_code.slice());
+                        try style_buf.appendSlice(self.allocator, "\x1b[");
+                        const style_code = back_cell.style.toAnsi();
+                        try style_buf.appendSlice(self.allocator, style_code.slice());
 
-                    try style_buf.appendSlice(self.allocator, "m");
+                        try style_buf.appendSlice(self.allocator, ";");
+                        const fg_code = back_cell.fg.toFg();
+                        try style_buf.appendSlice(self.allocator, fg_code.slice());
 
-                    try output_buffer.appendSlice(self.allocator, style_buf.items);
-                }
+                        try style_buf.appendSlice(self.allocator, ";");
+                        const bg_code = back_cell.bg.toBg();
+                        try style_buf.appendSlice(self.allocator, bg_code.slice());
 
-                var char_buf: [4]u8 = undefined;
-                const len = try std.unicode.utf8Encode(back_cell.char, &char_buf);
-                try output_buffer.appendSlice(self.allocator, char_buf[0..len]);
+                        try style_buf.appendSlice(self.allocator, "m");
 
-                if (output_buffer.items.len > 1024) {
-                    stdout.writeAll(output_buffer.items) catch |err| {
-                        if (err == error.WouldBlock) {
-                            var retry_count: u8 = 0;
-                            while (retry_count < 10) : (retry_count += 1) {
-                                stdout.writeAll(output_buffer.items) catch |retry_err| {
-                                    if (retry_err != error.WouldBlock) {
-                                        return retry_err;
-                                    }
-                                    std.Thread.sleep(1 * std.time.ns_per_ms);
-                                    continue;
-                                };
-                                break;
-                            }
-                        } else {
-                            return err;
-                        }
-                    };
-                    output_buffer.clearRetainingCapacity();
+                        try output_buffer.appendSlice(self.allocator, style_buf.items);
+                    }
+
+                    var char_buf: [4]u8 = undefined;
+                    const len = try std.unicode.utf8Encode(back_cell.char, &char_buf);
+                    try output_buffer.appendSlice(self.allocator, char_buf[0..len]);
+
+                    if (output_buffer.items.len > 1024) {
+                        try writeAllGeneric(writer, output_buffer.items);
+                        output_buffer.clearRetainingCapacity();
+                    }
                 }
             }
         }
 
         if (output_buffer.items.len > 0) {
-            stdout.writeAll(output_buffer.items) catch |err| {
-                if (err == error.WouldBlock) {
-                    var retry_count: u8 = 0;
-                    while (retry_count < 10) : (retry_count += 1) {
-                        stdout.writeAll(output_buffer.items) catch |retry_err| {
-                            if (retry_err != error.WouldBlock) {
-                                return retry_err;
-                            }
-                            std.Thread.sleep(1 * std.time.ns_per_ms);
-                            continue;
-                        };
-                        break;
-                    }
-                } else {
-                    return err;
-                }
-            };
+            try writeAllGeneric(writer, output_buffer.items);
         }
 
-        stdout.writeAll("\x1b[0m") catch |err| {
-            if (err != error.WouldBlock) return err;
-        };
+        try writeAllGeneric(writer, "\x1b[0m");
 
         var cursor_buf: [32]u8 = undefined;
         const cursor_seq = try std.fmt.bufPrint(&cursor_buf, "\x1b[{};{}H", .{ self.cursor_y + 1, self.cursor_x + 1 });
-        stdout.writeAll(cursor_seq) catch |err| {
-            if (err != error.WouldBlock) return err;
-        };
-        if (self.cursor_visible) {
-            stdout.writeAll("\x1b[?25h") catch |err| {
-                if (err != error.WouldBlock) return err;
-            };
-        }
+        try writeAllGeneric(writer, cursor_seq);
+        if (self.cursor_visible) try writeAllGeneric(writer, "\x1b[?25h");
 
         // Swap buffers
         const temp = self.front;
         self.front = self.back;
         self.back = temp;
+        self.last_cursor_x = self.cursor_x;
+        self.last_cursor_y = self.cursor_y;
+        self.last_cursor_visible = self.cursor_visible;
+        self.resetDirty();
     }
 };
 
