@@ -27,6 +27,8 @@ const DragAction = enum {
     flip_image,
 };
 
+const max_samples: usize = 80;
+
 const DragToken = struct {
     label: []const u8,
     accent: render.Color,
@@ -37,6 +39,7 @@ const DragStatus = struct {
     active: bool = false,
     hover_target: ?*widget.Widget = null,
     label: []const u8 = "",
+    accepted: bool = true,
 };
 
 const EventLog = struct {
@@ -87,10 +90,43 @@ const DemoState = struct {
 var demo_state_ptr: ?*DemoState = null;
 
 fn tokenFromPayload(payload: event.DragPayload) ?*const DragToken {
-    if (payload.data) |ptr| {
-        return @ptrCast(@alignCast(ptr));
+    return payload.asValue(DragToken);
+}
+
+fn acceptChartDrop(_: *widget.Widget, drag: event.DragEventData) bool {
+    if (tokenFromPayload(drag.payload)) |token| {
+        return token.action == .energize_chart;
     }
-    return null;
+    return false;
+}
+
+fn acceptImageDrop(_: *widget.Widget, drag: event.DragEventData) bool {
+    if (tokenFromPayload(drag.payload)) |token| {
+        return token.action == .flip_image;
+    }
+    return false;
+}
+
+fn handleChartDrop(_: *widget.Widget, drag: event.DragEventData) void {
+    if (!drag.accepted) return;
+    const state = demo_state_ptr orelse return;
+    if (tokenFromPayload(drag.payload)) |token| {
+        if (token.action == .energize_chart) {
+            appendSample(&state.chart.series.items[0].values, 88, max_samples);
+            appendSample(&state.chart.series.items[1].values, 160, max_samples);
+            cycleChartType(state);
+        }
+    }
+}
+
+fn handleImageDrop(_: *widget.Widget, drag: event.DragEventData) void {
+    if (!drag.accepted) return;
+    const state = demo_state_ptr orelse return;
+    if (tokenFromPayload(drag.payload)) |token| {
+        if (token.action == .flip_image) {
+            cycleImageMode(state);
+        }
+    }
 }
 
 fn handleDragEvent(ev: *event.Event) bool {
@@ -100,6 +136,7 @@ fn handleDragEvent(ev: *event.Event) bool {
             const data = ev.data.drag_start;
             state.drag_status.active = true;
             state.drag_status.hover_target = null;
+            state.drag_status.accepted = true;
             if (tokenFromPayload(data.payload)) |token| {
                 state.drag_status.label = token.label;
             } else {
@@ -112,6 +149,7 @@ fn handleDragEvent(ev: *event.Event) bool {
         .drag_update => {
             const data = ev.data.drag_update;
             state.drag_status.hover_target = ev.target;
+            state.drag_status.accepted = data.accepted;
             // Keep a short status line in the log without spamming entries.
             var buf: [96]u8 = undefined;
             const name = if (ev.target) |t|
@@ -134,14 +172,17 @@ fn handleDragEvent(ev: *event.Event) bool {
                 if (t == &state.chart.widget) "chart" else if (t == &state.image.widget) "image" else "surface"
             else
                 "surface";
-            const text = std.fmt.bufPrint(&buf, "drop on {s} with {s}", .{ target_label, token_label }) catch return false;
+            const verdict = if (data.accepted) "accepted" else "rejected";
+            const text = std.fmt.bufPrint(&buf, "drop on {s} ({s}) with {s}", .{ target_label, verdict, token_label }) catch return false;
             state.log.push(text);
             state.drag_status.active = false;
             state.drag_status.hover_target = null;
+            state.drag_status.accepted = data.accepted;
         },
         .drag_end => {
             state.drag_status.active = false;
             state.drag_status.hover_target = null;
+            state.drag_status.accepted = false;
         },
         else => {},
     }
@@ -362,6 +403,9 @@ pub fn main() !void {
     defer state.log.deinit();
     demo_state_ptr = &state;
 
+    try app.registerDropTarget(.{ .widget = &chart.widget, .accept = acceptChartDrop, .on_drop = handleChartDrop });
+    try app.registerDropTarget(.{ .widget = &image.widget, .accept = acceptImageDrop, .on_drop = handleImageDrop });
+
     _ = try app.addEventListener(.drag_start, handleDragEvent, null);
     _ = try app.addEventListener(.drag_update, handleDragEvent, null);
     _ = try app.addEventListener(.drop, handleDragEvent, null);
@@ -376,14 +420,12 @@ pub fn main() !void {
 
     try chart.addSeries("Throughput", &[_]f32{ 42, 48, 45, 51, 57, 64 }, null, null);
     try chart.addSeries("Latency", &[_]f32{ 120, 110, 130, 125, 135, 128 }, null, null);
-    const max_samples: usize = 80;
     var phase: f32 = 0;
 
     const drag_tokens = [_]DragToken{
         .{ .label = "Drag for spikes", .accent = render.Color.rgb(246, 122, 95), .action = .energize_chart },
         .{ .label = "Drag image mode", .accent = render.Color.rgb(102, 184, 255), .action = .flip_image },
     };
-    var active_token: ?*const DragToken = null;
 
     var running = true;
     while (running) {
@@ -466,13 +508,30 @@ pub fn main() !void {
         // Drag cues.
         if (state.drag_status.active) {
             const target = state.drag_status.hover_target;
+            const colors = event.DropVisuals.colorsFromTheme(current_theme);
+            const highlight_state: event.DropVisuals.State = if (target == null)
+                .idle
+            else if (state.drag_status.accepted)
+                .valid
+            else
+                .invalid;
+
             if (target == &chart.widget) {
-                renderer.drawBox(chart_rect.x, chart_rect.y, chart_rect.width, chart_rect.height, render.BorderStyle.double, accent, surface, render.Style{ .bold = true });
+                event.DropVisuals.outline(&renderer, chart_rect, highlight_state, colors);
             } else if (target == &image.widget) {
-                renderer.drawBox(image_rect.x, image_rect.y, image_rect.width, image_rect.height, render.BorderStyle.double, accent, surface, render.Style{ .bold = true });
+                event.DropVisuals.outline(&renderer, image_rect, highlight_state, colors);
             }
+
             const drag_label_x = if (inner.width > 24) inner.x + inner.width - 24 else inner.x + 1;
-            renderer.drawSmartStr(drag_label_x, inner.y, "dragging", accent, bg, render.Style{ .bold = true });
+            const drag_label = switch (highlight_state) {
+                .valid => "dragging",
+                .invalid => "blocked",
+                .idle => "dragging",
+            };
+            const drag_color = if (highlight_state == .invalid) current_theme.color(.danger) else accent;
+            var drag_label_buf: [64]u8 = undefined;
+            const label_text = std.fmt.bufPrint(&drag_label_buf, "{s}: {s}", .{ drag_label, state.drag_status.label }) catch drag_label;
+            renderer.drawSmartStr(drag_label_x, inner.y, label_text, drag_color, bg, render.Style{ .bold = true });
         }
 
         // Context menu overlay (drawn last so it floats).
@@ -543,41 +602,23 @@ pub fn main() !void {
                         idx = 0;
                         while (idx < drag_tokens.len) : (idx += 1) {
                             if (pointInRect(mouse_event.x, mouse_event.y, token_rects[idx])) {
-                                active_token = &drag_tokens[idx];
-                                try app.beginDrag(&root.widget, mouse_event.x, mouse_event.y, mouse_event.button, .{ .data = @constCast(active_token.?) });
-                                state.drag_status.label = active_token.?.label;
+                                const payload = try event.DragPayload.fromValue(allocator, drag_tokens[idx]);
+                                try app.beginDrag(&root.widget, mouse_event.x, mouse_event.y, mouse_event.button, payload);
                                 break;
                             }
                         }
                     } else if (mouse_event.action == .move and app.drag_manager.active) {
-                        const drop_target: ?*widget.Widget = if (pointInRect(mouse_event.x, mouse_event.y, chart_rect))
-                            &chart.widget
-                        else if (pointInRect(mouse_event.x, mouse_event.y, image_rect))
-                            &image.widget
+                        const drop_target = if (app.hitTestDropTarget(mouse_event.x, mouse_event.y)) |entry|
+                            entry.widget
                         else
                             null;
                         try app.updateDrag(mouse_event.x, mouse_event.y, drop_target);
                     } else if (mouse_event.action == .release and app.drag_manager.active) {
-                        const drop_target: ?*widget.Widget = if (pointInRect(mouse_event.x, mouse_event.y, chart_rect))
-                            &chart.widget
-                        else if (pointInRect(mouse_event.x, mouse_event.y, image_rect))
-                            &image.widget
+                        const drop_target = if (app.hitTestDropTarget(mouse_event.x, mouse_event.y)) |entry|
+                            entry.widget
                         else
                             null;
                         try app.endDrag(mouse_event.x, mouse_event.y, drop_target);
-
-                        if (drop_target == &chart.widget and active_token) |token| {
-                            if (token.action == .energize_chart) {
-                                appendSample(&chart.series.items[0].values, 88, max_samples);
-                                appendSample(&chart.series.items[1].values, 160, max_samples);
-                                cycleChartType(&state);
-                            }
-                        } else if (drop_target == &image.widget and active_token) |token| {
-                            if (token.action == .flip_image) {
-                                cycleImageMode(&state);
-                            }
-                        }
-                        active_token = null;
                     } else {
                         _ = try ctx_menu.widget.handleEvent(ev);
                         _ = try autocomplete.widget.handleEvent(ev);
