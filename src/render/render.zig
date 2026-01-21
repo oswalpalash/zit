@@ -2,6 +2,8 @@ const std = @import("std");
 const text_metrics = @import("text_metrics.zig");
 const term_caps = @import("../terminal/capabilities.zig");
 
+pub const TextDirection = text_metrics.TextDirection;
+
 fn validateColorComponent(value: anytype, comptime label: []const u8) u8 {
     if (@TypeOf(value) == comptime_int) {
         if (value < 0 or value > 255) {
@@ -532,28 +534,38 @@ fn saturatingAddU16(a: u16, b: u16) u16 {
 
 /// Represents a cell in the screen buffer
 pub const Cell = struct {
-    /// Character to display
-    char: u21 = ' ',
+    /// Grapheme to display (may include combining marks/emoji)
+    glyph: text_metrics.Grapheme = .{},
     /// Foreground color
     fg: Color = Color{ .named_color = NamedColor.default },
     /// Background color
     bg: Color = Color{ .named_color = NamedColor.default },
     /// Text style attributes
     style: Style = Style{},
+    /// True when this cell is the trailing half of a double-width glyph.
+    continuation: bool = false,
 
     /// Create a new cell
     pub fn init(char: u21, fg: Color, bg: Color, style: Style) Cell {
-        return Cell{
-            .char = char,
-            .fg = fg,
-            .bg = bg,
-            .style = style,
-        };
+        return initGrapheme(text_metrics.graphemeFromCodepoint(char), fg, bg, style);
+    }
+
+    pub fn initGrapheme(glyph: text_metrics.Grapheme, fg: Color, bg: Color, style: Style) Cell {
+        return Cell{ .glyph = glyph, .fg = fg, .bg = bg, .style = style, .continuation = false };
+    }
+
+    pub fn codepoint(self: Cell) u21 {
+        return self.glyph.firstCodepoint();
+    }
+
+    pub fn blank() Cell {
+        return Cell.init(' ', Color.named(NamedColor.default), Color.named(NamedColor.default), Style{});
     }
 
     /// Check if this cell is equal to another
     pub fn eql(self: Cell, other: Cell) bool {
-        if (self.char != other.char) return false;
+        if (self.continuation != other.continuation) return false;
+        if (!text_metrics.Grapheme.eql(self.glyph, other.glyph)) return false;
 
         if (!colorsEqual(self.fg, other.fg)) return false;
         if (!colorsEqual(self.bg, other.bg)) return false;
@@ -590,7 +602,7 @@ pub const Buffer = struct {
 
         // Initialize all cells with default values
         for (cells) |*cell| {
-            cell.* = Cell{};
+            cell.* = Cell.blank();
         }
 
         return Buffer{
@@ -637,7 +649,7 @@ pub const Buffer = struct {
     /// Clear the buffer
     pub fn clear(self: *Buffer) void {
         for (self.cells) |*cell| {
-            cell.* = Cell{};
+            cell.* = Cell.blank();
         }
     }
 
@@ -940,6 +952,8 @@ pub const Renderer = struct {
     /// Reusable scratch buffers to minimize per-frame allocations
     style_scratch: std.ArrayListUnmanaged(u8) = .{},
     output_batch: std.ArrayListUnmanaged(u8) = .{},
+    grapheme_scratch: std.ArrayListUnmanaged(text_metrics.Grapheme) = .{},
+    text_direction: TextDirection = .auto,
 
     /// Initialize a new renderer
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) !Renderer {
@@ -969,6 +983,7 @@ pub const Renderer = struct {
         if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
         self.style_scratch.deinit(self.allocator);
         self.output_batch.deinit(self.allocator);
+        self.grapheme_scratch.deinit(self.allocator);
     }
 
     /// Resize the buffers
@@ -1006,6 +1021,7 @@ pub const Renderer = struct {
             self.output_batch.ensureTotalCapacity(self.allocator, @intCast(desired_bytes)) catch {};
         }
         self.style_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
+        self.grapheme_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
     }
 
     fn resetDirty(self: *Renderer) void {
@@ -1064,53 +1080,104 @@ pub const Renderer = struct {
         try self.output_batch.appendSlice(self.allocator, cursor_seq);
     }
 
-    /// Draw a character at the specified position with capability fallbacks
-    pub fn drawChar(self: *Renderer, x: u16, y: u16, char: u21, fg: Color, bg: Color, style: Style) void {
+    fn renderableGrapheme(self: *Renderer, g: text_metrics.Grapheme) text_metrics.Grapheme {
+        if (!self.capabilities.unicode or (!self.capabilities.emoji and g.has_emoji)) {
+            const fallback_cp = self.capabilities.bestChar(g.firstCodepoint());
+            var fallback = text_metrics.graphemeFromCodepoint(fallback_cp);
+            if (!self.capabilities.double_width and fallback.width > 1) fallback.width = 1;
+            return fallback;
+        }
+
+        var adjusted = g;
+        if (!self.capabilities.double_width and adjusted.width > 1) {
+            adjusted.width = 1;
+        }
+        return adjusted;
+    }
+
+    fn drawGrapheme(self: *Renderer, x: u16, y: u16, grapheme: text_metrics.Grapheme, fg: Color, bg: Color, style: Style) void {
         if (x >= self.back.width or y >= self.back.height) {
             std.debug.assert(false);
             return;
         }
-        // Apply capability-based adjustments for graceful degradation
-        const adjusted_char = self.capabilities.bestChar(char);
+
+        const renderable = self.renderableGrapheme(grapheme);
+        const width: u16 = @intCast(@min(@as(u16, renderable.width), @as(u16, 2)));
+        if (width == 0) return;
+        if (std.math.add(u32, @as(u32, x), @as(u32, width) - 1) catch std.math.maxInt(u32) >= self.back.width) return;
+
         const adjusted_fg = self.capabilities.bestColor(fg);
         const adjusted_bg = self.capabilities.bestColor(bg);
         const adjusted_style = self.capabilities.bestStyle(style);
 
-        const cell = Cell.init(adjusted_char, adjusted_fg, adjusted_bg, adjusted_style);
+        const cell = Cell.initGrapheme(renderable, adjusted_fg, adjusted_bg, adjusted_style);
         self.back.setCell(x, y, cell);
-        self.markDirtyRect(x, y, 1, 1);
+        self.markDirtyRect(x, y, width, 1);
+
+        if (width > 1 and x + 1 < self.back.width) {
+            var cont = cell;
+            cont.continuation = true;
+            cont.glyph.width = 0;
+            self.back.setCell(x + 1, y, cont);
+        }
     }
 
-    /// Draw a string at the specified position
-    pub fn drawStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
-        var utf8_it = std.unicode.Utf8Iterator{
-            .bytes = str,
-            .i = 0,
-        };
-
-        var i: u16 = 0;
-        while (utf8_it.nextCodepoint()) |codepoint| {
-            const target_x = std.math.add(u32, @as(u32, x), @as(u32, i)) catch break;
-            if (target_x >= self.back.width) break;
-            self.drawChar(@intCast(target_x), y, codepoint, fg, bg, style);
-            i += 1;
+    fn prepareGraphemes(self: *Renderer, text: []const u8, direction: TextDirection) ?void {
+        self.grapheme_scratch.clearRetainingCapacity();
+        if (!self.capabilities.bidi or direction == .rtl) {
+            _ = text_metrics.collectVisualOrder(text, direction, &self.grapheme_scratch, self.allocator) catch return null;
+            return;
         }
+
+        var it = text_metrics.GraphemeIterator.init(text);
+        while (it.next()) |g| {
+            self.grapheme_scratch.append(self.allocator, g) catch return null;
+        }
+    }
+
+    fn drawFallbackBytes(self: *Renderer, x: u16, y: u16, text: []const u8, fg: Color, bg: Color, style: Style) void {
+        var utf8_it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+        var cursor: u16 = 0;
+        while (utf8_it.nextCodepoint()) |cp| {
+            const target_x = std.math.add(u32, @as(u32, x), @as(u32, cursor)) catch break;
+            if (target_x >= self.back.width) break;
+            self.drawGrapheme(@intCast(target_x), y, text_metrics.graphemeFromCodepoint(cp), fg, bg, style);
+            cursor += 1;
+        }
+    }
+
+    /// Draw a character at the specified position with capability fallbacks
+    pub fn drawChar(self: *Renderer, x: u16, y: u16, char: u21, fg: Color, bg: Color, style: Style) void {
+        self.drawGrapheme(x, y, text_metrics.graphemeFromCodepoint(char), fg, bg, style);
+    }
+
+    /// Draw a string at the specified position using the renderer's text direction.
+    pub fn drawStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
+        self.drawTextDir(x, y, str, self.text_direction, fg, bg, style);
     }
 
     /// Draw text that may include bidi/double-width content using sanitized output.
     pub fn drawSmartStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
-        const metrics = self.capabilities.measure(str);
-        if (metrics.has_bidi and !self.capabilities.bidi) {
-            const cleaned = text_metrics.sanitizeBidi(str, self.allocator) catch {
-                self.drawStr(x, y, str, fg, bg, style);
-                return;
-            };
-            defer self.allocator.free(cleaned);
-            self.drawStr(x, y, cleaned, fg, bg, style);
-            return;
-        }
+        self.drawTextDir(x, y, str, self.text_direction, fg, bg, style);
+    }
 
-        self.drawStr(x, y, str, fg, bg, style);
+    /// Draw text with an explicit direction override.
+    pub fn drawTextDir(self: *Renderer, x: u16, y: u16, str: []const u8, direction: TextDirection, fg: Color, bg: Color, style: Style) void {
+        if (y >= self.back.height or x >= self.back.width) return;
+        self.prepareGraphemes(str, direction) orelse {
+            self.drawFallbackBytes(x, y, str, fg, bg, style);
+            return;
+        };
+
+        var cursor: u32 = x;
+        for (self.grapheme_scratch.items) |g| {
+            const width: u16 = @intCast(@min(@as(u16, g.width), @as(u16, 2)));
+            if (cursor >= self.back.width) break;
+            if (width == 0) continue;
+            if (cursor + width > self.back.width) break;
+            self.drawGrapheme(@intCast(cursor), y, g, fg, bg, style);
+            cursor += width;
+        }
     }
 
     /// Draw a box with the specified border style
@@ -1286,6 +1353,11 @@ pub const Renderer = struct {
         }
     }
 
+    /// Configure the renderer's default text direction (used by drawStr/drawSmartStr).
+    pub fn setTextDirection(self: *Renderer, direction: TextDirection) void {
+        self.text_direction = direction;
+    }
+
     /// Render the back buffer to the terminal
     pub fn render(self: *Renderer) !void {
         const stdout = std.fs.File.stdout();
@@ -1318,6 +1390,8 @@ pub const Renderer = struct {
 
                     // Skip if cell hasn't changed
                     if (front_cell.eql(back_cell.*)) continue;
+
+                    if (back_cell.continuation) continue;
 
                     // Position cursor
                     try self.appendCursorMove(@intCast(x), @intCast(y));
@@ -1360,9 +1434,9 @@ pub const Renderer = struct {
                         try self.output_batch.appendSlice(self.allocator, self.style_scratch.items);
                     }
 
-                    var char_buf: [4]u8 = undefined;
-                    const len = try std.unicode.utf8Encode(back_cell.char, &char_buf);
-                    try self.output_batch.appendSlice(self.allocator, char_buf[0..len]);
+                    const glyph_bytes = back_cell.glyph.slice();
+                    if (glyph_bytes.len == 0) continue;
+                    try self.output_batch.appendSlice(self.allocator, glyph_bytes);
 
                     if (self.output_batch.items.len > 4096) {
                         try self.flushOutput(writer);
@@ -1397,10 +1471,10 @@ test "renderer draws box outlines" {
     renderer.capabilities.unicode = true;
     renderer.drawBox(0, 0, 8, 4, BorderStyle.double, Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
 
-    try std.testing.expectEqual(@as(u21, '╔'), renderer.back.getCell(0, 0).char);
-    try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).char);
-    try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).char);
-    try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).char);
+    try std.testing.expectEqual(@as(u21, '╔'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).codepoint());
+    try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).codepoint());
 }
 
 test "mixColor blends rgb endpoints" {
@@ -1467,10 +1541,37 @@ test "styled box paints drop shadow" {
     renderer.drawStyledBox(1, 1, 6, 3, style);
 
     const right_shadow = renderer.back.getCell(1 + 6, 1 + 1).*;
-    try std.testing.expectEqual(@as(u21, '░'), right_shadow.char);
+    try std.testing.expectEqual(@as(u21, '░'), right_shadow.codepoint());
 
     const bottom_shadow = renderer.back.getCell(1 + 1, 1 + 3).*;
-    try std.testing.expectEqual(@as(u21, '░'), bottom_shadow.char);
+    try std.testing.expectEqual(@as(u21, '░'), bottom_shadow.codepoint());
+}
+
+test "renderer handles double width glyphs" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    renderer.capabilities.unicode = true;
+    renderer.drawStr(0, 0, "界", Color.named(NamedColor.default), Color.named(NamedColor.default), Style{});
+
+    const lead = renderer.back.getCell(0, 0).codepoint();
+    const trail = renderer.back.getCell(1, 0).continuation;
+    try std.testing.expectEqual(@as(u21, '界'), lead);
+    try std.testing.expect(trail);
+}
+
+test "renderer reverses rtl text when requested" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    renderer.capabilities.unicode = true;
+    renderer.setTextDirection(.rtl);
+    renderer.drawTextDir(0, 0, "ABC", .rtl, Color.named(NamedColor.default), Color.named(NamedColor.default), Style{});
+
+    try std.testing.expectEqual(@as(u21, 'C'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 0).codepoint());
 }
 
 test "fillGradient paints interpolated colors" {
@@ -1570,5 +1671,5 @@ test "drawSmartStr falls back when bidi sanitization cannot allocate" {
     }
 
     renderer.drawSmartStr(0, 0, text[0..], Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
-    try std.testing.expect(renderer.back.getCell(0, 0).char != ' ');
+    try std.testing.expect(renderer.back.getCell(0, 0).codepoint() != ' ');
 }

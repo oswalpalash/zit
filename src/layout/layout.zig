@@ -181,6 +181,12 @@ pub const FlexDirection = enum {
     column,
 };
 
+/// Layout flow for horizontal containers.
+pub const LayoutDirection = enum {
+    ltr,
+    rtl,
+};
+
 /// Alignment options for flex layouts
 pub const FlexAlignment = enum {
     start,
@@ -474,6 +480,8 @@ pub const FlexLayout = struct {
     base: Layout,
     /// Direction of the flex layout
     direction: FlexDirection,
+    /// Flow direction for horizontal layouts
+    layout_direction: LayoutDirection,
     /// Main axis alignment
     main_alignment: FlexAlignment,
     /// Cross axis alignment
@@ -496,6 +504,7 @@ pub const FlexLayout = struct {
         layout.* = FlexLayout{
             .base = Layout.init(allocator),
             .direction = direction,
+            .layout_direction = .ltr,
             .main_alignment = .start,
             .cross_alignment = .start,
             .children = std.ArrayList(FlexChild).empty,
@@ -526,6 +535,13 @@ pub const FlexLayout = struct {
     /// Set the cross axis alignment
     pub fn crossAlignment(self: *FlexLayout, alignment: FlexAlignment) *FlexLayout {
         self.cross_alignment = alignment;
+        self.cache.valid = false;
+        return self;
+    }
+
+    /// Set the layout direction for horizontal rows (LTR by default).
+    pub fn layoutDirection(self: *FlexLayout, direction: LayoutDirection) *FlexLayout {
+        self.layout_direction = direction;
         self.cache.valid = false;
         return self;
     }
@@ -592,6 +608,7 @@ pub const FlexLayout = struct {
         }
 
         const is_row = self.direction == .row;
+        const is_rtl = is_row and self.layout_direction == .rtl;
         const available_main = if (is_row) padded_rect.width else padded_rect.height;
         const available_cross = if (is_row) padded_rect.height else padded_rect.width;
 
@@ -602,6 +619,7 @@ pub const FlexLayout = struct {
 
         var current_position: u32 = self.cache.start_offset;
         const main_origin: u32 = if (is_row) padded_rect.x else padded_rect.y;
+        const main_extent: u32 = if (is_row) padded_rect.width else padded_rect.height;
         const cross_origin: u32 = if (is_row) padded_rect.y else padded_rect.x;
 
         for (self.children.items, 0..) |*child, idx| {
@@ -628,7 +646,12 @@ pub const FlexLayout = struct {
                 .space_between, .space_around, .space_evenly => {},
             }
 
-            const pos_main_u32 = main_origin + current_position + margin_main_before;
+            const ltr_main = main_origin + current_position + margin_main_before;
+            const rtl_main = if (main_extent > current_position + margin_main_before)
+                main_origin + main_extent - (current_position + margin_main_before + child_main_size)
+            else
+                main_origin;
+            const pos_main_u32 = if (is_rtl) rtl_main else ltr_main;
             const pos_cross_u32 = cross_origin + cross_offset + margin_cross_before;
 
             const child_rect = if (is_row)
@@ -1702,6 +1725,59 @@ test "flex layout distributes space and aligns children" {
     try std.testing.expectEqual(@as(u16, 1), rec3.rect.y);
     try std.testing.expectEqual(@as(u16, 11), rec3.rect.width);
     try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
+}
+
+test "flex layout supports rtl rows" {
+    const allocator = std.testing.allocator;
+
+    const Tracker = struct {
+        rect: Rect = Rect.init(0, 0, 0, 0),
+    };
+
+    const DummyElement = struct {
+        const Self = @This();
+        record: *Tracker,
+
+        fn layout(ctx: *anyopaque, _: Constraints) Size {
+            _ = ctx;
+            return Size.init(3, 1);
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.record.rect = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = layout,
+                .renderFn = render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var left_track = Tracker{};
+    var right_track = Tracker{};
+    var left = DummyElement{ .record = &left_track };
+    var right = DummyElement{ .record = &right_track };
+
+    var flex = try FlexLayout.init(allocator, .row);
+    defer flex.deinit();
+    flex.layoutDirection(.rtl);
+
+    try flex.addChild(FlexChild{ .element = left.asElement() });
+    try flex.addChild(FlexChild{ .element = right.asElement() });
+
+    const constraints = Constraints.tight(8, 1);
+    _ = flex.calculateLayout(constraints);
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 8, 1);
+    defer renderer.deinit();
+    flex.renderLayout(&renderer, Rect.init(0, 0, 8, 1));
+
+    try std.testing.expectEqual(@as(u16, 5), left_track.rect.x);
+    try std.testing.expectEqual(@as(u16, 2), right_track.rect.x);
 }
 
 test "flex layout negotiates preferred and minimum sizes" {

@@ -52,25 +52,19 @@ pub const Snapshot = struct {
     }
 
     fn fromBuffer(allocator: std.mem.Allocator, buffer: *render.Buffer) !Snapshot {
-        const max_utf8_bytes_per_codepoint = 4;
+        const max_utf8_bytes_per_cell = 32;
         const newline_bytes = 1;
-        const row_stride: usize = (@as(usize, buffer.width) * max_utf8_bytes_per_codepoint) + newline_bytes;
+        const row_stride: usize = (@as(usize, buffer.width) * max_utf8_bytes_per_cell) + newline_bytes;
         var buf = try allocator.alloc(u8, row_stride * buffer.height);
         var idx: usize = 0;
 
         for (0..buffer.height) |y| {
             for (0..buffer.width) |x| {
                 const cell = buffer.getCell(@intCast(x), @intCast(y)).*;
-                var tmp: [4]u8 = undefined;
-                const len = blk: {
-                    const encoded = std.unicode.utf8Encode(cell.char, &tmp) catch {
-                        tmp[0] = '?';
-                        break :blk 1;
-                    };
-                    break :blk encoded;
-                };
-                @memcpy(buf[idx .. idx + len], tmp[0..len]);
-                idx += len;
+                const glyph_bytes = if (cell.continuation) " " else cell.glyph.slice();
+                const active = if (glyph_bytes.len == 0) " " else glyph_bytes;
+                @memcpy(buf[idx .. idx + active.len], active);
+                idx += active.len;
             }
             buf[idx] = '\n';
             idx += 1;

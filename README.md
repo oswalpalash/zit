@@ -89,6 +89,11 @@ _ = try app.scheduleTimer(1000, 1000, struct {
 ```
 `tickOnce()`/`pollUntil()` keep event processing non-blocking when you embed Zit in another loop, and `startBackgroundTask()` emits a completion event once background work finishes (or is cancelled) without stalling the UI thread.
 
+## Internationalization
+- Grapheme-aware rendering keeps emoji/CJK/combining sequences aligned and draws RTL text in visual order when needed.
+- Flex rows understand RTL flow via `layout.FlexLayout.layoutDirection(.rtl)`, and `Renderer.setTextDirection()` flips string ordering per-call.
+- `zit.i18n` ships message catalogs, plural helpers, and lightweight date/number formatting to externalize user-facing strings.
+
 ## Comparison
 
 | Capability            | Zit | Other Zig TUIs |

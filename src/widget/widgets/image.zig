@@ -310,7 +310,7 @@ test "image widget block rendering combines two rows" {
     try image.widget.draw(&renderer);
 
     const cell = renderer.back.getCell(0, 0).*;
-    try std.testing.expectEqual(@as(u21, '█'), cell.char);
+    try std.testing.expectEqual(@as(u21, '█'), cell.codepoint());
 }
 
 test "image widget braille rendering emits dot patterns" {
@@ -334,5 +334,5 @@ test "image widget braille rendering emits dot patterns" {
     try image.widget.draw(&renderer);
 
     const cell = renderer.back.getCell(0, 0).*;
-    try std.testing.expect(cell.char != ' ');
+    try std.testing.expect(cell.codepoint() != ' ');
 }
