@@ -12,12 +12,12 @@ pub const MenuItem = struct {
     data: ?*anyopaque = null,
 };
 
-/// Lightweight context menu that can be opened at an arbitrary position.
-pub const ContextMenu = struct {
-    widget: base.Widget,
-    allocator: std.mem.Allocator,
-    items: std.ArrayList(MenuItem),
-    theme_value: theme.Theme,
+    /// Lightweight context menu that can be opened at an arbitrary position.
+    pub const ContextMenu = struct {
+        widget: base.Widget,
+        allocator: std.mem.Allocator,
+        items: std.ArrayList(MenuItem),
+        theme_value: theme.Theme,
     open: bool = false,
     selected: usize = 0,
     max_visible: usize = 8,
@@ -37,7 +37,7 @@ pub const ContextMenu = struct {
         self.* = ContextMenu{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
-            .items = std.ArrayList(MenuItem).init(allocator),
+            .items = try std.ArrayList(MenuItem).initCapacity(allocator, 0),
             .theme_value = theme.Theme.dark(),
         };
         return self;
@@ -45,13 +45,13 @@ pub const ContextMenu = struct {
 
     pub fn deinit(self: *ContextMenu) void {
         self.clear();
-        self.items.deinit();
+        self.items.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
     pub fn addItem(self: *ContextMenu, label: []const u8, enabled: bool, data: ?*anyopaque) !void {
         const copy = try self.allocator.dupe(u8, label);
-        try self.items.append(.{ .label = copy, .enabled = enabled, .data = data });
+        try self.items.append(self.allocator, .{ .label = copy, .enabled = enabled, .data = data });
     }
 
     pub fn clear(self: *ContextMenu) void {

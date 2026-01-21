@@ -26,7 +26,7 @@ const StatusLine = struct {
     text: []const u8 = "Fill the fields, Tab to move, Enter to advance, q quits",
 };
 
-fn setStatus(status: *StatusLine, fmt: []const u8, args: anytype) void {
+fn setStatus(status: *StatusLine, comptime fmt: []const u8, args: anytype) void {
     status.text = std.fmt.bufPrint(&status.buffer, fmt, args) catch status.text;
 }
 
@@ -37,9 +37,9 @@ fn applyFocus(chain: []const *widget.Widget, idx: usize) void {
 
 fn cycleFocus(chain: []const *widget.Widget, idx: *usize, forward: bool) void {
     if (chain.len == 0) return;
-    const delta: isize = if (forward) 1 else -1;
-    const next = (@as(isize, @intCast(idx.*)) + delta + @as(isize, @intCast(chain.len))) % @as(isize, @intCast(chain.len));
-    idx.* = @intCast(next);
+    const len = chain.len;
+    const delta: usize = if (forward) 1 else len - 1;
+    idx.* = (idx.* + delta) % len;
     applyFocus(chain, idx.*);
 }
 
@@ -126,7 +126,7 @@ pub fn main() !void {
     var agree = try widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "I agree to the terms");
     defer agree.deinit();
 
-    var next_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Next \u2192");
+    var next_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Next →");
     defer next_button.deinit();
     next_button.setOnPress(requestNext);
 
@@ -142,7 +142,7 @@ pub fn main() !void {
     var theme_choice = try widget.RadioGroup.init(memory_manager.getWidgetPoolAllocator(), &[_][]const u8{ "Dark", "Light", "High contrast" });
     defer theme_choice.deinit();
 
-    var back_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "\u2190 Back");
+    var back_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "← Back");
     defer back_button.deinit();
     back_button.setOnPress(requestBack);
 
@@ -163,7 +163,7 @@ pub fn main() !void {
         else
             &[_]*widget.Widget{ &newsletter.widget, &updates.widget, &theme_choice.widget, &back_button.widget, &submit_button.widget };
 
-        applyFocus(focus_chain.*, focus_index);
+        applyFocus(focus_chain, focus_index);
         stepper.setStep(step);
 
         renderer.back.clear();
@@ -244,7 +244,7 @@ pub fn main() !void {
 
                     const forward = !(key.modifiers.shift);
                     if (key.key == '\t') {
-                        cycleFocus(focus_chain.*, &focus_index, forward);
+                        cycleFocus(focus_chain, &focus_index, forward);
                         continue;
                     }
 
@@ -286,7 +286,7 @@ pub fn main() !void {
                     if (mouse.button == 1 and mouse.action == .press) {
                         // Click selects nearest widget for focus cycling.
                         focus_index = 0;
-                        applyFocus(focus_chain.*, focus_index);
+                        applyFocus(focus_chain, focus_index);
                     }
                 },
                 .resize => |size| {

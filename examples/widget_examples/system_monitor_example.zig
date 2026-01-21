@@ -17,11 +17,11 @@ const StatusLine = struct {
     text: []const u8 = "q quits, p pauses updates, t toggles theme, type to jump rows",
 };
 
-fn setStatus(status: *StatusLine, fmt: []const u8, args: anytype) void {
+fn setStatus(status: *StatusLine, comptime fmt: []const u8, args: anytype) void {
     status.text = std.fmt.bufPrint(&status.buffer, fmt, args) catch status.text;
 }
 
-fn jitter(random: std.rand.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
+fn jitter(random: std.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
     const delta = (random.float(f32) - 0.5) * spread;
     return std.math.clamp(value + delta, min, max);
 }
@@ -102,7 +102,7 @@ pub fn main() !void {
     }
     table.setSelectedRow(0);
 
-    var themes = [_]theme.Theme{
+    const themes = [_]theme.Theme{
         theme.Theme.dark(),
         theme.Theme.highContrast(),
     };
@@ -138,8 +138,9 @@ pub fn main() !void {
         renderer.drawSmartStr(2, 0, "System monitor demo (t: theme, p: pause, type to search table)", text, bg, render.Style{});
 
         if (!paused) {
-            var random = prng.random();
-            for (processes, 0..) |*proc, idx| {
+            const random = prng.random();
+            for (processes, 0..) |_, idx| {
+                var proc = &processes[idx];
                 proc.cpu = jitter(random, proc.cpu, 0.5, 98, 6);
                 proc.mem = jitter(random, proc.mem, 24, 320, 12);
 
@@ -227,7 +228,11 @@ pub fn main() !void {
                         running = false;
                     } else if (key.key == 'p') {
                         paused = !paused;
-                        setStatus(&status, if (paused) "Paused updates" else "Resumed updates", .{});
+                        if (paused) {
+                            setStatus(&status, "Paused updates", .{});
+                        } else {
+                            setStatus(&status, "Resumed updates", .{});
+                        }
                     } else if (key.key == 't') {
                         theme_idx = (theme_idx + 1) % themes.len;
                         setStatus(&status, "Theme: {s}", .{if (theme_idx == 0) "dark" else "contrast"});

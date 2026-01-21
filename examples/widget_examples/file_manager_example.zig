@@ -24,7 +24,7 @@ const folders = [_]Folder{
     .{ .name = "notes", .files = &[_][]const u8{ "design.md", "roadmap.md", "retro.md" } },
 };
 
-fn setStatus(status: *StatusLine, fmt: []const u8, args: anytype) void {
+fn setStatus(status: *StatusLine, comptime fmt: []const u8, args: anytype) void {
     status.text = std.fmt.bufPrint(&status.buffer, fmt, args) catch status.text;
 }
 
@@ -52,7 +52,7 @@ fn selectedFolder(tree: *widget.TreeView) []const u8 {
     return tree.nodes.items[idx].label;
 }
 
-fn menuSelect(_: usize, item: widget.ContextMenu.MenuItem, ctx: ?*anyopaque) void {
+fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     if (ctx) |ptr| {
         const status = @as(*StatusLine, @ptrCast(@alignCast(ptr)));
         setStatus(status, "Action: {s}", .{item.label});
