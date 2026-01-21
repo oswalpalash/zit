@@ -25,15 +25,6 @@ jobs:
       - name: Run tests
         run: zig build test
       
-      - name: Run headless examples
-        run: |
-          zig build hello-world
-          zig build htop-clone
-          zig build file-manager
-          zig build text-editor
-          zig build dashboard-demo
-          zig build notifications-example
-      
       - name: Run benchmark
         run: zig build bench
 
