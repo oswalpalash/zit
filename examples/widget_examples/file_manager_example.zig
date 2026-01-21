@@ -5,6 +5,7 @@ const layout = zit.layout;
 const widget = zit.widget;
 const theme = zit.widget.theme;
 const memory = zit.memory;
+const input = zit.input;
 
 const StatusLine = struct {
     buffer: [160]u8 = undefined,
@@ -59,6 +60,14 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     }
 }
 
+fn enterAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049h");
+}
+
+fn exitAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -74,15 +83,18 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
-    try input_handler.enableMouse();
+
+    try enterAlternateScreen();
+    defer exitAlternateScreen() catch {};
 
     try term.enableRawMode();
+    defer term.disableRawMode() catch {};
+
     try term.hideCursor();
-    defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
-        term.disableRawMode() catch {};
-    }
+    defer term.showCursor() catch {};
+
+    try input_handler.enableMouse();
+    defer input_handler.disableMouse() catch {};
 
     var tree = try widget.TreeView.init(memory_manager.getWidgetPoolAllocator());
     defer tree.deinit();
@@ -190,6 +202,18 @@ pub fn main() !void {
 
                     // Let the context menu consume keys when open.
                     if (ctx_menu.open and try ctx_menu.widget.handleEvent(event)) continue;
+
+                    if (!ctx_menu.open and (key.key == '\n' or key.key == input.KeyCode.ENTER)) {
+                        if (focused_tree) {
+                            const folder = selectedFolder(tree);
+                            try loadFiles(list, folder);
+                            setStatus(&status, "Opened {s}", .{folder});
+                        } else {
+                            const label = list.getSelectedItem() orelse "(nothing)";
+                            setStatus(&status, "Opened {s}", .{label});
+                        }
+                        continue;
+                    }
 
                     if (focused_tree) {
                         if (try tree.widget.handleEvent(event)) {
