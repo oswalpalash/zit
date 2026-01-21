@@ -51,6 +51,7 @@ fn namedToRgb(color: render.NamedColor) render.RgbColor {
 fn toRgb(color: render.Color) render.RgbColor {
     return switch (color) {
         .named_color => |named| namedToRgb(named),
+        .ansi_256 => |idx| render.colorToRgb(render.Color.ansi256(idx)),
         .rgb_color => |rgb| rgb,
     };
 }

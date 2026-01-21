@@ -67,6 +67,7 @@ pub const RgbColor = struct {
 pub const Color = union(enum) {
     named_color: NamedColor,
     rgb_color: RgbColor,
+    ansi_256: u8,
 
     /// Create a new named color
     pub fn named(color: NamedColor) Color {
@@ -78,11 +79,17 @@ pub const Color = union(enum) {
         return Color{ .rgb_color = RgbColor.init(r, g, b) };
     }
 
+    /// Create a 256-color palette entry
+    pub fn ansi256(index: u8) Color {
+        return Color{ .ansi_256 = index };
+    }
+
     /// Convert to foreground color code
     pub fn toFg(self: Color) AnsiCode {
         return switch (self) {
             .named_color => |c| c.toFg(),
             .rgb_color => |c| c.toAnsi(false),
+            .ansi_256 => |idx| ansi256ToAnsi(idx, false),
         };
     }
 
@@ -91,6 +98,7 @@ pub const Color = union(enum) {
         return switch (self) {
             .named_color => |c| c.toBg(),
             .rgb_color => |c| c.toAnsi(true),
+            .ansi_256 => |idx| ansi256ToAnsi(idx, true),
         };
     }
 };
@@ -255,28 +263,159 @@ fn appendAnsi(current: AnsiCode, fragment: []const u8) AnsiCode {
     return out;
 }
 
-fn colorToRgb(color: Color) RgbColor {
+const color_cube_levels = [_]u8{ 0, 95, 135, 175, 215, 255 };
+const base16_palette = [_]NamedColor{
+    .black,
+    .red,
+    .green,
+    .yellow,
+    .blue,
+    .magenta,
+    .cyan,
+    .white,
+    .bright_black,
+    .bright_red,
+    .bright_green,
+    .bright_yellow,
+    .bright_blue,
+    .bright_magenta,
+    .bright_cyan,
+    .bright_white,
+};
+
+fn namedColorToRgb(named: NamedColor) RgbColor {
+    return switch (named) {
+        .black => RgbColor.init(0, 0, 0),
+        .red => RgbColor.init(205, 0, 0),
+        .green => RgbColor.init(0, 205, 0),
+        .yellow => RgbColor.init(205, 205, 0),
+        .blue => RgbColor.init(0, 0, 238),
+        .magenta => RgbColor.init(205, 0, 205),
+        .cyan => RgbColor.init(0, 205, 205),
+        .white => RgbColor.init(229, 229, 229),
+        .default => RgbColor.init(0, 0, 0),
+        .bright_black => RgbColor.init(102, 102, 102),
+        .bright_red => RgbColor.init(255, 0, 0),
+        .bright_green => RgbColor.init(0, 255, 0),
+        .bright_yellow => RgbColor.init(255, 255, 0),
+        .bright_blue => RgbColor.init(92, 92, 255),
+        .bright_magenta => RgbColor.init(255, 0, 255),
+        .bright_cyan => RgbColor.init(0, 255, 255),
+        .bright_white => RgbColor.init(255, 255, 255),
+    };
+}
+
+fn colorDistanceSquared(a: RgbColor, b: RgbColor) u32 {
+    const dr = @as(i32, a.r) - @as(i32, b.r);
+    const dg = @as(i32, a.g) - @as(i32, b.g);
+    const db = @as(i32, a.b) - @as(i32, b.b);
+    return @intCast((dr * dr) + (dg * dg) + (db * db));
+}
+
+fn componentToIndex(value: u8) u8 {
+    if (value < 48) return 0;
+    if (value > 248) return 5;
+    return @intCast((@as(u16, value) - 35) / 40);
+}
+
+fn componentToValue(idx: u8) u8 {
+    return color_cube_levels[idx];
+}
+
+fn grayscaleIndex(value: u8) u8 {
+    if (value < 8) return 0;
+    if (value > 238) return 23;
+    return @intCast((@as(u16, value) - 8) / 10);
+}
+
+fn rgbToAnsi256(rgb: RgbColor) u8 {
+    const r_idx = componentToIndex(rgb.r);
+    const g_idx = componentToIndex(rgb.g);
+    const b_idx = componentToIndex(rgb.b);
+
+    const cube = RgbColor.init(componentToValue(r_idx), componentToValue(g_idx), componentToValue(b_idx));
+    const cube_index: u8 = @intCast(16 + (36 * r_idx) + (6 * g_idx) + b_idx);
+    const avg = (@as(u32, rgb.r) + @as(u32, rgb.g) + @as(u32, rgb.b)) / 3;
+    const gray_level = grayscaleIndex(@intCast(avg));
+    const gray_value: u8 = @intCast(8 + gray_level * 10);
+    const gray_rgb = RgbColor.init(gray_value, gray_value, gray_value);
+    const gray_index: u8 = @intCast(232 + gray_level);
+
+    const cube_dist = colorDistanceSquared(rgb, cube);
+    const gray_dist = colorDistanceSquared(rgb, gray_rgb);
+
+    return if (gray_dist < cube_dist) gray_index else cube_index;
+}
+
+fn ansi256ToRgb(index: u8) RgbColor {
+    if (index < 16) {
+        return namedColorToRgb(base16_palette[index]);
+    }
+
+    if (index >= 232) {
+        const level: u8 = @intCast(8 + (index - 232) * 10);
+        return RgbColor.init(level, level, level);
+    }
+
+    const idx = index - 16;
+    const r_idx = idx / 36;
+    const g_idx = (idx / 6) % 6;
+    const b_idx = idx % 6;
+
+    return RgbColor.init(
+        componentToValue(r_idx),
+        componentToValue(g_idx),
+        componentToValue(b_idx),
+    );
+}
+
+fn ansi256ToAnsi(index: u8, is_bg: bool) AnsiCode {
+    var result: [16]u8 = undefined;
+    const written = (if (is_bg)
+        std.fmt.bufPrint(&result, "48;5;{d}", .{index})
+    else
+        std.fmt.bufPrint(&result, "38;5;{d}", .{index})) catch {
+        return if (is_bg) NamedColor.default.toBg() else NamedColor.default.toFg();
+    };
+
+    return AnsiCode.fromSlice(written);
+}
+
+fn closestNamedColor(rgb: RgbColor) NamedColor {
+    var best = NamedColor.black;
+    var best_distance: u32 = std.math.maxInt(u32);
+    for (base16_palette) |named| {
+        const dist = colorDistanceSquared(rgb, namedColorToRgb(named));
+        if (dist < best_distance) {
+            best_distance = dist;
+            best = named;
+        }
+    }
+    return best;
+}
+
+fn colorsEqual(lhs: Color, rhs: Color) bool {
+    return switch (lhs) {
+        .named_color => |ln| switch (rhs) {
+            .named_color => |rn| ln == rn,
+            else => false,
+        },
+        .rgb_color => |lr| switch (rhs) {
+            .rgb_color => |rr| lr.r == rr.r and lr.g == rr.g and lr.b == rr.b,
+            else => false,
+        },
+        .ansi_256 => |li| switch (rhs) {
+            .ansi_256 => |ri| li == ri,
+            else => false,
+        },
+    };
+}
+
+pub fn colorToRgb(color: Color) RgbColor {
     return switch (color) {
         .rgb_color => |rgb| rgb,
-        .named_color => |named| switch (named) {
-            .black => RgbColor.init(0, 0, 0),
-            .red => RgbColor.init(255, 0, 0),
-            .green => RgbColor.init(0, 255, 0),
-            .yellow => RgbColor.init(255, 255, 0),
-            .blue => RgbColor.init(0, 0, 255),
-            .magenta => RgbColor.init(255, 0, 255),
-            .cyan => RgbColor.init(0, 255, 255),
-            .white => RgbColor.init(255, 255, 255),
-            .default => RgbColor.init(0, 0, 0),
-            .bright_black => RgbColor.init(80, 80, 80),
-            .bright_red => RgbColor.init(255, 64, 64),
-            .bright_green => RgbColor.init(64, 255, 64),
-            .bright_yellow => RgbColor.init(255, 255, 128),
-            .bright_blue => RgbColor.init(64, 64, 255),
-            .bright_magenta => RgbColor.init(255, 64, 255),
-            .bright_cyan => RgbColor.init(64, 255, 255),
-            .bright_white => RgbColor.init(255, 255, 255),
-        },
+        .ansi_256 => |idx| ansi256ToRgb(idx),
+        .named_color => |named| namedColorToRgb(named),
     };
 }
 
@@ -359,49 +498,8 @@ pub const Cell = struct {
     pub fn eql(self: Cell, other: Cell) bool {
         if (self.char != other.char) return false;
 
-        // Compare foreground colors
-        switch (self.fg) {
-            .named_color => |self_named| {
-                switch (other.fg) {
-                    .named_color => |other_named| {
-                        if (self_named != other_named) return false;
-                    },
-                    .rgb_color => return false,
-                }
-            },
-            .rgb_color => |self_rgb| {
-                switch (other.fg) {
-                    .named_color => return false,
-                    .rgb_color => |other_rgb| {
-                        if (self_rgb.r != other_rgb.r or
-                            self_rgb.g != other_rgb.g or
-                            self_rgb.b != other_rgb.b) return false;
-                    },
-                }
-            },
-        }
-
-        // Compare background colors
-        switch (self.bg) {
-            .named_color => |self_named| {
-                switch (other.bg) {
-                    .named_color => |other_named| {
-                        if (self_named != other_named) return false;
-                    },
-                    .rgb_color => return false,
-                }
-            },
-            .rgb_color => |self_rgb| {
-                switch (other.bg) {
-                    .named_color => return false,
-                    .rgb_color => |other_rgb| {
-                        if (self_rgb.r != other_rgb.r or
-                            self_rgb.g != other_rgb.g or
-                            self_rgb.b != other_rgb.b) return false;
-                    },
-                }
-            },
-        }
+        if (!colorsEqual(self.fg, other.fg)) return false;
+        if (!colorsEqual(self.bg, other.bg)) return false;
 
         // Compare styles
         if (self.style.bold != other.style.bold or
@@ -619,54 +717,24 @@ pub const TerminalCapabilities = struct {
     /// Get the best available color for the given color
     pub fn bestColor(self: TerminalCapabilities, color: Color) Color {
         return switch (color) {
-            .rgb_color => |rgb| {
+            .rgb_color => |rgb| bestColorFromRgb(self, rgb),
+            .ansi_256 => |idx| {
                 if (self.rgb_colors) {
-                    return color;
-                } else if (self.colors_256) {
-                    // Convert RGB to approximate 256 color index
-                    // This is a simple approximation, a real implementation would use a proper mapping
-                    const r = @divFloor(rgb.r, 51);
-                    const g = @divFloor(rgb.g, 51);
-                    const b = @divFloor(rgb.b, 51);
-
-                    if (r == g and g == b) {
-                        // Grayscale
-                        const gray = r;
-                        if (gray == 0) return Color.named(NamedColor.default); // Changed from .black to .default
-                        if (gray == 5) return Color.named(NamedColor.white);
-                        return Color.named(NamedColor.default); // Fallback
-                    }
-
-                    // Find closest basic color
-                    if (r > 3 and g < 2 and b < 2) return Color.named(NamedColor.red);
-                    if (r < 2 and g > 3 and b < 2) return Color.named(NamedColor.green);
-                    if (r < 2 and g < 2 and b > 3) return Color.named(NamedColor.blue);
-                    if (r > 3 and g > 3 and b < 2) return Color.named(NamedColor.yellow);
-                    if (r > 3 and g < 2 and b > 3) return Color.named(NamedColor.magenta);
-                    if (r < 2 and g > 3 and b > 3) return Color.named(NamedColor.cyan);
-
-                    return Color.named(NamedColor.default); // Fallback
-                } else {
-                    // Find closest basic color
-                    const r = rgb.r;
-                    const g = rgb.g;
-                    const b = rgb.b;
-
-                    if (r > 200 and g < 100 and b < 100) return Color.named(NamedColor.red);
-                    if (r < 100 and g > 200 and b < 100) return Color.named(NamedColor.green);
-                    if (r < 100 and g < 100 and b > 200) return Color.named(NamedColor.blue);
-                    if (r > 200 and g > 200 and b < 100) return Color.named(NamedColor.yellow);
-                    if (r > 200 and g < 100 and b > 200) return Color.named(NamedColor.magenta);
-                    if (r < 100 and g > 200 and b > 200) return Color.named(NamedColor.cyan);
-                    if (r > 200 and g > 200 and b > 200) return Color.named(NamedColor.white);
-                    // For very dark colors, use default instead of black
-                    if (r < 100 and g < 100 and b < 100) return Color.named(NamedColor.default); // Changed from .black to .default
-
-                    return Color.named(NamedColor.default); // Fallback
+                    const rgb = ansi256ToRgb(idx);
+                    return Color.rgb(rgb.r, rgb.g, rgb.b);
                 }
+                if (self.colors_256) return color;
+                return Color.named(closestNamedColor(ansi256ToRgb(idx)));
             },
             .named_color => color,
         };
+    }
+
+    fn bestColorFromRgb(caps: TerminalCapabilities, rgb: RgbColor) Color {
+        if (caps.rgb_colors) return Color.rgb(rgb.r, rgb.g, rgb.b);
+        const idx = rgbToAnsi256(rgb);
+        if (caps.colors_256) return Color.ansi256(idx);
+        return Color.named(closestNamedColor(rgb));
     }
 
     /// Get fallback character for complex unicode
@@ -1145,6 +1213,39 @@ test "renderer draws box outlines" {
     try std.testing.expectEqual(@as(u21, '╝'), renderer.back.getCell(7, 3).char);
     try std.testing.expectEqual(@as(u21, '═'), renderer.back.getCell(3, 0).char);
     try std.testing.expectEqual(@as(u21, '║'), renderer.back.getCell(0, 2).char);
+}
+
+test "bestColor maps rgb to ansi256 palette when needed" {
+    var caps = TerminalCapabilities.init();
+    caps.colors_256 = true;
+    caps.rgb_colors = false;
+
+    const resolved = caps.bestColor(Color.rgb(255, 0, 0));
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .ansi_256), std.meta.activeTag(resolved));
+    try std.testing.expectEqual(@as(u8, 196), resolved.ansi_256);
+}
+
+test "bestColor upgrades ansi256 to rgb when supported" {
+    var caps = TerminalCapabilities.init();
+    caps.rgb_colors = true;
+
+    const resolved = caps.bestColor(Color.ansi256(46));
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .rgb_color), std.meta.activeTag(resolved));
+    const rgb = resolved.rgb_color;
+    const expected = ansi256ToRgb(46);
+    try std.testing.expectEqual(expected.r, rgb.r);
+    try std.testing.expectEqual(expected.g, rgb.g);
+    try std.testing.expectEqual(expected.b, rgb.b);
+}
+
+test "bestColor collapses to nearest named color on ansi16 terminals" {
+    var caps = TerminalCapabilities.init();
+    caps.colors_256 = false;
+    caps.rgb_colors = false;
+
+    const resolved = caps.bestColor(Color.rgb(10, 200, 10));
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .named_color), std.meta.activeTag(resolved));
+    try std.testing.expectEqual(NamedColor.green, resolved.named_color);
 }
 
 test "styled box paints drop shadow" {
