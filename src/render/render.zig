@@ -840,6 +840,9 @@ pub const Renderer = struct {
     cursor_dirty: bool = true,
     /// Terminal capabilities
     capabilities: TerminalCapabilities,
+    /// Reusable scratch buffers to minimize per-frame allocations
+    style_scratch: std.ArrayListUnmanaged(u8) = .{},
+    output_batch: std.ArrayListUnmanaged(u8) = .{},
 
     /// Initialize a new renderer
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) !Renderer {
@@ -860,6 +863,8 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         self.front.deinit();
         self.back.deinit();
+        self.style_scratch.deinit(self.allocator);
+        self.output_batch.deinit(self.allocator);
     }
 
     /// Resize the buffers
@@ -901,6 +906,18 @@ pub const Renderer = struct {
             const written = try writer.write(remaining);
             remaining = remaining[written..];
         }
+    }
+
+    fn flushOutput(self: *Renderer, writer: anytype) !void {
+        if (self.output_batch.items.len == 0) return;
+        try writeAllGeneric(writer, self.output_batch.items);
+        self.output_batch.clearRetainingCapacity();
+    }
+
+    fn appendCursorMove(self: *Renderer, x: u16, y: u16) !void {
+        var cursor_buf: [32]u8 = undefined;
+        const cursor_seq = try std.fmt.bufPrint(&cursor_buf, "\x1b[{};{}H", .{ y + 1, x + 1 });
+        try self.output_batch.appendSlice(self.allocator, cursor_seq);
     }
 
     /// Draw a character at the specified position with capability fallbacks
@@ -1098,18 +1115,14 @@ pub const Renderer = struct {
     pub fn renderToWriter(self: *Renderer, writer: anytype) !void {
         if (!self.has_dirty and !self.cursor_dirty) return;
 
-        var style_buf = std.ArrayListUnmanaged(u8){};
-        defer style_buf.deinit(self.allocator);
-
-        // Buffer for batched writes to reduce syscalls
-        var output_buffer = std.ArrayListUnmanaged(u8){};
-        defer output_buffer.deinit(self.allocator);
+        self.style_scratch.clearRetainingCapacity();
+        self.output_batch.clearRetainingCapacity();
 
         var current_fg: ?Color = null;
         var current_bg: ?Color = null;
         var current_style = Style{};
         // Hide cursor during rendering to prevent flicker
-        try writeAllGeneric(writer, "\x1b[?25l");
+        try self.output_batch.appendSlice(self.allocator, "\x1b[?25l");
 
         if (self.has_dirty) {
             const dirty_start_y: u16 = self.dirty_min_y;
@@ -1127,7 +1140,7 @@ pub const Renderer = struct {
                     if (front_cell.eql(back_cell.*)) continue;
 
                     // Position cursor
-                    try std.fmt.format(output_buffer.writer(self.allocator), "\x1b[{};{}H", .{ y + 1, x + 1 });
+                    try self.appendCursorMove(@intCast(x), @intCast(y));
 
                     // Update styles if needed
                     var need_style_update = false;
@@ -1148,47 +1161,42 @@ pub const Renderer = struct {
                     }
 
                     if (need_style_update) {
-                        style_buf.clearRetainingCapacity();
+                        self.style_scratch.clearRetainingCapacity();
 
-                        try style_buf.appendSlice(self.allocator, "\x1b[");
+                        try self.style_scratch.appendSlice(self.allocator, "\x1b[");
                         const style_code = back_cell.style.toAnsi();
-                        try style_buf.appendSlice(self.allocator, style_code.slice());
+                        try self.style_scratch.appendSlice(self.allocator, style_code.slice());
 
-                        try style_buf.appendSlice(self.allocator, ";");
+                        try self.style_scratch.appendSlice(self.allocator, ";");
                         const fg_code = back_cell.fg.toFg();
-                        try style_buf.appendSlice(self.allocator, fg_code.slice());
+                        try self.style_scratch.appendSlice(self.allocator, fg_code.slice());
 
-                        try style_buf.appendSlice(self.allocator, ";");
+                        try self.style_scratch.appendSlice(self.allocator, ";");
                         const bg_code = back_cell.bg.toBg();
-                        try style_buf.appendSlice(self.allocator, bg_code.slice());
+                        try self.style_scratch.appendSlice(self.allocator, bg_code.slice());
 
-                        try style_buf.appendSlice(self.allocator, "m");
+                        try self.style_scratch.appendSlice(self.allocator, "m");
 
-                        try output_buffer.appendSlice(self.allocator, style_buf.items);
+                        try self.output_batch.appendSlice(self.allocator, self.style_scratch.items);
                     }
 
                     var char_buf: [4]u8 = undefined;
                     const len = try std.unicode.utf8Encode(back_cell.char, &char_buf);
-                    try output_buffer.appendSlice(self.allocator, char_buf[0..len]);
+                    try self.output_batch.appendSlice(self.allocator, char_buf[0..len]);
 
-                    if (output_buffer.items.len > 1024) {
-                        try writeAllGeneric(writer, output_buffer.items);
-                        output_buffer.clearRetainingCapacity();
+                    if (self.output_batch.items.len > 4096) {
+                        try self.flushOutput(writer);
                     }
                 }
             }
         }
 
-        if (output_buffer.items.len > 0) {
-            try writeAllGeneric(writer, output_buffer.items);
-        }
+        try self.flushOutput(writer);
 
-        try writeAllGeneric(writer, "\x1b[0m");
-
-        var cursor_buf: [32]u8 = undefined;
-        const cursor_seq = try std.fmt.bufPrint(&cursor_buf, "\x1b[{};{}H", .{ self.cursor_y + 1, self.cursor_x + 1 });
-        try writeAllGeneric(writer, cursor_seq);
-        if (self.cursor_visible) try writeAllGeneric(writer, "\x1b[?25h");
+        try self.output_batch.appendSlice(self.allocator, "\x1b[0m");
+        try self.appendCursorMove(self.cursor_x, self.cursor_y);
+        if (self.cursor_visible) try self.output_batch.appendSlice(self.allocator, "\x1b[?25h");
+        try self.flushOutput(writer);
 
         // Swap buffers
         const temp = self.front;

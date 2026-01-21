@@ -8,6 +8,8 @@ const InputField = @import("widgets/input_field.zig").InputField;
 const TextArea = @import("widgets/text_area.zig").TextArea;
 const ProgressBar = @import("widgets/progress_bar.zig").ProgressBar;
 const ProgressDirection = @import("widgets/progress_bar.zig").ProgressDirection;
+const Table = @import("widgets/table.zig").Table;
+const BorderStyle = @import("../render/render.zig").BorderStyle;
 
 /// Shared configuration for all builders.
 const Common = struct {
@@ -592,6 +594,93 @@ pub const ProgressBarBuilder = struct {
     }
 };
 
+/// Fluent builder for tables with optional string interning.
+pub const TableBuilder = struct {
+    allocator: std.mem.Allocator,
+    columns: std.ArrayListUnmanaged(TableColumnSpec) = .{},
+    show_headers: bool = true,
+    show_grid: bool = true,
+    border: BorderStyle = .none,
+    intern_strings: bool = true,
+    common: Common = .{},
+
+    pub fn init(allocator: std.mem.Allocator) TableBuilder {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn addColumn(self: *TableBuilder, spec: TableColumnSpec) !*TableBuilder {
+        try self.columns.append(self.allocator, spec);
+        return self;
+    }
+
+    pub fn headers(self: *TableBuilder, show: bool) *TableBuilder {
+        self.show_headers = show;
+        return self;
+    }
+
+    pub fn grid(self: *TableBuilder, show: bool) *TableBuilder {
+        self.show_grid = show;
+        return self;
+    }
+
+    pub fn borderStyle(self: *TableBuilder, style: BorderStyle) *TableBuilder {
+        self.border = style;
+        return self;
+    }
+
+    pub fn internText(self: *TableBuilder, enable: bool) *TableBuilder {
+        self.intern_strings = enable;
+        return self;
+    }
+
+    pub fn id(self: *TableBuilder, value: []const u8) *TableBuilder {
+        self.common.id = value;
+        return self;
+    }
+
+    pub fn class(self: *TableBuilder, value: []const u8) *TableBuilder {
+        self.common.class = value;
+        return self;
+    }
+
+    pub fn enabled(self: *TableBuilder, value: bool) *TableBuilder {
+        self.common.enabled = value;
+        return self;
+    }
+
+    pub fn visible(self: *TableBuilder, value: bool) *TableBuilder {
+        self.common.visible = value;
+        return self;
+    }
+
+    pub fn build(self: *TableBuilder) !*Table {
+        var table = try Table.init(self.allocator);
+
+        if (self.intern_strings) {
+            try table.enableStringInterning();
+        }
+
+        table.setShowHeaders(self.show_headers);
+        table.setShowGrid(self.show_grid);
+        table.setBorder(self.border);
+
+        for (self.columns.items) |col| {
+            try table.addColumn(col.header, col.width, col.resizable);
+        }
+
+        self.common.apply(&table.widget);
+
+        self.columns.deinit(self.allocator);
+        return table;
+    }
+};
+
+pub const TableColumnSpec = struct {
+    header: []const u8,
+    width: u16 = 12,
+    resizable: bool = true,
+};
+
 test "button builder creates focused button with defaults and chaining" {
     const alloc = std.testing.allocator;
     const State = struct {
@@ -654,4 +743,14 @@ test "progress bar builder wires value and colors" {
 
     try std.testing.expectEqual(@as(u8, 42), bar.progress);
     try std.testing.expectEqual(render.NamedColor.cyan, bar.fill_fg.named_color);
+}
+
+test "table builder enables interning and columns" {
+    const alloc = std.testing.allocator;
+    var builder = TableBuilder.init(alloc);
+    var table = try builder.addColumn(.{ .header = "ID", .width = 4 }).addColumn(.{ .header = "Name", .width = 8 }).build();
+    defer table.deinit();
+
+    try std.testing.expect(table.stringInternStats() != null);
+    try std.testing.expectEqual(@as(usize, 2), table.columns.items.len);
 }

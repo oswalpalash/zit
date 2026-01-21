@@ -288,7 +288,7 @@ pub fn build(b: *std.Build) void {
         exe_step.dependOn(&run_exe.step);
     }
 
-    // Rendering benchmark
+    // Rendering micro-benchmark
     const render_bench_module = b.createModule(.{
         .root_source_file = b.path("examples/benchmarks/render_bench.zig"),
         .target = target,
@@ -304,6 +304,24 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(render_bench);
 
     const run_render_bench = b.addRunArtifact(render_bench);
-    const bench_step = b.step("bench", "Run rendering benchmark");
-    bench_step.dependOn(&run_render_bench.step);
+    const render_bench_step = b.step("render-bench", "Run rendering micro-benchmark");
+    render_bench_step.dependOn(&run_render_bench.step);
+
+    // Comprehensive benchmark suite
+    const bench_suite_module = b.createModule(.{
+        .root_source_file = b.path("examples/benchmarks/bench_suite.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_suite_module.addImport("zit", zit_module);
+
+    const bench_suite = b.addExecutable(.{
+        .name = "bench_suite",
+        .root_module = bench_suite_module,
+    });
+    b.installArtifact(bench_suite);
+
+    const run_bench_suite = b.addRunArtifact(bench_suite);
+    const bench_step = b.step("bench", "Run benchmark suite");
+    bench_step.dependOn(&run_bench_suite.step);
 }

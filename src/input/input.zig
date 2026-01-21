@@ -225,6 +225,48 @@ pub const Event = union(EventType) {
     unknown: void,
 };
 
+/// Lightweight decoder for synthetic event streams (benchmarks, tests).
+pub fn decodeEventFromBytes(bytes: []const u8) !?Event {
+    if (bytes.len == 0) return null;
+
+    var stream = std.io.fixedBufferStream(bytes);
+    var reader = stream.reader();
+    var sink = ByteSink{};
+
+    const first = reader.readByte() catch return null;
+    sink.put(first);
+
+    if (first == KeyCode.ESCAPE) {
+        const maybe_next = reader.readByte() catch {
+            return Event{ .key = KeyEvent.init(KeyCode.ESCAPE, KeyModifiers{}) };
+        };
+        sink.put(maybe_next);
+
+        if (maybe_next == '[') {
+            return try parseCSISequence(reader, &sink);
+        }
+
+        return Event{ .key = KeyEvent.init(maybe_next, KeyModifiers{ .alt = true }) };
+    }
+
+    if (first == '\r' or first == '\n') {
+        return Event{ .key = KeyEvent.init(KeyCode.ENTER, KeyModifiers{}) };
+    }
+
+    return Event{ .key = KeyEvent.init(first, KeyModifiers{}) };
+}
+
+const ByteSink = struct {
+    buf: [32]u8 = undefined,
+    len: usize = 0,
+
+    fn put(self: *ByteSink, byte: u8) void {
+        if (self.len >= self.buf.len) return;
+        self.buf[self.len] = byte;
+        self.len += 1;
+    }
+};
+
 /// Editor-style actions used by configurable keybinding profiles.
 pub const EditorAction = enum {
     cursor_left,
