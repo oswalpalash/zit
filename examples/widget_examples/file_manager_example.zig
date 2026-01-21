@@ -110,7 +110,7 @@ pub fn main() !void {
     tree.nodes.items[scripts].expanded = true;
     tree.nodes.items[third_party].expanded = true;
     tree.nodes.items[notes].expanded = true;
-    tree.setTheme(theme.Theme.dark());
+    try tree.setTheme(theme.Theme.dark());
     tree.widget.setFocus(true);
 
     var list = try widget.List.init(memory_manager.getWidgetPoolAllocator());
@@ -140,7 +140,7 @@ pub fn main() !void {
     try ctx_menu.addItem("Copy path", true, null);
     try ctx_menu.addItem("Mark favorite", true, null);
     ctx_menu.setMaxVisible(6);
-    ctx_menu.setTheme(theme.Theme.highContrast());
+    try ctx_menu.setTheme(theme.Theme.highContrast());
     ctx_menu.setOnSelect(menuSelect, &status);
     const menu_pref = try ctx_menu.widget.getPreferredSize();
     try ctx_menu.widget.layout(layout.Rect.init(0, 0, menu_pref.width, menu_pref.height));

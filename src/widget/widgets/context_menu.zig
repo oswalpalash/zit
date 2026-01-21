@@ -62,7 +62,7 @@ pub const ContextMenu = struct {
         self.selected = 0;
     }
 
-    pub fn setTheme(self: *ContextMenu, t: theme.Theme) void {
+    pub fn setTheme(self: *ContextMenu, t: theme.Theme) !void {
         self.theme_value = t;
     }
 

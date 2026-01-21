@@ -56,7 +56,7 @@ pub const TreeView = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn setTheme(self: *TreeView, palette: theme.Theme) void {
+    pub fn setTheme(self: *TreeView, palette: theme.Theme) !void {
         self.palette = palette;
     }
 
