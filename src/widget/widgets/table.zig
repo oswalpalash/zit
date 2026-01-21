@@ -23,6 +23,11 @@ pub const TableCellView = struct {
     bg: ?render.Color = null,
 };
 
+const ViewRow = union(enum) {
+    data: usize,
+    group: []u8,
+};
+
 /// TableColumn structure
 pub const TableColumn = struct {
     /// Column header
@@ -31,6 +36,8 @@ pub const TableColumn = struct {
     width: u16,
     /// Column is resizable
     resizable: bool = true,
+    /// Column can be sorted via header interactions
+    sortable: bool = true,
 };
 
 /// Delegate for supplying table rows without storing them in the widget.
@@ -106,6 +113,28 @@ pub const Table = struct {
     virtual_sample_limit: usize = 256,
     /// Limit for typeahead search when using providers
     typeahead_scan_limit: usize = 1024,
+    /// Optional sort column
+    sort_column: ?usize = null,
+    /// Sort direction
+    sort_descending: bool = false,
+    /// Optional grouping column
+    grouping_column: ?usize = null,
+    /// Ordered list of row indices after sorting/grouping
+    visible_order: std.ArrayList(usize),
+    /// View rows including group headers
+    view_rows: std.ArrayList(ViewRow),
+    /// Whether the view needs to be rebuilt
+    view_dirty: bool = true,
+    /// Column currently active for cell-level operations
+    selected_column: usize = 0,
+    /// Active resize state
+    resizing_column: ?usize = null,
+    resize_anchor_x: u16 = 0,
+    resize_original_width: u16 = 0,
+    /// Inline editing buffer
+    edit_buffer: std.ArrayListUnmanaged(u8),
+    editing_row: ?usize = null,
+    editing_col: ?usize = null,
 
     /// Virtual method table for Table
     pub const vtable = base.Widget.VTable{
@@ -125,6 +154,10 @@ pub const Table = struct {
             .columns = std.ArrayList(TableColumn).empty,
             .rows = std.ArrayList(std.ArrayList(TableCell)).empty,
             .allocator = allocator,
+            .visible_order = std.ArrayList(usize).empty,
+            .view_rows = std.ArrayList(ViewRow).empty,
+            .view_dirty = true,
+            .edit_buffer = .{},
         };
 
         return self;
@@ -152,6 +185,10 @@ pub const Table = struct {
         self.rows.deinit(self.allocator);
 
         if (self.string_intern) |*intern| intern.deinit();
+        self.visible_order.deinit(self.allocator);
+        self.clearViewRows();
+        self.view_rows.deinit(self.allocator);
+        self.edit_buffer.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -166,6 +203,60 @@ pub const Table = struct {
             .width = column_width,
             .resizable = resizable,
         });
+        self.view_dirty = true;
+    }
+
+    /// Enable or disable sorting on a given column.
+    pub fn setColumnSortable(self: *Table, column: usize, sortable: bool) void {
+        if (column >= self.columns.items.len) return;
+        self.columns.items[column].sortable = sortable;
+    }
+
+    /// Manually adjust a column width (used by programmatic resize or keyboard).
+    pub fn setColumnWidth(self: *Table, column: usize, width: u16) void {
+        if (column >= self.columns.items.len) return;
+        const clamped = @max(@as(u16, 3), width);
+        self.columns.items[column].width = clamped;
+    }
+
+    /// Sort the table by the given column (or clear sorting when null).
+    pub fn sortBy(self: *Table, column: ?usize, descending: bool) void {
+        if (column) |idx| {
+            if (idx >= self.columns.items.len or !self.columns.items[idx].sortable) return;
+        }
+        self.sort_column = column;
+        self.sort_descending = descending;
+        self.view_dirty = true;
+    }
+
+    /// Toggle sort state for the given column.
+    pub fn toggleSort(self: *Table, column: usize) void {
+        if (column >= self.columns.items.len or !self.columns.items[column].sortable) return;
+        if (self.sort_column != null and self.sort_column.? == column) {
+            self.sort_descending = !self.sort_descending;
+        } else {
+            self.sort_column = column;
+            self.sort_descending = false;
+        }
+        self.view_dirty = true;
+    }
+
+    /// Group rows by the provided column (null disables grouping).
+    pub fn groupBy(self: *Table, column: ?usize) void {
+        if (column) |idx| {
+            if (idx >= self.columns.items.len) return;
+        }
+        self.grouping_column = column;
+        self.view_dirty = true;
+    }
+
+    /// Resize a resizable column by the provided delta.
+    pub fn resizeColumn(self: *Table, column: usize, delta: i16) void {
+        if (column >= self.columns.items.len) return;
+        if (!self.columns.items[column].resizable) return;
+        const base_width = self.columns.items[column].width;
+        const updated = std.math.clamp(@as(i32, base_width) + @as(i32, delta), 3, @as(i32, std.math.maxInt(u16)));
+        self.columns.items[column].width = @intCast(updated);
     }
 
     /// Add a row to the table
@@ -198,6 +289,7 @@ pub const Table = struct {
         }
 
         try self.rows.append(self.allocator, new_row);
+        self.view_dirty = true;
     }
 
     /// Set a cell value
@@ -221,6 +313,60 @@ pub const Table = struct {
             .fg = fg,
             .bg = bg,
         };
+        self.view_dirty = true;
+    }
+
+    fn isEditing(self: *const Table) bool {
+        return self.editing_row != null and self.editing_col != null;
+    }
+
+    /// Begin inline editing on the currently selected cell.
+    pub fn beginEdit(self: *Table) !void {
+        if (self.row_provider != null) return error.VirtualRowsActive;
+        if (self.selected_row == null or self.selected_column >= self.columns.items.len) return;
+
+        const data_row = self.selected_row.?;
+        self.edit_buffer.clearRetainingCapacity();
+        try self.edit_buffer.appendSlice(self.allocator, self.cellView(data_row, self.selected_column).text);
+        self.editing_row = data_row;
+        self.editing_col = self.selected_column;
+    }
+
+    /// Commit any active inline edit.
+    pub fn commitEdit(self: *Table) !void {
+        if (!self.isEditing()) return;
+        try self.setCell(self.editing_row.?, self.editing_col.?, self.edit_buffer.items, null, null);
+        self.cancelEdit();
+    }
+
+    /// Cancel inline editing without applying changes.
+    pub fn cancelEdit(self: *Table) void {
+        self.edit_buffer.clearRetainingCapacity();
+        self.editing_row = null;
+        self.editing_col = null;
+    }
+
+    fn handleEditKey(self: *Table, key_event: input.KeyEvent) bool {
+        if (!self.isEditing()) return false;
+        if (key_event.key == input.KeyCode.ESCAPE) {
+            self.cancelEdit();
+            return true;
+        }
+        if (key_event.key == input.KeyCode.ENTER) {
+            self.commitEdit() catch {};
+            return true;
+        }
+        if (key_event.key == input.KeyCode.BACKSPACE) {
+            if (self.edit_buffer.items.len > 0) {
+                _ = self.edit_buffer.pop();
+            }
+            return true;
+        }
+        if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+            self.edit_buffer.append(self.allocator, @as(u8, @intCast(key_event.key))) catch {};
+            return true;
+        }
+        return false;
     }
 
     /// Enable string interning for all future cell/header text.
@@ -275,6 +421,7 @@ pub const Table = struct {
         if (self.selected_row != null and self.selected_row.? >= self.rows.items.len) {
             self.selected_row = if (self.rows.items.len > 0) self.rows.items.len - 1 else null;
         }
+        self.view_dirty = true;
     }
 
     /// Clear all rows from the table
@@ -283,6 +430,7 @@ pub const Table = struct {
             self.selected_row = null;
             self.first_visible_row = 0;
             self.resetTypeahead();
+            self.view_dirty = true;
             return;
         }
         // Free all row cell text
@@ -299,9 +447,23 @@ pub const Table = struct {
         self.selected_row = null;
         self.first_visible_row = 0;
         self.resetTypeahead();
+        self.cancelEdit();
+        self.clearViewRows();
+        self.visible_order.clearRetainingCapacity();
+        self.view_dirty = true;
         if (self.string_intern) |*intern| {
             intern.clearRetainingCapacity();
         }
+    }
+
+    fn clearViewRows(self: *Table) void {
+        for (self.view_rows.items) |row| {
+            switch (row) {
+                .group => |label| self.allocator.free(label),
+                else => {},
+            }
+        }
+        self.view_rows.clearRetainingCapacity();
     }
 
     fn freeRow(self: *Table, row: *std.ArrayList(TableCell)) void {
@@ -315,16 +477,22 @@ pub const Table = struct {
 
     /// Set the selected row
     pub fn setSelectedRow(self: *Table, row: ?usize) void {
-        const count = self.rowCount();
+        const count = self.dataRowCount();
         if (row != null and row.? >= count) {
             return;
         }
 
         const old_selected = self.selected_row;
+        if (self.isEditing() and (self.editing_row.? != row)) {
+            self.cancelEdit();
+        }
         self.selected_row = row;
 
         // Ensure selected row is visible
         if (row != null) {
+            if (self.columns.items.len > 0 and self.selected_column >= self.columns.items.len) {
+                self.selected_column = self.columns.items.len - 1;
+            }
             self.ensureRowVisible(row.?);
         }
 
@@ -336,14 +504,16 @@ pub const Table = struct {
 
     /// Ensure a row is visible by adjusting first_visible_row
     fn ensureRowVisible(self: *Table, row: usize) void {
+        self.ensureView();
+        const view_idx = self.viewIndexForDataRow(row) orelse return;
         const visible_rows = self.getVisibleRowCount();
 
         if (visible_rows == 0) return;
 
-        if (row < self.first_visible_row) {
-            self.scrollTo(@floatFromInt(row));
-        } else if (row >= self.first_visible_row + visible_rows) {
-            self.scrollTo(@floatFromInt(row - visible_rows + 1));
+        if (view_idx < self.first_visible_row) {
+            self.scrollTo(@floatFromInt(view_idx));
+        } else if (view_idx >= self.first_visible_row + visible_rows) {
+            self.scrollTo(@floatFromInt(view_idx - visible_rows + 1));
         }
     }
 
@@ -423,19 +593,21 @@ pub const Table = struct {
         self.clearRows();
         self.row_provider = provider;
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
+        self.cancelEdit();
+        self.view_dirty = true;
     }
 
     /// Return to owned row storage.
     pub fn clearRowProvider(self: *Table) void {
         self.row_provider = null;
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
+        self.cancelEdit();
+        self.view_dirty = true;
     }
 
     fn rowCount(self: *Table) usize {
-        if (self.row_provider) |provider| {
-            return provider.row_count(provider.ctx);
-        }
-        return self.rows.items.len;
+        self.ensureView();
+        return self.view_rows.items.len;
     }
 
     fn cellView(self: *Table, row: usize, col: usize) TableCellView {
@@ -450,9 +622,145 @@ pub const Table = struct {
         };
     }
 
+    fn dataRowCount(self: *Table) usize {
+        if (self.row_provider) |provider| {
+            return provider.row_count(provider.ctx);
+        }
+        return self.rows.items.len;
+    }
+
+    fn ensureView(self: *Table) void {
+        if (!self.view_dirty) return;
+        self.rebuildOrder();
+        self.rebuildViewRows();
+        self.view_dirty = false;
+    }
+
+    fn rebuildOrder(self: *Table) void {
+        self.visible_order.clearRetainingCapacity();
+        const count = self.dataRowCount();
+        if (count == 0) return;
+        self.visible_order.ensureTotalCapacityPrecise(self.allocator, count) catch return;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            self.visible_order.appendAssumeCapacity(i);
+        }
+
+        const lessThan = struct {
+            fn less(ctx: *Table, lhs: usize, rhs: usize) bool {
+                return ctx.rowLessThan(lhs, rhs);
+            }
+        }.less;
+
+        std.sort.pdq(usize, self.visible_order.items, self, lessThan);
+    }
+
+    fn rowLessThan(self: *Table, lhs: usize, rhs: usize) bool {
+        if (self.grouping_column) |group_col| {
+            const ord = self.compareCell(lhs, rhs, group_col);
+            if (ord != .eq) return ord == .lt;
+        }
+
+        if (self.sort_column) |col| {
+            const ord = self.compareCell(lhs, rhs, col);
+            if (ord != .eq) {
+                return if (self.sort_descending) ord == .gt else ord == .lt;
+            }
+        }
+
+        return lhs < rhs;
+    }
+
+    fn compareCell(self: *Table, lhs: usize, rhs: usize, col: usize) std.math.Order {
+        if (col >= self.columns.items.len) return .eq;
+        const a_text = self.cellView(lhs, col).text;
+        const b_text = self.cellView(rhs, col).text;
+        return std.mem.order(u8, a_text, b_text);
+    }
+
+    fn rebuildViewRows(self: *Table) void {
+        self.clearViewRows();
+        if (self.visible_order.items.len == 0) return;
+
+        if (self.grouping_column) |group_col| {
+            var last_key: []const u8 = "";
+            var has_key = false;
+            for (self.visible_order.items) |row_idx| {
+                const key = self.cellView(row_idx, group_col).text;
+                const is_new = !has_key or !std.mem.eql(u8, key, last_key);
+                if (is_new) {
+                    const copy = self.allocator.dupe(u8, key) catch break;
+                    self.view_rows.append(self.allocator, .{ .group = copy }) catch {
+                        self.allocator.free(copy);
+                        break;
+                    };
+                    last_key = copy;
+                    has_key = true;
+                }
+                self.view_rows.append(self.allocator, .{ .data = row_idx }) catch break;
+            }
+        } else {
+            for (self.visible_order.items) |row_idx| {
+                self.view_rows.append(self.allocator, .{ .data = row_idx }) catch break;
+            }
+        }
+    }
+
+    fn viewIndexForDataRow(self: *Table, row: usize) ?usize {
+        for (self.view_rows.items, 0..) |entry, idx| {
+            if (entry == .data and entry.data == row) {
+                return idx;
+            }
+        }
+        return null;
+    }
+
+    fn dataIndexForView(self: *Table, view_idx: usize) ?usize {
+        if (view_idx >= self.view_rows.items.len) return null;
+        return switch (self.view_rows.items[view_idx]) {
+            .data => |row| row,
+            else => null,
+        };
+    }
+
+    fn indexInVisibleOrder(self: *Table, row: usize) ?usize {
+        for (self.visible_order.items, 0..) |value, idx| {
+            if (value == row) return idx;
+        }
+        return null;
+    }
+
+    fn columnIndexAtX(self: *Table, x: u16) ?usize {
+        var cursor = self.widget.rect.x;
+        for (self.columns.items, 0..) |column, idx| {
+            if (x >= cursor and x < cursor + column.width) {
+                return idx;
+            }
+            cursor += column.width;
+        }
+        return null;
+    }
+
+    fn tryStartResize(self: *Table, x: u16) bool {
+        var cursor = self.widget.rect.x;
+        for (self.columns.items, 0..) |column, idx| {
+            const end = cursor + column.width;
+            if (column.resizable and x + 1 >= end and x <= end and column.width > 0) {
+                self.resizing_column = idx;
+                self.resize_anchor_x = x;
+                self.resize_original_width = column.width;
+                return true;
+            }
+            cursor += column.width;
+        }
+        return false;
+    }
+
     fn clampScroll(self: *Table) void {
+        self.ensureView();
         const visible_rows = self.getVisibleRowCount();
-        const max_offset = if (visible_rows == 0 or self.rowCount() <= visible_rows) 0 else self.rowCount() - visible_rows;
+        const total_rows = self.view_rows.items.len;
+        const max_offset = if (visible_rows == 0 or total_rows <= visible_rows) 0 else total_rows - visible_rows;
         const clamped = std.math.clamp(self.scroll_driver.current, 0, @as(f32, @floatFromInt(max_offset)));
         self.scroll_driver.current = clamped;
         self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
@@ -460,7 +768,9 @@ pub const Table = struct {
 
     fn scrollTo(self: *Table, target: f32) void {
         const visible_rows = self.getVisibleRowCount();
-        const max_offset = if (visible_rows == 0 or self.rowCount() <= visible_rows) 0 else self.rowCount() - visible_rows;
+        self.ensureView();
+        const total_rows = self.view_rows.items.len;
+        const max_offset = if (visible_rows == 0 or total_rows <= visible_rows) 0 else total_rows - visible_rows;
         const clamped = std.math.clamp(target, 0, @as(f32, @floatFromInt(max_offset)));
         if (self.animator) |anim| {
             const onChange = struct {
@@ -522,7 +832,7 @@ pub const Table = struct {
         if (self.show_headers) {
             x = rect.x;
 
-            for (self.columns.items) |column| {
+            for (self.columns.items, 0..) |column, col_idx| {
                 if (@as(u16, @intCast(x)) + column.width > rect.x + rect.width) {
                     break;
                 }
@@ -530,13 +840,25 @@ pub const Table = struct {
                 // Draw header background
                 renderer.fillRect(x, y, column.width, 1, ' ', self.header_fg, self.header_bg, render.Style{});
 
+                const indicator: ?u21 = if (self.sort_column != null and self.sort_column.? == col_idx)
+                    (if (self.sort_descending) '▼' else '▲')
+                else
+                    null;
+
                 // Draw header text
+                var cursor: u16 = x + 1;
                 for (column.header, 0..) |char, i| {
                     if (i >= @as(usize, @intCast(column.width - 1))) {
                         break;
                     }
 
-                    renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, self.header_fg, self.header_bg, render.Style{});
+                    renderer.drawChar(cursor, y, char, self.header_fg, self.header_bg, render.Style{});
+                    cursor += 1;
+                    if (cursor >= x + column.width) break;
+                }
+
+                if (indicator != null and cursor < x + column.width) {
+                    renderer.drawChar(cursor, y, indicator.?, self.header_fg, self.header_bg, render.Style{ .bold = true });
                 }
 
                 // Draw grid if enabled
@@ -571,7 +893,21 @@ pub const Table = struct {
         const visible_rows = self.getVisibleRowCount();
         const last_visible_row = @min(self.first_visible_row + visible_rows, total_rows);
 
-        for (self.first_visible_row..last_visible_row) |row_idx| {
+        for (self.first_visible_row..last_visible_row) |view_idx| {
+            if (view_idx >= self.view_rows.items.len) break;
+            const view_row = self.view_rows.items[view_idx];
+            if (view_row == .group) {
+                x = rect.x;
+                renderer.fillRect(x, y, rect.width, 1, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
+                const group_text = view_row.group;
+                if (group_text.len > 0 and rect.width > 2) {
+                    renderer.drawStr(x + 1, y, group_text[0..@min(group_text.len, @as(usize, @intCast(rect.width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
+                }
+                y += 1;
+                continue;
+            }
+
+            const row_idx = view_row.data;
             const is_selected = self.selected_row != null and row_idx == self.selected_row.?;
 
             x = rect.x;
@@ -599,32 +935,26 @@ pub const Table = struct {
                     .bg = null,
                 };
 
-                if (self.row_provider) |_| {
-                    cell_view = self.cellView(row_idx, col_idx);
-                } else if (row_idx < self.rows.items.len and col_idx < self.rows.items[row_idx].items.len) {
-                    const cell = self.rows.items[row_idx].items[col_idx];
-                    cell_view = TableCellView{
-                        .text = cell.text,
-                        .fg = cell.fg,
-                        .bg = cell.bg,
-                    };
-                }
+                cell_view = self.cellView(row_idx, col_idx);
 
                 if (cell_view.text.len > 0 or cell_view.fg != null or cell_view.bg != null) {
                     // Choose cell colors, using row colors as default
                     const cell_fg = cell_view.fg orelse row_fg;
                     const cell_bg = cell_view.bg orelse row_bg;
+                    const editing = self.isEditing() and self.editing_row.? == row_idx and self.editing_col.? == col_idx;
+                    const text_slice = if (editing) self.edit_buffer.items else cell_view.text;
+                    const style = if (editing) render.Style{ .underline = true } else render.Style{};
 
                     // Draw cell background
                     renderer.fillRect(x, y, column.width, 1, ' ', cell_fg, cell_bg, render.Style{});
 
                     // Draw cell text
-                    for (cell_view.text, 0..) |char, i| {
+                    for (text_slice, 0..) |char, i| {
                         if (i >= @as(usize, @intCast(column.width - 1))) {
                             break;
                         }
 
-                        renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, cell_fg, cell_bg, render.Style{});
+                        renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, cell_fg, cell_bg, style);
                     }
 
                     // Draw grid if enabled
@@ -656,7 +986,8 @@ pub const Table = struct {
     /// Event handling implementation for Table
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
-        const total_rows = self.rowCount();
+        self.ensureView();
+        const total_rows = self.dataRowCount();
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -666,6 +997,32 @@ pub const Table = struct {
         if (event == .mouse) {
             const mouse_event = event.mouse;
             const rect = self.widget.rect;
+
+            // Header interactions: sorting and resize handles.
+            if (self.show_headers and mouse_event.y == rect.y and mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width) {
+                if (mouse_event.action == .press) {
+                    if (self.tryStartResize(mouse_event.x)) return true;
+                    if (self.columnIndexAtX(mouse_event.x)) |col| {
+                        self.selected_column = col;
+                        self.toggleSort(col);
+                        return true;
+                    }
+                } else if (mouse_event.action == .move and self.resizing_column != null) {
+                    const delta = @as(i16, @intCast(mouse_event.x)) - @as(i16, @intCast(self.resize_anchor_x));
+                    self.resizeColumn(self.resizing_column.?, delta);
+                    return true;
+                } else if (mouse_event.action == .release and self.resizing_column != null) {
+                    self.resizing_column = null;
+                    return true;
+                }
+            } else if (mouse_event.action == .move and self.resizing_column != null) {
+                const delta = @as(i16, @intCast(mouse_event.x)) - @as(i16, @intCast(self.resize_anchor_x));
+                self.resizeColumn(self.resizing_column.?, delta);
+                return true;
+            } else if (mouse_event.action == .release and self.resizing_column != null) {
+                self.resizing_column = null;
+                return true;
+            }
 
             // Ignore events on headers
             const header_offset: i16 = if (self.show_headers) 1 else 0;
@@ -678,11 +1035,16 @@ pub const Table = struct {
                 // Convert y position to row index
                 const row_idx = self.first_visible_row + @as(usize, @intCast(mouse_event.y - rect.y)) - @as(usize, @intCast(header_offset));
 
-                if (row_idx < total_rows) {
-                    // Select row on click
-                    if (mouse_event.action == .press and mouse_event.button == 1) {
-                        self.setSelectedRow(row_idx);
-                        return true;
+                if (row_idx < self.view_rows.items.len) {
+                    if (self.dataIndexForView(row_idx)) |data_row| {
+                        if (self.columnIndexAtX(mouse_event.x)) |col_idx| {
+                            self.selected_column = col_idx;
+                        }
+                        // Select row on click
+                        if (mouse_event.action == .press and mouse_event.button == 1) {
+                            self.setSelectedRow(data_row);
+                            return true;
+                        }
                     }
                 }
 
@@ -716,6 +1078,10 @@ pub const Table = struct {
         // Handle key events
         if (event == .key and self.widget.focused and total_rows > 0) {
             const key_event = event.key;
+            if (self.isEditing()) {
+                if (self.handleEditKey(key_event)) return true;
+                return true;
+            }
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -726,18 +1092,55 @@ pub const Table = struct {
                 switch (action) {
                     .cursor_down => {
                         if (self.selected_row == null) {
-                            self.setSelectedRow(0);
-                        } else if (self.selected_row.? < total_rows - 1) {
-                            self.setSelectedRow(self.selected_row.? + 1);
+                            var probe = self.first_visible_row;
+                            var chosen: ?usize = null;
+                            while (probe < self.view_rows.items.len) : (probe += 1) {
+                                if (self.dataIndexForView(probe)) |row_idx| {
+                                    chosen = row_idx;
+                                    break;
+                                }
+                            }
+                            if (chosen == null and self.visible_order.items.len > 0) {
+                                chosen = self.visible_order.items[0];
+                            }
+                            if (chosen) |row_idx| self.setSelectedRow(row_idx);
+                        } else {
+                            const next_view = (self.viewIndexForDataRow(self.selected_row.?) orelse 0) + 1;
+                            var probe = next_view;
+                            while (probe < self.view_rows.items.len) : (probe += 1) {
+                                if (self.dataIndexForView(probe)) |row_idx| {
+                                    self.setSelectedRow(row_idx);
+                                    break;
+                                }
+                            }
                         }
                         self.resetTypeahead();
                         return true;
                     },
                     .cursor_up => {
                         if (self.selected_row == null) {
-                            self.setSelectedRow(0);
-                        } else if (self.selected_row.? > 0) {
-                            self.setSelectedRow(self.selected_row.? - 1);
+                            var probe = self.first_visible_row;
+                            var chosen: ?usize = null;
+                            while (probe < self.view_rows.items.len) : (probe += 1) {
+                                if (self.dataIndexForView(probe)) |row_idx| {
+                                    chosen = row_idx;
+                                    break;
+                                }
+                            }
+                            if (chosen == null and self.visible_order.items.len > 0) {
+                                chosen = self.visible_order.items[0];
+                            }
+                            if (chosen) |row_idx| self.setSelectedRow(row_idx);
+                        } else {
+                            const current_view = self.viewIndexForDataRow(self.selected_row.?) orelse 0;
+                            var probe: i32 = @intCast(current_view);
+                            while (probe >= 0) : (probe -= 1) {
+                                const idx: usize = @intCast(probe);
+                                if (self.dataIndexForView(idx)) |row_idx| {
+                                    self.setSelectedRow(row_idx);
+                                    break;
+                                }
+                            }
                         }
                         self.resetTypeahead();
                         return true;
@@ -746,10 +1149,20 @@ pub const Table = struct {
                         const visible_rows = self.getVisibleRowCount();
 
                         if (self.selected_row == null) {
-                            self.setSelectedRow(0);
+                            var target_view = if (self.first_visible_row + visible_rows < self.view_rows.items.len)
+                                self.first_visible_row + visible_rows
+                            else
+                                self.view_rows.items.len - 1;
+                            while (target_view < self.view_rows.items.len) : (target_view += 1) {
+                                if (self.dataIndexForView(target_view)) |row_idx| {
+                                    self.setSelectedRow(row_idx);
+                                    break;
+                                }
+                            }
                         } else {
-                            const new_row = @min(self.selected_row.? + visible_rows, total_rows - 1);
-                            self.setSelectedRow(new_row);
+                            var new_view = (self.viewIndexForDataRow(self.selected_row.?) orelse 0) + visible_rows;
+                            if (new_view >= self.view_rows.items.len) new_view = self.view_rows.items.len - 1;
+                            if (self.dataIndexForView(new_view)) |row_idx| self.setSelectedRow(row_idx);
                         }
                         self.resetTypeahead();
                         return true;
@@ -759,22 +1172,38 @@ pub const Table = struct {
                             self.setSelectedRow(0);
                         } else {
                             const visible_rows = self.getVisibleRowCount();
-                            const new_row = if (self.selected_row.? > visible_rows)
-                                self.selected_row.? - visible_rows
-                            else
-                                0;
-                            self.setSelectedRow(new_row);
+                            var new_view: i32 = @intCast(self.viewIndexForDataRow(self.selected_row.?) orelse 0);
+                            new_view -= @intCast(visible_rows);
+                            if (new_view < 0) new_view = 0;
+                            var probe = @as(usize, @intCast(new_view));
+                            while (true) {
+                                if (self.dataIndexForView(probe)) |row_idx| {
+                                    self.setSelectedRow(row_idx);
+                                    break;
+                                }
+                                if (probe == 0) break;
+                                probe -= 1;
+                            }
                         }
                         self.resetTypeahead();
                         return true;
                     },
                     .line_start => {
-                        self.setSelectedRow(0);
+                        if (self.visible_order.items.len > 0) self.setSelectedRow(self.visible_order.items[0]);
                         self.resetTypeahead();
                         return true;
                     },
                     .line_end => {
-                        self.setSelectedRow(total_rows - 1);
+                        if (self.view_rows.items.len > 0) {
+                            var probe = self.view_rows.items.len - 1;
+                            while (true) : (probe -= 1) {
+                                if (self.dataIndexForView(probe)) |row_idx| {
+                                    self.setSelectedRow(row_idx);
+                                    break;
+                                }
+                                if (probe == 0) break;
+                            }
+                        }
                         self.resetTypeahead();
                         return true;
                     },
@@ -785,6 +1214,15 @@ pub const Table = struct {
             if (key_event.key == input.KeyCode.ESCAPE) {
                 self.resetTypeahead();
                 return false;
+            } else if (key_event.key == input.KeyCode.ENTER) {
+                self.beginEdit() catch {};
+                return true;
+            } else if (key_event.key == input.KeyCode.LEFT) {
+                if (self.selected_column > 0) self.selected_column -= 1;
+                return true;
+            } else if (key_event.key == input.KeyCode.RIGHT) {
+                if (self.selected_column + 1 < self.columns.items.len) self.selected_column += 1;
+                return true;
             } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
                 if (self.handleTypeaheadKey(@as(u8, @intCast(key_event.key)))) {
                     return true;
@@ -796,7 +1234,8 @@ pub const Table = struct {
     }
 
     fn handleTypeaheadKey(self: *Table, byte: u8) bool {
-        const total_rows = self.rowCount();
+        self.ensureView();
+        const total_rows = self.visible_order.items.len;
         if (total_rows == 0) {
             return false;
         }
@@ -821,13 +1260,14 @@ pub const Table = struct {
         const needle = self.search_buffer[0..self.search_len];
         if (needle.len == 0) return false;
 
-        const start = self.selected_row orelse 0;
+        const start = if (self.selected_row) |row| self.indexInVisibleOrder(row) orelse 0 else 0;
         var i: usize = 0;
         const scan_limit = @min(total_rows, self.typeahead_scan_limit);
         while (i < scan_limit) : (i += 1) {
             const idx = (start + i) % total_rows;
-            if (self.rowStartsWith(idx, needle)) {
-                self.setSelectedRow(idx);
+            const row_idx = self.visible_order.items[idx];
+            if (self.rowStartsWith(row_idx, needle)) {
+                self.setSelectedRow(row_idx);
                 return true;
             }
         }
@@ -963,4 +1403,55 @@ test "table ignores input when empty" {
     try table.widget.layout(layout_module.Rect.init(0, 0, 10, 5));
     const handled = try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
+}
+
+test "table sorts and groups rows" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Group", 8, true);
+    try table.addColumn("Value", 8, true);
+
+    try table.addRow(&.{ "B", "2" });
+    try table.addRow(&.{ "A", "3" });
+    try table.addRow(&.{ "A", "1" });
+
+    table.groupBy(0);
+    table.toggleSort(1);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 16, 6));
+    table.ensureView();
+
+    var group_count: usize = 0;
+    for (table.view_rows.items) |row| {
+        if (row == .group) group_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), group_count);
+
+    // First data row should be smallest numeric value after sort inside first group.
+    const first_data = table.dataIndexForView(1).?;
+    const first_cell = table.cellView(first_data, 1).text;
+    try std.testing.expectEqualStrings("1", first_cell);
+}
+
+test "table inline edit updates cell" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Note", 8, true);
+    try table.addRow(&.{ "cpu", "idle" });
+
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+    table.selected_column = 1;
+    try table.beginEdit();
+
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = ' ', .modifiers = .{} } });
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = 'x', .modifiers = .{} } });
+    _ = try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } });
+
+    const updated = table.cellView(0, 1).text;
+    try std.testing.expectEqualStrings("idle x", updated);
 }

@@ -25,6 +25,9 @@ const MenuAction = enum {
     chart_line,
     chart_bar,
     chart_area,
+    chart_stacked_bar,
+    chart_pie,
+    chart_scatter,
     image_background,
     image_block,
     image_braille,
@@ -220,7 +223,10 @@ fn cycleChartType(state: *DemoState) void {
     state.chart_type = switch (state.chart_type) {
         .line => .area,
         .area => .bar,
-        .bar => .line,
+        .bar => .stacked_bar,
+        .stacked_bar => .pie,
+        .pie => .scatter,
+        .scatter => .line,
     };
     state.chart.setType(state.chart_type);
 }
@@ -260,6 +266,9 @@ fn menuLabel(action: MenuAction) []const u8 {
         .chart_line => "Chart: Line",
         .chart_bar => "Chart: Bar",
         .chart_area => "Chart: Area",
+        .chart_stacked_bar => "Chart: Stacked Bar",
+        .chart_pie => "Chart: Pie",
+        .chart_scatter => "Chart: Scatter",
         .image_background => "Image: Background Mode",
         .image_block => "Image: Block Mode",
         .image_braille => "Image: Braille Mode",
@@ -295,6 +304,18 @@ fn handleMenuSelection(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque)
             .chart_area => {
                 state.chart_type = .area;
                 state.chart.setType(.area);
+            },
+            .chart_stacked_bar => {
+                state.chart_type = .stacked_bar;
+                state.chart.setType(.stacked_bar);
+            },
+            .chart_pie => {
+                state.chart_type = .pie;
+                state.chart.setType(.pie);
+            },
+            .chart_scatter => {
+                state.chart_type = .scatter;
+                state.chart.setType(.scatter);
             },
             .image_background => {
                 state.image_mode = .background;
@@ -386,6 +407,9 @@ pub fn main() !void {
         .chart_line,
         .chart_bar,
         .chart_area,
+        .chart_stacked_bar,
+        .chart_pie,
+        .chart_scatter,
         .image_background,
         .image_block,
         .image_braille,
@@ -567,6 +591,9 @@ pub fn main() !void {
                     .line => "line",
                     .area => "area",
                     .bar => "bar",
+                    .stacked_bar => "stacked bar",
+                    .pie => "pie",
+                    .scatter => "scatter",
                 },
                 switch (state.image_mode) {
                     .background => "background",
