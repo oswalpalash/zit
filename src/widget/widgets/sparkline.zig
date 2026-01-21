@@ -152,7 +152,7 @@ test "sparkline draws samples" {
     var non_space: usize = 0;
     for (0..8) |x| {
         const cell = renderer.back.getCell(@intCast(x), 0).*;
-        if (cell.char != ' ') {
+        if (cell.codepoint() != ' ') {
             non_space += 1;
         }
     }

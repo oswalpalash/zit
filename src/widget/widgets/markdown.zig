@@ -261,7 +261,7 @@ test "markdown renders headings and bullets" {
 
     try md.widget.draw(&renderer);
 
-    try std.testing.expectEqual(@as(u21, 'T'), renderer.back.getCell(0, 0).char);
-    try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).char);
-    try std.testing.expectEqual(@as(u21, '•'), renderer.back.getCell(0, 1).char);
+    try std.testing.expectEqual(@as(u21, 'T'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '•'), renderer.back.getCell(0, 1).codepoint());
 }

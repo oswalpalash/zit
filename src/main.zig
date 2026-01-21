@@ -11,6 +11,7 @@ pub const quickstart = @import("quickstart.zig");
 pub const theme_hot_reload = @import("theme_hot_reload.zig");
 pub const testing = @import("testing/testing.zig");
 pub const debug = @import("debug.zig");
+pub const i18n = @import("i18n.zig");
 
 /// zit - A Text User Interface (TUI) library for Zig
 ///

@@ -6,6 +6,7 @@ pub const Metrics = struct {
     has_bidi: bool,
     has_emoji: bool,
     has_ligatures: bool,
+    has_combining: bool,
 };
 
 const Range = struct { start: u21, end: u21 };
@@ -252,13 +253,20 @@ pub fn wcwidth(cp: u21) u3 {
     return 1;
 }
 
-fn isBidi(cp: u21) bool {
+/// Identify whether a codepoint is right-to-left or bidi-relevant.
+pub fn isBidi(cp: u21) bool {
     return (cp >= 0x0590 and cp <= 0x08FF) or (cp >= 0xFB1D and cp <= 0xFEFC);
 }
 
-fn isEmoji(cp: u21) bool {
+/// Identify if a codepoint is commonly rendered as emoji.
+pub fn isEmoji(cp: u21) bool {
     if (inRange(cp, emoji_ranges[0..])) return true;
     return (cp >= 0x1F1E6 and cp <= 0x1F1FF) or (cp >= 0x1F300 and cp <= 0x1FAFF);
+}
+
+/// Identify combining/zero-width marks that should not advance width.
+pub fn isCombining(cp: u21) bool {
+    return cp == 0x200D or inRange(cp, combining_ranges[0..]);
 }
 
 /// Measure a UTF-8 string using wcwidth semantics.
@@ -269,6 +277,7 @@ pub fn measure(str: []const u8) Metrics {
     var has_emoji = false;
     var has_ligatures = false;
     var pending_join = false;
+    var has_combining = false;
 
     while (utf8.nextCodepoint()) |cp| {
         if (cp == 0x200D) { // ZWJ
@@ -278,6 +287,7 @@ pub fn measure(str: []const u8) Metrics {
 
         const cp_width: u3 = wcwidth(cp);
         const emoji_cp = isEmoji(cp);
+        if (cp_width == 0) has_combining = true;
         if (pending_join and emoji_cp) {
             pending_join = false;
         } else {
@@ -295,13 +305,14 @@ pub fn measure(str: []const u8) Metrics {
         .has_bidi = has_bidi,
         .has_emoji = has_emoji,
         .has_ligatures = has_ligatures,
+        .has_combining = has_combining,
     };
 }
 
 /// Determine if a string needs width-aware rendering (CJK/emoji/bidi).
 pub fn needsWidthAccounting(str: []const u8) bool {
     const metrics = measure(str);
-    return metrics.width != str.len or metrics.has_bidi or metrics.has_emoji;
+    return metrics.width != str.len or metrics.has_bidi or metrics.has_emoji or metrics.has_combining;
 }
 
 fn addWidthSaturating(current: u16, inc: u3) u16 {

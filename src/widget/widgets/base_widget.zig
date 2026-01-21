@@ -314,5 +314,5 @@ test "layout adapter returns safe defaults on failure" {
     element.render(&renderer, layout_module.Rect.init(0, 0, 2, 2));
 
     // Buffer remains untouched because draw failed gracefully.
-    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).char);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
 }
