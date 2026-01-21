@@ -1,50 +1,12 @@
 const std = @import("std");
+const unicode_width = @import("../terminal/unicode_width.zig");
 
 /// Text shaping utilities focused on terminal friendly output.
-pub const Metrics = struct {
-    /// Total display cells consumed by the input string.
-    width: u16,
-    /// Whether the string contained bidirectional markers.
-    has_bidi: bool,
-    /// Whether the string contained emoji codepoints.
-    has_emoji: bool,
-    /// Whether the string contained characters that typically render as ligatures.
-    has_ligatures: bool,
-};
+pub const Metrics = unicode_width.Metrics;
 
-/// Heuristic width calculation that treats common double-width ranges properly and
-/// falls back to single cell for everything else.
+/// Width calculation using wcwidth semantics to match terminal rendering.
 pub fn measureWidth(str: []const u8) Metrics {
-    var utf8 = std.unicode.Utf8Iterator{ .bytes = str, .i = 0 };
-    var width: u16 = 0;
-    var has_bidi = false;
-    var has_emoji = false;
-    var has_ligatures = false;
-
-    while (utf8.nextCodepoint()) |cp| {
-        const cp_width: u16 = switch (cp) {
-            // East Asian Wide and Fullwidth blocks plus a few emoji ranges.
-            0x1100...0x115F, 0x2329, 0x232A, 0x2E80...0xA4CF, 0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE10...0xFE6F, 0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x1F300...0x1FAFF => 2,
-            else => 1,
-        };
-
-        width +%= cp_width;
-
-        if (!has_bidi and (cp >= 0x0590 and cp <= 0x08FF)) {
-            has_bidi = true;
-        }
-
-        if (!has_emoji and cp >= 0x1F300 and cp <= 0x1FAFF) {
-            has_emoji = true;
-        }
-
-        // Ligature friendly pairs (fi, fl, ff, ffi, ffl) live in Latin ranges.
-        if (!has_ligatures and (cp == 'f' or cp == 'i' or cp == 'l')) {
-            has_ligatures = true;
-        }
-    }
-
-    return Metrics{ .width = width, .has_bidi = has_bidi, .has_emoji = has_emoji, .has_ligatures = has_ligatures };
+    return unicode_width.measure(str);
 }
 
 /// Basic bidi sanitizer: reverse RTL-only sequences so they render coherently in simple terminals.
@@ -105,8 +67,7 @@ pub fn detectTrueColor() bool {
 
 /// Identify whether unicode width management is needed (double-width or bidi).
 pub fn needsWidthAccounting(str: []const u8) bool {
-    const metrics = measureWidth(str);
-    return metrics.width != str.len or metrics.has_bidi or metrics.has_emoji;
+    return unicode_width.needsWidthAccounting(str);
 }
 
 test "measureWidth handles mixed scripts" {
