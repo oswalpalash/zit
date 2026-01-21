@@ -262,7 +262,10 @@ fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {
         return;
     }
     const id = if (widget.id.len > 0) widget.id else "<anonymous>";
-    std.log.err("zit.widget: {s} {s} failed: {s}", .{ id, action, @errorName(err) });
+    std.log.err(
+        "zit.widget: {s} {s} failed with {s} (rect={d}x{d}+{d},{d}, visible={any}, enabled={any}). Tip: set an id for easier tracing and use zit.debug.LayoutDebugger to visualize bounds.",
+        .{ id, action, @errorName(err), widget.rect.width, widget.rect.height, widget.rect.x, widget.rect.y, widget.visible, widget.enabled },
+    );
 }
 
 test "layout adapter returns safe defaults on failure" {

@@ -26,15 +26,18 @@ pub fn buildWidgetPath(allocator: std.mem.Allocator, start_widget: *widget.Widge
 }
 
 /// Dispatch an event through the capturing and bubbling phases
-pub fn dispatchWithPropagation(dispatcher: *event.EventDispatcher, event_item: *event.Event, allocator: std.mem.Allocator) !bool {
+pub fn dispatchWithPropagation(dispatcher: *event.EventDispatcher, event_item: *event.Event, allocator: std.mem.Allocator, hooks: event.DebugHooks) !bool {
     if (event_item.target == null) {
-        return dispatcher.dispatchEvent(event_item);
+        const handled = dispatcher.dispatchEvent(event_item);
+        event_item.setPhase(.target);
+        event.traceEvent(hooks, event_item, .target, null);
+        return handled;
     }
 
     var path = try buildWidgetPath(allocator, event_item.target.?);
     defer path.deinit(allocator);
 
-    return dispatcher.dispatchEventWithPropagation(event_item, path.items);
+    return dispatcher.dispatchEventWithPropagation(event_item, path.items, hooks);
 }
 
 /// Dispatch all events from a queue with propagation
@@ -42,7 +45,7 @@ pub fn processEventsWithPropagation(queue: *event.EventQueue, allocator: std.mem
     while (queue.popFront()) |event_val| {
         var event_item = event_val;
 
-        _ = try dispatchWithPropagation(&queue.dispatcher, &event_item, allocator);
+        _ = try dispatchWithPropagation(&queue.dispatcher, &event_item, allocator, queue.debug_hooks);
 
         // Clean up custom event data if needed
         if (event_item.type == .custom) {

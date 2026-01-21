@@ -183,7 +183,7 @@ pub const ImageWidget = struct {
                 if (pattern == 0) continue;
 
                 const avg = accum.average();
-                const glyph: u21 = @intCast(0x2800 + pattern);
+                const glyph: u21 = 0x2800 + @as(u21, pattern);
                 renderer.drawChar(rect.x + cell_x, rect.y + cell_y, glyph, avg, render.Color.named(render.NamedColor.default), render.Style{});
             }
         }
