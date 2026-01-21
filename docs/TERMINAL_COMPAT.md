@@ -12,7 +12,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **Program detection**: environment probes (`TERM`, `TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`, etc.) map to `TerminalProgram`.
 - **Color depth**: `ColorLevel` is inferred from `COLORTERM`/`TERM` suffixes and known programs (16, 256, or truecolor).
 - **Styling flags**: booleans for italic/underline/strikethrough/ligatures/emoji/double-width. Conservative defaults on linux console and dumb terminals.
-- **Input/graphics extras**: `kitty_keyboard`, `kitty_graphics`, `synchronized_output`, and `iterm2_integration` are enabled when the program is known to support them.
+- **Input/graphics extras**: `kitty_keyboard`, `kitty_graphics`, `synchronized_output`, `bracketed_paste`, and `iterm2_integration` are enabled when the program is known to support them.
 - **Unicode width**: `unicode_width.measure` is used to gate emoji/double-width handling.
 
 ## Color Modes
@@ -33,4 +33,5 @@ Use capabilities directly when toggling features:
 const caps = term.capabilities;
 const fg = if (caps.rgb_colors) render.Color.rgb(40, 180, 255) else render.Color.named(.cyan);
 if (caps.synchronized_output) try term.beginSynchronizedOutput();
+if (caps.bracketed_paste) try term.enableBracketedPaste();
 ```

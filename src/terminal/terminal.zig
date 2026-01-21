@@ -42,6 +42,8 @@ pub const Terminal = struct {
     is_sync_output: bool,
     /// Whether the terminal is using the alternate screen buffer
     is_alt_screen: bool,
+    /// Whether bracketed paste mode is active
+    is_bracketed_paste: bool,
 
     // Cross-platform terminal attribute storage
     const OriginalTermAttrs = union(enum) {
@@ -94,6 +96,7 @@ pub const Terminal = struct {
             .capabilities = capabilities.detectWithAllocator(allocator),
             .is_sync_output = false,
             .is_alt_screen = false,
+            .is_bracketed_paste = false,
         };
 
         try self.updateSize();
@@ -131,6 +134,10 @@ pub const Terminal = struct {
 
         if (self.is_alt_screen) {
             try self.exitAlternateScreen();
+        }
+
+        if (self.is_bracketed_paste) {
+            try self.disableBracketedPaste();
         }
 
         // Reset all formatting before exit
@@ -469,6 +476,22 @@ pub const Terminal = struct {
         var stdout = std.fs.File.stdout();
         try stdout.writeAll("\x1b[?2026l");
         self.is_sync_output = false;
+    }
+
+    /// Enable bracketed paste mode so pasted text is clearly delimited.
+    pub fn enableBracketedPaste(self: *Terminal) !void {
+        if (self.is_bracketed_paste or !self.capabilities.bracketed_paste) return;
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?2004h");
+        self.is_bracketed_paste = true;
+    }
+
+    /// Disable bracketed paste mode.
+    pub fn disableBracketedPaste(self: *Terminal) !void {
+        if (!self.is_bracketed_paste) return;
+        var stdout = std.fs.File.stdout();
+        try stdout.writeAll("\x1b[?2004l");
+        self.is_bracketed_paste = false;
     }
 
     /// Switch to the alternate screen buffer (DECSET 1049).
