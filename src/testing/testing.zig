@@ -72,6 +72,25 @@ fn printDiff(golden_path: []const u8, expected: []const u8, actual: []const u8) 
     std.debug.print("\n", .{});
 }
 
+fn normalizeLineEndings(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    var normalized = try allocator.alloc(u8, text.len);
+    var out: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == '\r') {
+            if (i + 1 < text.len and text[i + 1] == '\n') {
+                // Skip the CR in CRLF sequences and emit a single LF.
+                i += 1;
+            }
+            normalized[out] = '\n';
+        } else {
+            normalized[out] = text[i];
+        }
+        out += 1;
+    }
+    return normalized[0..out];
+}
+
 /// Compare a snapshot against a golden file with optional auto-update.
 ///
 /// Parameters:
@@ -105,14 +124,20 @@ pub fn expectSnapshotMatch(
     }
 
     const expected = golden.?;
-    if (!std.mem.eql(u8, expected, snapshot_text)) {
+    const expected_normalized = try normalizeLineEndings(allocator, expected);
+    defer allocator.free(expected_normalized);
+
+    const snapshot_normalized = try normalizeLineEndings(allocator, snapshot_text);
+    defer allocator.free(snapshot_normalized);
+
+    if (!std.mem.eql(u8, expected_normalized, snapshot_normalized)) {
         if (update) {
             try writeGolden(golden_path, snapshot_text);
             return;
         }
 
-        printDiff(golden_path, expected, snapshot_text);
-        try std.testing.expectEqualStrings(expected, snapshot_text);
+        printDiff(golden_path, expected_normalized, snapshot_normalized);
+        try std.testing.expectEqualStrings(expected_normalized, snapshot_normalized);
     }
 }
 

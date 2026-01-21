@@ -54,7 +54,7 @@ pub const AnsiCode = struct {
     len: u8 = 0,
 
     /// Return the active slice of the encoded ANSI sequence.
-    pub fn slice(self: AnsiCode) []const u8 {
+    pub fn slice(self: *const AnsiCode) []const u8 {
         return self.buf[0..self.len];
     }
 
