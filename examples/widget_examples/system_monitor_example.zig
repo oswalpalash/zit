@@ -1,3 +1,5 @@
+// Example: system-monitor style gauges, charts, and stats grid.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

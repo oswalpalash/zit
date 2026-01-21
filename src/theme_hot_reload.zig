@@ -16,6 +16,20 @@ pub const ThemeHotReloader = struct {
     pub const ReloadFn = *const fn (theme.Theme, ?*anyopaque) void;
 
     /// Start watching `path` and return a managed reloader.
+    ///
+    /// Parameters:
+    /// - `allocator`: allocator used to duplicate the path and hold registry state.
+    /// - `app`: running `Application` whose event loop drives reload notifications.
+    /// - `path`: filesystem path to the theme TOML/JSON file to monitor.
+    /// - `fallback`: theme to use when the file cannot be read or parsed.
+    /// - `on_reload`: optional callback invoked after each successful reload.
+    /// - `ctx`: opaque pointer forwarded to `on_reload`.
+    /// Returns: heap-allocated reloader handle that must be stopped to free resources.
+    /// Example:
+    /// ```zig
+    /// var reloader = try ThemeHotReloader.start(alloc, &app, "theme.toml", theme.Theme.dark(), myReload, null);
+    /// defer reloader.stop();
+    /// ```
     pub fn start(allocator: std.mem.Allocator, app: *event.Application, path: []const u8, fallback: theme.Theme, on_reload: ?ReloadFn, ctx: ?*anyopaque) !*ThemeHotReloader {
         initRegistry(allocator);
         const cloned_path = try allocator.dupe(u8, path);
@@ -43,6 +57,15 @@ pub const ThemeHotReloader = struct {
     }
 
     /// Stop watching and free resources.
+    ///
+    /// Parameters:
+    /// - `self`: reloader created by `start`.
+    /// Returns: nothing. All registered listeners and file watches are removed.
+    /// Example:
+    /// ```zig
+    /// const reloader = try ThemeHotReloader.start(alloc, &app, "theme.toml", theme.Theme.dark(), null, null);
+    /// defer reloader.stop();
+    /// ```
     pub fn stop(self: *ThemeHotReloader) void {
         if (self.listener_id) |id| {
             _ = self.app.removeEventListener(id);

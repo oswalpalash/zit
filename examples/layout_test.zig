@@ -1,3 +1,5 @@
+// Layout test: exercises flex/grid layout elements and basic drawing.
+
 const std = @import("std");
 const zit = @import("zit");
 const memory = zit.memory;

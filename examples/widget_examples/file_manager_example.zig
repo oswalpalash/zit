@@ -1,3 +1,5 @@
+// Example: simple file manager composed of panels and shortcuts.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

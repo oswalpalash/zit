@@ -1,3 +1,5 @@
+// Example: Button states, focus handling, and click callbacks.
+
 const std = @import("std");
 const zit = @import("zit");
 const Button = zit.widget.Button;

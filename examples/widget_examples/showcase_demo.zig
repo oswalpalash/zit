@@ -1,3 +1,5 @@
+// Example: kitchen-sink showcase of widgets and themes.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

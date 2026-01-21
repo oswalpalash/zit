@@ -1,3 +1,5 @@
+// Example: notification center/toast manager showcasing auto-dismiss.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

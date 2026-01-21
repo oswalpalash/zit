@@ -1,3 +1,5 @@
+// Benchmark suite entrypoint for Zit render/layout microbenchmarks.
+
 const std = @import("std");
 const zit = @import("zit");
 

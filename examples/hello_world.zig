@@ -1,3 +1,5 @@
+// Hello world: minimal alternate-screen label rendered with Zit primitives.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

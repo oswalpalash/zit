@@ -1,3 +1,5 @@
+// Real-world demo: dashboard view with charts, logs, and status cards.
+
 const std = @import("std");
 const zit = @import("zit");
 

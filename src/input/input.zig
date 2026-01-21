@@ -328,12 +328,18 @@ const COMMON_EDITING_BINDINGS = [_]Keybinding{
 pub const KeybindingProfile = struct {
     bindings: []const Keybinding,
 
+    /// Vim-style bindings (hjkl navigation, dw/yy analogues for text areas).
+    ///
+    /// Returns: profile that can be passed to `editorActionForEvent`.
     pub fn vi() KeybindingProfile {
         return KeybindingProfile{
             .bindings = &VI_BINDINGS,
         };
     }
 
+    /// Emacs-inspired cursor movement and edit shortcuts.
+    ///
+    /// Returns: profile that can be passed to `editorActionForEvent`.
     pub fn emacs() KeybindingProfile {
         return KeybindingProfile{
             .bindings = &EMACS_BINDINGS,
@@ -347,6 +353,11 @@ pub const KeybindingProfile = struct {
         };
     }
 
+    /// Match a single key event against the profile.
+    ///
+    /// Parameters:
+    /// - `event`: key press to resolve into an editor action.
+    /// Returns: `.cursor_*`/`.copy`/`.paste` actions on hit, otherwise `null`.
     pub fn match(self: KeybindingProfile, event: KeyEvent) ?EditorAction {
         for (self.bindings) |binding| {
             if (binding.key.equals(event)) return binding.action;

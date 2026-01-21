@@ -1,6 +1,9 @@
 # Zit – Zig-first Terminal UI Toolkit
 
-[![CI](https://github.com/oswalpalash/zit/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/oswalpalash/zit/actions/workflows/build.yaml) [![Release](https://img.shields.io/github/v/tag/oswalpalash/zit?label=latest%20tag)](https://github.com/oswalpalash/zit/releases) ![Zig version](https://img.shields.io/badge/zig-0.15.x%20matrix-blue)
+[![CI](https://github.com/oswalpalash/zit/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/oswalpalash/zit/actions/workflows/build.yaml)
+[![Release](https://img.shields.io/github/v/tag/oswalpalash/zit?label=version&color=0ea5e9)](https://github.com/oswalpalash/zit/releases)
+[![License](https://img.shields.io/github/license/oswalpalash/zit?color=10b981)](LICENSE)
+![Zig version](https://img.shields.io/badge/zig-0.15.x%20matrix-f97316)
 
 Zit helps you ship terminal dashboards, editors, and workflows with the same confidence you expect from GUI toolkits: a rich widget catalog, focus and typeahead helpers, fast rendering, and accessibility baked in. Zero dependencies, test coverage, and benchmarks included.
 

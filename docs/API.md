@@ -85,3 +85,39 @@ const caps = term.capabilities;
 const border_color = if (caps.rgb_colors) zit.render.Color.rgb(255, 128, 0) else zit.render.Color.named(.bright_yellow);
 if (caps.synchronized_output) try term.beginSynchronizedOutput();
 ```
+
+### Quickstart Helpers
+```zig
+const opts = zit.quickstart.FrameOptions{ .width = 32, .height = 6 };
+try zit.quickstart.withRenderer(alloc, opts, struct {
+    fn draw(r: *zit.render.Renderer, _: zit.quickstart.FrameOptions) !void {
+        r.drawSmartStr(1, 1, "Zit quickstart", zit.render.Color.named(.green), zit.render.Color.named(.default), .{});
+    }
+}.draw);
+```
+
+### Theme Hot Reload
+```zig
+var app = zit.event.Application.init(alloc);
+const reloader = try zit.theme_hot_reload.ThemeHotReloader.start(
+    alloc,
+    &app,
+    "theme.toml",
+    zit.widget.theme.Theme.dark(),
+    struct {
+        fn reload(t: zit.widget.theme.Theme, _: ?*anyopaque) void {
+            std.log.info("applied theme: {any}", .{t});
+        }
+    }.reload,
+    null,
+);
+defer reloader.stop();
+```
+
+### Debug Hooks
+```zig
+var tracer = zit.debug.EventTracer.init(std.io.getStdErr().writer());
+app.debug_hooks = tracer.hooks();
+var inspector = zit.debug.WidgetInspector.init(alloc);
+try inspector.printTree(&root.widget, std.io.getStdOut().writer(), .{});
+```

@@ -1,3 +1,5 @@
+// Example: dashboard layout mixing charts, lists, and status blocks.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

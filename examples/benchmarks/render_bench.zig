@@ -1,3 +1,5 @@
+// Benchmark: stress-tests renderer throughput and diffing.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

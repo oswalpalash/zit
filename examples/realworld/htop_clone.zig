@@ -1,3 +1,5 @@
+// Real-world demo: htop-inspired process monitor using tables and sparklines.
+
 const std = @import("std");
 const zit = @import("zit");
 

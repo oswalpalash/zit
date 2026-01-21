@@ -1,3 +1,5 @@
+// Example: multi-step form wizard with validation hooks.
+
 const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;

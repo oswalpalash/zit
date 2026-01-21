@@ -13,6 +13,22 @@ pub const FrameOptions = struct {
 };
 
 /// Run a render callback with a ready-to-use renderer and sensible defaults.
+///
+/// Parameters:
+/// - `allocator`: allocator used to back the renderer.
+/// - `options`: frame dimensions, padding, colors, and whether to render immediately.
+/// - `draw`: callback that performs the drawing given a pre-sized renderer.
+/// Returns: any error from renderer creation or the draw callback.
+/// Example:
+/// ```zig
+/// const std = @import("std");
+/// const zit = @import("zit");
+/// try zit.quickstart.withRenderer(std.testing.allocator, .{ .width = 32, .height = 8 }, struct {
+///     fn paint(r: *zit.render.Renderer, _: zit.quickstart.FrameOptions) !void {
+///         r.drawSmartStr(1, 1, "hello quickstart", zit.render.Color.named(.green), zit.render.Color.named(.default), zit.render.Style{});
+///     }
+/// }.paint);
+/// ```
 pub fn withRenderer(
     allocator: std.mem.Allocator,
     options: FrameOptions,
@@ -35,6 +51,16 @@ pub fn withRenderer(
 }
 
 /// Smallest possible "hello world" entry-point.
+///
+/// Parameters:
+/// - `text`: UTF-8 contents to paint inside the frame.
+/// - `options`: sizing, padding, and styling options for the frame.
+/// Returns: any renderer error encountered while drawing or flushing output.
+/// Example:
+/// ```zig
+/// const zit = @import("zit");
+/// try zit.quickstart.renderText("Hi from Zit", .{ .width = 40, .height = 4, .render_frame = false });
+/// ```
 pub fn renderText(text: []const u8, options: FrameOptions) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
