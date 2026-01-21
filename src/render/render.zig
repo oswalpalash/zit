@@ -2,6 +2,42 @@ const std = @import("std");
 const text_metrics = @import("text_metrics.zig");
 const term_caps = @import("../terminal/capabilities.zig");
 
+fn validateColorComponent(value: anytype, comptime label: []const u8) u8 {
+    if (@TypeOf(value) == comptime_int) {
+        if (value < 0 or value > 255) {
+            const msg = std.fmt.comptimePrint("zit: color component {s} must be between 0 and 255", .{label});
+            @compileError(msg);
+        }
+        return @intCast(value);
+    }
+    if (@TypeOf(value) == comptime_float) {
+        if (value < 0 or value > 255) {
+            const msg = std.fmt.comptimePrint("zit: color component {s} must be between 0 and 255", .{label});
+            @compileError(msg);
+        }
+        return @intFromFloat(value);
+    }
+
+    return std.math.cast(u8, value) orelse std.debug.panic("zit: color component {s} must be between 0 and 255 (got {any})", .{ label, value });
+}
+
+fn validateAnsiIndex(value: anytype) u8 {
+    if (@TypeOf(value) == comptime_int) {
+        if (value < 0 or value > 255) {
+            @compileError("zit: ANSI 256-color index must be between 0 and 255");
+        }
+        return @intCast(value);
+    }
+    if (@TypeOf(value) == comptime_float) {
+        if (value < 0 or value > 255) {
+            @compileError("zit: ANSI 256-color index must be between 0 and 255");
+        }
+        return @intFromFloat(value);
+    }
+
+    return std.math.cast(u8, value) orelse std.debug.panic("zit: ANSI 256-color index must be between 0 and 255 (got {any})", .{value});
+}
+
 /// Output rendering module
 ///
 /// This module provides functionality for rendering to the terminal:
@@ -38,11 +74,11 @@ pub const RgbColor = struct {
     b: u8,
 
     /// Create a new RGB color
-    pub fn init(r: u8, g: u8, b: u8) RgbColor {
+    pub fn init(r: anytype, g: anytype, b: anytype) RgbColor {
         return RgbColor{
-            .r = r,
-            .g = g,
-            .b = b,
+            .r = validateColorComponent(r, "r"),
+            .g = validateColorComponent(g, "g"),
+            .b = validateColorComponent(b, "b"),
         };
     }
 
@@ -75,13 +111,13 @@ pub const Color = union(enum) {
     }
 
     /// Create a new RGB color
-    pub fn rgb(r: u8, g: u8, b: u8) Color {
+    pub fn rgb(r: anytype, g: anytype, b: anytype) Color {
         return Color{ .rgb_color = RgbColor.init(r, g, b) };
     }
 
     /// Create a 256-color palette entry
-    pub fn ansi256(index: u8) Color {
-        return Color{ .ansi_256 = index };
+    pub fn ansi256(index: anytype) Color {
+        return Color{ .ansi_256 = validateAnsiIndex(index) };
     }
 
     /// Convert to foreground color code
@@ -446,6 +482,15 @@ fn copyAndSortStops(allocator: std.mem.Allocator, stops: []const GradientStop) !
     var buffer = try allocator.alloc(GradientStop, stops.len);
     @memcpy(buffer, stops);
 
+    for (buffer) |stop| {
+        if (stop.position < 0 or stop.position > 1) {
+            std.debug.panic("zit: gradient stop positions must be between 0 and 1 (got {any})", .{stop.position});
+        }
+        if (std.math.isNan(stop.position)) {
+            std.debug.panic("zit: gradient stop positions cannot be NaN", .{});
+        }
+    }
+
     var i: usize = 0;
     while (i < buffer.len) : (i += 1) {
         var j: usize = i + 1;
@@ -478,6 +523,11 @@ fn sampleGradientColor(sorted: []const GradientStop, t_in: f32) RgbColor {
     }
 
     return colorToRgb(sorted[sorted.len - 1].color);
+}
+
+fn saturatingAddU16(a: u16, b: u16) u16 {
+    const sum = std.math.add(u32, a, b) catch std.math.maxInt(u32);
+    return @intCast(@min(sum, std.math.maxInt(u16)));
 }
 
 /// Represents a cell in the screen buffer
@@ -533,7 +583,10 @@ pub const Buffer = struct {
 
     /// Initialize a new buffer
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) !Buffer {
-        const cells = try allocator.alloc(Cell, width * height);
+        const cell_count = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch {
+            return error.InvalidBufferDimensions;
+        };
+        const cells = try allocator.alloc(Cell, cell_count);
 
         // Initialize all cells with default values
         for (cells) |*cell| {
@@ -549,27 +602,36 @@ pub const Buffer = struct {
     }
 
     /// Clean up buffer resources
-    pub fn deinit(self: *Buffer) void {
+    pub fn deinit(self: *const Buffer) void {
         self.allocator.free(self.cells);
     }
 
     /// Get cell at specified coordinates
     pub fn getCell(self: *Buffer, x: u16, y: u16) *Cell {
+        if (self.cells.len == 0) {
+            std.debug.panic("zit: attempted to access a cell in an uninitialized buffer", .{});
+        }
         if (x >= self.width or y >= self.height) {
-            // Out of bounds, return a reference to the first cell
+            std.debug.assert(false);
             return &self.cells[0];
         }
-
-        return &self.cells[y * self.width + x];
+        const idx = self.cellIndex(x, y);
+        return &self.cells[idx];
     }
 
     /// Set cell at specified coordinates
     pub fn setCell(self: *Buffer, x: u16, y: u16, cell: Cell) void {
+        if (self.cells.len == 0) {
+            std.debug.assert(false);
+            return;
+        }
         if (x >= self.width or y >= self.height) {
+            std.debug.assert(false);
             return; // Out of bounds
         }
 
-        self.cells[y * self.width + x] = cell;
+        const idx = self.cellIndex(x, y);
+        self.cells[idx] = cell;
     }
 
     /// Clear the buffer
@@ -581,8 +643,8 @@ pub const Buffer = struct {
 
     /// Fill a rectangular area with a specific cell
     pub fn fillRect(self: *Buffer, x: u16, y: u16, width: u16, height: u16, cell: Cell) void {
-        const max_x = @min(x + width, self.width);
-        const max_y = @min(y + height, self.height);
+        const max_x = @min(saturatingAddU16(x, width), self.width);
+        const max_y = @min(saturatingAddU16(y, height), self.height);
 
         var cy = y;
         while (cy < max_y) : (cy += 1) {
@@ -591,6 +653,16 @@ pub const Buffer = struct {
                 self.setCell(cx, cy, cell);
             }
         }
+    }
+
+    fn cellIndex(self: *Buffer, x: u16, y: u16) usize {
+        const stride = std.math.mul(usize, @as(usize, self.width), @as(usize, y)) catch {
+            std.debug.panic("zit: buffer row stride overflow for {d}x{d}", .{ self.width, self.height });
+        };
+        const offset = std.math.add(usize, stride, @as(usize, x)) catch {
+            std.debug.panic("zit: buffer index overflow for {d}x{d}", .{ self.width, self.height });
+        };
+        return offset;
     }
 };
 
@@ -854,6 +926,7 @@ pub const Renderer = struct {
     /// Initialize a new renderer
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) !Renderer {
         const front = try Buffer.init(allocator, width, height);
+        errdefer front.deinit();
         const back = try Buffer.init(allocator, width, height);
 
         var renderer = Renderer{
@@ -876,13 +949,15 @@ pub const Renderer = struct {
 
     /// Resize the buffers
     pub fn resize(self: *Renderer, width: u16, height: u16) !void {
-        // Clean up old buffers
+        const new_front = try Buffer.init(self.allocator, width, height);
+        errdefer new_front.deinit();
+        const new_back = try Buffer.init(self.allocator, width, height);
+        errdefer new_back.deinit();
+
         self.front.deinit();
         self.back.deinit();
-
-        // Create new buffers with the new size
-        self.front = try Buffer.init(self.allocator, width, height);
-        self.back = try Buffer.init(self.allocator, width, height);
+        self.front = new_front;
+        self.back = new_back;
         self.resetDirty();
         self.markDirtyRect(0, 0, width, height);
     }
@@ -898,8 +973,10 @@ pub const Renderer = struct {
 
     fn markDirtyRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) void {
         if (width == 0 or height == 0 or self.back.width == 0 or self.back.height == 0) return;
-        const max_x = @min(x + width - 1, self.back.width - 1);
-        const max_y = @min(y + height - 1, self.back.height - 1);
+        const x_end = saturatingAddU16(x, width - 1);
+        const y_end = saturatingAddU16(y, height - 1);
+        const max_x = @min(x_end, self.back.width - 1);
+        const max_y = @min(y_end, self.back.height - 1);
         self.dirty_min_x = @min(self.dirty_min_x, x);
         self.dirty_min_y = @min(self.dirty_min_y, y);
         self.dirty_max_x = @max(self.dirty_max_x, max_x);
@@ -923,12 +1000,16 @@ pub const Renderer = struct {
 
     fn appendCursorMove(self: *Renderer, x: u16, y: u16) !void {
         var cursor_buf: [32]u8 = undefined;
-        const cursor_seq = try std.fmt.bufPrint(&cursor_buf, "\x1b[{};{}H", .{ y + 1, x + 1 });
+        const cursor_seq = try std.fmt.bufPrint(&cursor_buf, "\x1b[{};{}H", .{ @as(u32, y) + 1, @as(u32, x) + 1 });
         try self.output_batch.appendSlice(self.allocator, cursor_seq);
     }
 
     /// Draw a character at the specified position with capability fallbacks
     pub fn drawChar(self: *Renderer, x: u16, y: u16, char: u21, fg: Color, bg: Color, style: Style) void {
+        if (x >= self.back.width or y >= self.back.height) {
+            std.debug.assert(false);
+            return;
+        }
         // Apply capability-based adjustments for graceful degradation
         const adjusted_char = self.capabilities.bestChar(char);
         const adjusted_fg = self.capabilities.bestColor(fg);
@@ -949,8 +1030,9 @@ pub const Renderer = struct {
 
         var i: u16 = 0;
         while (utf8_it.nextCodepoint()) |codepoint| {
-            if (x + i >= self.back.width) break;
-            self.drawChar(x + i, y, codepoint, fg, bg, style);
+            const target_x = std.math.add(u32, @as(u32, x), @as(u32, i)) catch break;
+            if (target_x >= self.back.width) break;
+            self.drawChar(@intCast(target_x), y, codepoint, fg, bg, style);
             i += 1;
         }
     }
@@ -974,6 +1056,11 @@ pub const Renderer = struct {
     /// Draw a box with the specified border style
     pub fn drawBox(self: *Renderer, x: u16, y: u16, width: u16, height: u16, border_style: BorderStyle, fg: Color, bg: Color, style: Style) void {
         if (width < 2 or height < 2) return;
+        if (x >= self.back.width or y >= self.back.height) return;
+
+        const capped_width = @min(width, self.back.width - x);
+        const capped_height = @min(height, self.back.height - y);
+        if (capped_width < 2 or capped_height < 2) return;
 
         const chars = border_style.getChars();
         const top_left = chars[0];
@@ -987,50 +1074,54 @@ pub const Renderer = struct {
 
         // Draw corners
         self.drawChar(x, y, top_left, fg, bg, style);
-        self.drawChar(x + width - 1, y, top_right, fg, bg, style);
-        self.drawChar(x, y + height - 1, bottom_left, fg, bg, style);
-        self.drawChar(x + width - 1, y + height - 1, bottom_right, fg, bg, style);
+        self.drawChar(x + capped_width - 1, y, top_right, fg, bg, style);
+        self.drawChar(x, y + capped_height - 1, bottom_left, fg, bg, style);
+        self.drawChar(x + capped_width - 1, y + capped_height - 1, bottom_right, fg, bg, style);
 
         // Draw horizontal edges
-        for (1..width - 1) |i| {
+        for (1..capped_width - 1) |i| {
             self.drawChar(x + @as(u16, @intCast(i)), y, horizontal, fg, bg, style);
-            self.drawChar(x + @as(u16, @intCast(i)), y + height - 1, horizontal_bottom, fg, bg, style);
+            self.drawChar(x + @as(u16, @intCast(i)), y + capped_height - 1, horizontal_bottom, fg, bg, style);
         }
 
         // Draw vertical edges
-        for (1..height - 1) |i| {
+        for (1..capped_height - 1) |i| {
             self.drawChar(x, y + @as(u16, @intCast(i)), vertical, fg, bg, style);
-            self.drawChar(x + width - 1, y + @as(u16, @intCast(i)), vertical_right, fg, bg, style);
+            self.drawChar(x + capped_width - 1, y + @as(u16, @intCast(i)), vertical_right, fg, bg, style);
         }
     }
 
     /// Draw a styled box with optional fill and shadow.
     pub fn drawStyledBox(self: *Renderer, x: u16, y: u16, width: u16, height: u16, box_style: BoxStyle) void {
         if (width == 0 or height == 0) return;
+        if (x >= self.back.width or y >= self.back.height) return;
+        const clamped_width = @min(width, self.back.width - x);
+        const clamped_height = @min(height, self.back.height - y);
+        if (clamped_width == 0 or clamped_height == 0) return;
 
         // Fill background first so shadows sit underneath the border.
-        self.fillRect(x, y, width, height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
+        self.fillRect(x, y, clamped_width, clamped_height, ' ', box_style.border_color, box_style.background, box_style.fill_style);
 
         if (box_style.shadow) |shadow| {
             const shade: u21 = if (shadow.soft) '░' else '▒';
 
             if (shadow.offset_x > 0) {
-                const sx: u32 = @as(u32, x) + @as(u32, width) + @as(u32, shadow.offset_x) - 1;
+                const sx: u32 = @as(u32, x) + @as(u32, clamped_width) + @as(u32, shadow.offset_x) - 1;
                 if (sx < self.back.width) {
                     const y_start: u32 = @as(u32, y) + @as(u32, shadow.offset_y);
                     if (y_start < self.back.height) {
-                        self.fillRect(@intCast(sx), @intCast(y_start), 1, height, shade, shadow.color, shadow.color, Style{});
+                        self.fillRect(@intCast(sx), @intCast(y_start), 1, clamped_height, shade, shadow.color, shadow.color, Style{});
                     }
                 }
             }
 
             if (shadow.offset_y > 0) {
-                const sy: u32 = @as(u32, y) + @as(u32, height) + @as(u32, shadow.offset_y) - 1;
+                const sy: u32 = @as(u32, y) + @as(u32, clamped_height) + @as(u32, shadow.offset_y) - 1;
                 if (sy < self.back.height) {
                     const start_x_u32: u32 = @as(u32, x) + @as(u32, shadow.offset_x);
                     if (start_x_u32 < self.back.width) {
                         const max_draw = @as(u32, self.back.width) - start_x_u32;
-                        const desired = @as(u32, width) + @as(u32, shadow.offset_x);
+                        const desired = @as(u32, clamped_width) + @as(u32, shadow.offset_x);
                         const draw_width: u16 = @intCast(@min(max_draw, desired));
                         self.fillRect(@intCast(start_x_u32), @intCast(sy), draw_width, 1, shade, shadow.color, shadow.color, Style{});
                     }
@@ -1038,40 +1129,55 @@ pub const Renderer = struct {
             }
         }
 
-        self.drawBox(x, y, width, height, box_style.border, box_style.border_color, box_style.background, box_style.style);
+        self.drawBox(x, y, clamped_width, clamped_height, box_style.border, box_style.border_color, box_style.background, box_style.style);
     }
 
     /// Draw a horizontal line
     pub fn drawHLine(self: *Renderer, x: u16, y: u16, width: u16, line_char: u21, fg: Color, bg: Color, style: Style) void {
-        for (0..width) |i| {
-            if (x + @as(u16, @intCast(i)) >= self.back.width) break;
-            self.drawChar(x + @as(u16, @intCast(i)), y, line_char, fg, bg, style);
+        if (x >= self.back.width) return;
+        const capped_width = @min(width, self.back.width - x);
+        for (0..capped_width) |i| {
+            const i_u32: u32 = @as(u32, @intCast(i));
+            const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), i_u32) catch break);
+            self.drawChar(target_x, y, line_char, fg, bg, style);
         }
     }
 
     /// Draw a vertical line
     pub fn drawVLine(self: *Renderer, x: u16, y: u16, height: u16, line_char: u21, fg: Color, bg: Color, style: Style) void {
-        for (0..height) |i| {
-            if (y + @as(u16, @intCast(i)) >= self.back.height) break;
-            self.drawChar(x, y + @as(u16, @intCast(i)), line_char, fg, bg, style);
+        if (y >= self.back.height) return;
+        const capped_height = @min(height, self.back.height - y);
+        for (0..capped_height) |i| {
+            const i_u32: u32 = @as(u32, @intCast(i));
+            const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), i_u32) catch break);
+            self.drawChar(x, target_y, line_char, fg, bg, style);
         }
     }
 
     /// Fill a rectangular area
     pub fn fillRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16, fill_char: u21, fg: Color, bg: Color, style: Style) void {
+        if (width == 0 or height == 0) return;
+        if (x >= self.back.width or y >= self.back.height) return;
+        const clamped_width = @min(width, self.back.width - x);
+        const clamped_height = @min(height, self.back.height - y);
+        if (clamped_width == 0 or clamped_height == 0) return;
         const cell = Cell.init(fill_char, fg, bg, style);
-        self.back.fillRect(x, y, width, height, cell);
-        self.markDirtyRect(x, y, width, height);
+        self.back.fillRect(x, y, clamped_width, clamped_height, cell);
+        self.markDirtyRect(x, y, clamped_width, clamped_height);
     }
 
     /// Fill a rectangular area with a linear gradient background
     pub fn fillGradient(self: *Renderer, x: u16, y: u16, width: u16, height: u16, stops: []const GradientStop, direction: GradientDirection, style: Style) void {
         if (width == 0 or height == 0 or stops.len == 0) return;
+        if (x >= self.back.width or y >= self.back.height) return;
+        const clamped_width = @min(width, self.back.width - x);
+        const clamped_height = @min(height, self.back.height - y);
+        if (clamped_width == 0 or clamped_height == 0) return;
 
         const sorted = copyAndSortStops(self.allocator, stops) catch return;
         defer self.allocator.free(sorted);
 
-        const axis_len: u16 = if (direction == .horizontal) width else height;
+        const axis_len: u16 = if (direction == .horizontal) clamped_width else clamped_height;
         if (axis_len == 0) return;
 
         var idx: u16 = 0;
@@ -1083,13 +1189,17 @@ pub const Renderer = struct {
 
             if (direction == .horizontal) {
                 var row: u16 = 0;
-                while (row < height) : (row += 1) {
-                    self.drawChar(x + idx, y + row, ' ', Color.named(NamedColor.default), bg, style);
+                while (row < clamped_height) : (row += 1) {
+                    const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, idx)) catch break);
+                    const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, row)) catch break);
+                    self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
                 }
             } else {
                 var col: u16 = 0;
-                while (col < width) : (col += 1) {
-                    self.drawChar(x + col, y + idx, ' ', Color.named(NamedColor.default), bg, style);
+                while (col < clamped_width) : (col += 1) {
+                    const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, col)) catch break);
+                    const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, idx)) catch break);
+                    self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
                 }
             }
         }

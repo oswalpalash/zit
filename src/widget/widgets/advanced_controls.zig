@@ -649,7 +649,7 @@ pub const Toolbar = struct {
         const self = @as(*Toolbar, @ptrCast(@alignCast(widget_ptr)));
         var width: usize = 1;
         for (self.items.items) |item| width += item.len + 3;
-        return layout_module.Size.init(@intCast(@min(width, 120)), 1);
+        return layout_module.Size.init(@as(u16, @intCast(@min(width, 120))), 1);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -726,7 +726,7 @@ pub const Breadcrumbs = struct {
             width += part.len;
             if (idx + 1 < self.parts.items.len) width += self.separator.len;
         }
-        return layout_module.Size.init(@intCast(@min(width, 200)), 1);
+        return layout_module.Size.init(@as(u16, @intCast(@min(width, 200))), 1);
     }
 
     fn canFocusFn(_: *anyopaque) bool {
@@ -1291,7 +1291,7 @@ pub const WizardStepper = struct {
         const self = @as(*WizardStepper, @ptrCast(@alignCast(widget_ptr)));
         var width: usize = 0;
         for (self.steps.items) |step| width += step.len + 4;
-        return layout_module.Size.init(@intCast(@min(width, 200)), 2);
+        return layout_module.Size.init(@as(u16, @intCast(@min(width, 200))), 2);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
