@@ -12,6 +12,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Cross-platform terminal support, including Windows/ConPTY handling and terminal capability detection.
 - Example suite and demos covering widgets, real-world dashboards, file managers, editors, and benchmarks.
 - Benchmarks and testing harness wired through `zig build` to keep render paths and layouts stable.
+- Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
+- CI matrix expanded to Linux/macOS/Windows plus tag-triggered release publishing.
 
 ### Fixed
 - Robust terminal state management (raw mode, cursor restore, resize handling) to avoid leaving sessions in a broken state.
@@ -21,6 +23,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ### Docs
 - Comprehensive references: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, and `docs/TERMINAL_COMPAT.md`.
 - README quickstart, installation, feature highlights, and example commands kept in sync with the build targets.
+- Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).
 
 ### Breaking Changes
 - None.

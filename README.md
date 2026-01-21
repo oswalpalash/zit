@@ -1,5 +1,7 @@
 # Zit – Zig-first Terminal UI Toolkit
 
+[![CI](https://github.com/oswalpalash/zit/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/oswalpalash/zit/actions/workflows/build.yaml) [![Release](https://img.shields.io/github/v/tag/oswalpalash/zit?label=latest%20tag)](https://github.com/oswalpalash/zit/releases) ![Zig version](https://img.shields.io/badge/zig-0.15.x%20matrix-blue)
+
 Zit helps you ship terminal dashboards, editors, and workflows with the same confidence you expect from GUI toolkits: a rich widget catalog, focus and typeahead helpers, fast rendering, and accessibility baked in. Zero dependencies, test coverage, and benchmarks included.
 
 ## Why Zit
@@ -100,22 +102,34 @@ _ = try app.scheduleTimer(1000, 1000, struct {
 
 ## Installation
 
-Vendoring works best today (no external dependencies):
+### Zig package manager (recommended)
+Requires Zig 0.15.x with package manager enabled.
+
+1) Add Zit to `build.zig.zon` (auto-add via fetch):
+```bash
+zig fetch --save git+https://github.com/oswalpalash/zit
+```
+
+2) Import the module in your `build.zig`:
+```zig
+const zit_dep = b.dependency("zit", .{});
+const zit_mod = zit_dep.module("zit");
+exe.root_module.addImport("zit", zit_mod);
+```
+
+3) Keep your module list in sync with tags: the CI release job publishes GitHub releases for every `v*` tag so you can pin clean versions.
+
+### Vendoring (offline/locked)
 
 1) Add Zit to your tree (example: `deps/zit`):
 ```bash
 git submodule add https://github.com/oswalpalash/zit.git deps/zit
 ```
 
-2) Wire the module in your `build.zig`:
+2) Wire the module in `build.zig`:
 ```zig
-const target = b.standardTargetOptions(.{});
-const optimize = b.standardOptimizeOption(.{});
-
 const zit_module = b.createModule(.{
     .root_source_file = b.path("deps/zit/src/main.zig"),
-    .target = target,
-    .optimize = optimize,
 });
 exe.root_module.addImport("zit", zit_module);
 ```
@@ -170,7 +184,7 @@ pub fn main() !void {
 - Widget tours: `zig build button-example`, `zig build table-example`, `zig build file-browser-example`, `zig build system-monitor-example`, `zig build form-wizard-example`, `zig build notifications-example`.
 - Realistic snapshots: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Benchmarks: `zig build bench` (render throughput).
-- Documentation: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`.
+- Documentation: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
