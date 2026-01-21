@@ -5,6 +5,7 @@ const animation = @import("../widget/animation.zig");
 const timer = @import("timer.zig");
 const accessibility = @import("../widget/accessibility.zig");
 const render = @import("../render/render.zig");
+const layout = @import("../layout/layout.zig");
 
 const event_loop_sleep_ms: u64 = 10;
 const focus_history_limit: usize = 10;
@@ -167,9 +168,121 @@ pub const MouseWheelEventData = struct {
 };
 
 /// Drag payload used for drop handlers.
+///
+/// The payload can carry a widget reference, a borrowed/owned string, or a custom
+/// typed value allocated on the heap. Helper constructors cover the common cases
+/// so handlers can remain type-safe without manual casting.
 pub const DragPayload = struct {
-    data: ?*anyopaque = null,
-    destructor: ?*const fn (*anyopaque) void = null,
+    kind: Kind = .none,
+    storage: Storage = .{ .none = {} },
+
+    pub const Kind = enum { none, widget, text, custom };
+
+    pub const Storage = union(Kind) {
+        none: void,
+        widget: *widget.Widget,
+        text: Text,
+        custom: Custom,
+    };
+
+    pub const Text = struct {
+        bytes: []const u8 = "",
+        allocator: ?std.mem.Allocator = null,
+
+        fn deinit(self: Text) void {
+            if (self.allocator) |alloc| {
+                alloc.free(self.bytes);
+            }
+        }
+    };
+
+    pub const Custom = struct {
+        ptr: ?*anyopaque = null,
+        destructor: ?*const fn (*anyopaque) void = null,
+        type_name: ?[]const u8 = null,
+    };
+
+    /// Borrow an existing widget reference.
+    pub fn fromWidget(widget_ptr: *widget.Widget) DragPayload {
+        return .{ .kind = .widget, .storage = .{ .widget = widget_ptr } };
+    }
+
+    /// Borrow a UTF-8 string slice. The caller owns the backing memory.
+    pub fn fromText(text: []const u8) DragPayload {
+        return .{ .kind = .text, .storage = .{ .text = .{ .bytes = text } } };
+    }
+
+    /// Copy text into an owned buffer so the payload can outlive the source slice.
+    pub fn copyText(allocator: std.mem.Allocator, text: []const u8) !DragPayload {
+        const buf = try allocator.dupe(u8, text);
+        return .{ .kind = .text, .storage = .{ .text = .{ .bytes = buf, .allocator = allocator } } };
+    }
+
+    /// Wrap an opaque pointer with an optional destructor. Useful for interop.
+    pub fn fromOpaque(ptr: *anyopaque, destructor: ?*const fn (*anyopaque) void, type_name: ?[]const u8) DragPayload {
+        return .{ .kind = .custom, .storage = .{ .custom = .{ .ptr = ptr, .destructor = destructor, .type_name = type_name } } };
+    }
+
+    /// Allocate and copy an arbitrary value onto the heap for the duration of the drag.
+    pub fn fromValue(allocator: std.mem.Allocator, value: anytype) !DragPayload {
+        const T = @TypeOf(value);
+        const typed_ptr = try allocator.create(T);
+        typed_ptr.* = value;
+
+        return .{
+            .kind = .custom,
+            .storage = .{ .custom = .{
+                .ptr = typed_ptr,
+                .destructor = destroyValue(T, allocator),
+                .type_name = @typeName(T),
+            } },
+        };
+    }
+
+    fn destroyValue(comptime T: type, allocator: std.mem.Allocator) *const fn (*anyopaque) void {
+        return struct {
+            const alloc = allocator;
+
+            fn destroy(raw: *anyopaque) void {
+                const ptr = @as(*T, @ptrCast(@alignCast(raw)));
+                alloc.destroy(ptr);
+            }
+        }.destroy;
+    }
+
+    /// Attempt to extract a widget reference.
+    pub fn asWidget(self: DragPayload) ?*widget.Widget {
+        return if (self.kind == .widget) self.storage.widget else null;
+    }
+
+    /// Attempt to extract text stored in the payload.
+    pub fn asText(self: DragPayload) ?[]const u8 {
+        return if (self.kind == .text) self.storage.text.bytes else null;
+    }
+
+    /// Attempt to view the payload as a typed value allocated via `fromValue`.
+    pub fn asValue(self: DragPayload, comptime T: type) ?*const T {
+        if (self.kind != .custom) return null;
+        const ptr = self.storage.custom.ptr orelse return null;
+        return @as(*const T, @ptrCast(@alignCast(ptr)));
+    }
+
+    /// Release any owned memory associated with the payload.
+    pub fn deinit(self: *DragPayload) void {
+        switch (self.kind) {
+            .text => self.storage.text.deinit(),
+            .custom => {
+                if (self.storage.custom.destructor) |d| {
+                    if (self.storage.custom.ptr) |p| {
+                        d(p);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        self.* = .{};
+    }
 };
 
 /// Dragging lifecycle data.
@@ -181,6 +294,7 @@ pub const DragEventData = struct {
     button: u8,
     source: ?*widget.Widget,
     payload: DragPayload = .{},
+    accepted: bool = true,
 };
 
 /// Resize event data
@@ -699,7 +813,20 @@ pub const FocusRequestData = struct {
 /// Focus request event ID
 pub const FOCUS_REQUEST_EVENT_ID = 0x46435351; // "FCSQ"
 
-/// Helper to emit drag lifecycle events and manage payload cleanup.
+/// Callback that determines whether a drop target accepts the current payload.
+pub const DropAcceptFn = *const fn (target: *widget.Widget, drag: DragEventData) bool;
+
+/// Callback invoked after a successful drop on a target.
+pub const DropHandlerFn = *const fn (target: *widget.Widget, drag: DragEventData) void;
+
+/// Registered drop target entry.
+pub const DropTarget = struct {
+    widget: *widget.Widget,
+    accept: DropAcceptFn,
+    on_drop: ?DropHandlerFn = null,
+};
+
+/// Helper to emit drag lifecycle events, manage payload cleanup, and coordinate drop targets.
 pub const DragManager = struct {
     active: bool = false,
     source: ?*widget.Widget = null,
@@ -710,11 +837,19 @@ pub const DragManager = struct {
     last_y: u16 = 0,
     button: u8 = 0,
     queue: *EventQueue,
+    allocator: std.mem.Allocator,
+    targets: std.ArrayList(DropTarget) = std.ArrayList(DropTarget).empty,
 
-    pub fn init(queue: *EventQueue) DragManager {
+    pub fn init(queue: *EventQueue, allocator: std.mem.Allocator) DragManager {
         return DragManager{
             .queue = queue,
+            .allocator = allocator,
         };
+    }
+
+    pub fn deinit(self: *DragManager) void {
+        self.targets.deinit(self.allocator);
+        self.cleanupPayload();
     }
 
     pub fn begin(self: *DragManager, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
@@ -728,22 +863,32 @@ pub const DragManager = struct {
         self.last_y = y;
         self.button = button;
 
-        try self.queue.createDragEvent(.drag_start, self.eventData(x, y), source);
+        try self.queue.createDragEvent(.drag_start, self.eventData(x, y, true), source);
     }
 
     pub fn update(self: *DragManager, x: u16, y: u16, target: ?*widget.Widget) !void {
         if (!self.active) return;
         self.last_x = x;
         self.last_y = y;
-        try self.queue.createDragEvent(.drag_update, self.eventData(x, y), target);
+        const resolved = self.resolveTarget(x, y, target);
+        try self.queue.createDragEvent(.drag_update, self.eventData(x, y, resolved.accepted), resolved.widget);
     }
 
     pub fn end(self: *DragManager, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
         if (!self.active) return;
         self.last_x = x;
         self.last_y = y;
-        try self.queue.createDragEvent(.drag_end, self.eventData(x, y), self.source);
-        try self.queue.createDragEvent(.drop, self.eventData(x, y), drop_target);
+        const resolved = self.resolveTarget(x, y, drop_target);
+        try self.queue.createDragEvent(.drag_end, self.eventData(x, y, true), self.source);
+        try self.queue.createDragEvent(.drop, self.eventData(x, y, resolved.accepted), resolved.widget);
+
+        if (resolved.accepted) {
+            if (resolved.target_entry) |entry| {
+                if (entry.on_drop) |cb| {
+                    cb(entry.widget, self.eventData(x, y, resolved.accepted));
+                }
+            }
+        }
         self.cleanupPayload();
         self.active = false;
     }
@@ -754,7 +899,7 @@ pub const DragManager = struct {
         self.active = false;
     }
 
-    fn eventData(self: *const DragManager, x: u16, y: u16) DragEventData {
+    fn eventData(self: *const DragManager, x: u16, y: u16, accepted: bool) DragEventData {
         return DragEventData{
             .start_x = self.start_x,
             .start_y = self.start_y,
@@ -763,16 +908,130 @@ pub const DragManager = struct {
             .button = self.button,
             .source = self.source,
             .payload = self.payload,
+            .accepted = accepted,
         };
     }
 
     fn cleanupPayload(self: *DragManager) void {
-        if (self.payload.destructor) |d| {
-            if (self.payload.data) |p| {
-                d(p);
+        self.payload.deinit();
+    }
+
+    /// Register a widget as a drop target with accept + optional on-drop callbacks.
+    pub fn registerTarget(self: *DragManager, target: DropTarget) !void {
+        try self.targets.append(self.allocator, target);
+    }
+
+    /// Remove a previously registered drop target.
+    pub fn unregisterTarget(self: *DragManager, target_widget: *widget.Widget) bool {
+        if (self.findTargetIndex(target_widget)) |idx| {
+            _ = self.targets.orderedRemove(idx);
+            return true;
+        }
+        return false;
+    }
+
+    /// Convenience hit test to find the registered drop target under a coordinate.
+    pub fn hitTest(self: *DragManager, x: u16, y: u16) ?*DropTarget {
+        return self.targetAtPoint(x, y);
+    }
+
+    fn resolveTarget(self: *DragManager, x: u16, y: u16, explicit: ?*widget.Widget) struct { widget: ?*widget.Widget, accepted: bool, target_entry: ?DropTarget } {
+        if (explicit) |target_widget| {
+            const accepted = self.accepts(target_widget, x, y);
+            const entry = self.lookupTarget(target_widget);
+            return .{ .widget = target_widget, .accepted = accepted, .target_entry = entry };
+        }
+
+        if (self.targetAtPoint(x, y)) |entry| {
+            const accepted = entry.accept(entry.widget, self.eventData(x, y, true));
+            return .{ .widget = entry.widget, .accepted = accepted, .target_entry = entry.* };
+        }
+
+        return .{ .widget = null, .accepted = false, .target_entry = null };
+    }
+
+    fn targetAtPoint(self: *DragManager, x: u16, y: u16) ?*DropTarget {
+        var i: usize = self.targets.items.len;
+        while (i > 0) {
+            i -= 1;
+            const entry = &self.targets.items[i];
+            if (pointInRect(x, y, entry.widget.rect)) {
+                return entry;
             }
         }
-        self.payload = .{};
+        return null;
+    }
+
+    fn accepts(self: *DragManager, target_widget: *widget.Widget, x: u16, y: u16) bool {
+        if (self.lookupTarget(target_widget)) |entry| {
+            return entry.accept(target_widget, self.eventData(x, y, true));
+        }
+        return true;
+    }
+
+    fn lookupTarget(self: *DragManager, target_widget: *widget.Widget) ?DropTarget {
+        for (self.targets.items) |entry| {
+            if (entry.widget == target_widget) return entry;
+        }
+        return null;
+    }
+
+    fn findTargetIndex(self: *DragManager, target_widget: *widget.Widget) ?usize {
+        for (self.targets.items, 0..) |entry, i| {
+            if (entry.widget == target_widget) return i;
+        }
+        return null;
+    }
+
+    fn pointInRect(x: u16, y: u16, rect: layout.Rect) bool {
+        return x >= rect.x and y >= rect.y and x < rect.x + rect.width and y < rect.y + rect.height;
+    }
+};
+
+/// Helper utilities for painting drop target feedback.
+pub const DropVisuals = struct {
+    pub const State = enum { idle, valid, invalid };
+
+    pub const Colors = struct {
+        border: render.Color,
+        fill: render.Color,
+        valid: render.Color,
+        invalid: render.Color,
+        text: render.Color,
+    };
+
+    /// Construct a sensible palette from a theme.
+    pub fn colorsFromTheme(th: widget.theme.Theme) Colors {
+        return .{
+            .border = th.color(.accent),
+            .fill = th.color(.surface),
+            .valid = th.color(.success),
+            .invalid = th.color(.danger),
+            .text = th.color(.text),
+        };
+    }
+
+    /// Draw only the outline for a drop zone.
+    pub fn outline(renderer: *render.Renderer, rect: layout.Rect, state: State, colors: Colors) void {
+        const color = switch (state) {
+            .idle => colors.border,
+            .valid => colors.valid,
+            .invalid => colors.invalid,
+        };
+        const style = render.Style{ .bold = state != .idle };
+        renderer.drawBox(rect.x, rect.y, rect.width, rect.height, render.BorderStyle.double, color, colors.fill, style);
+    }
+
+    /// Draw a filled drop zone with state-aware tint and outline.
+    pub fn filled(renderer: *render.Renderer, rect: layout.Rect, state: State, colors: Colors) void {
+        const fill_color = switch (state) {
+            .idle => colors.fill,
+            .valid => widget.theme.adjust(colors.valid, -15),
+            .invalid => widget.theme.adjust(colors.invalid, -15),
+        };
+
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', colors.text, fill_color, render.Style{});
+        outline(renderer, rect, state, colors);
     }
 };
 
@@ -806,7 +1065,8 @@ test "drag manager enqueues lifecycle events" {
     };
 
     var stub = widget.Widget.init(&dummy_vtable);
-    var mgr = DragManager.init(&queue);
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
 
     try mgr.begin(&stub, 1, 1, 1, .{});
     try mgr.update(2, 2, &stub);
@@ -817,6 +1077,65 @@ test "drag manager enqueues lifecycle events" {
     try std.testing.expectEqual(EventType.drag_update, queue.queue.items[1].type);
     try std.testing.expectEqual(EventType.drag_end, queue.queue.items[2].type);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
+}
+
+test "drop targets gate acceptance" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: @import("../layout/layout.zig").Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!@import("../layout/layout.zig").Size {
+                return @import("../layout/layout.zig").Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return false;
+            }
+        }.can,
+    };
+
+    var stub = widget.Widget.init(&dummy_vtable);
+    stub.rect = layout.Rect.init(0, 0, 10, 10);
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.registerTarget(.{
+        .widget = &stub,
+        .accept = struct {
+            fn accept(_: *widget.Widget, drag: DragEventData) bool {
+                return drag.x >= 5;
+            }
+        }.accept,
+        .on_drop = null,
+    });
+
+    try mgr.begin(&stub, 0, 0, 1, .{});
+    try mgr.update(2, 2, null);
+    try mgr.end(2, 2, null);
+    try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
+    try std.testing.expect(!queue.queue.items[3].data.drop.accepted);
+
+    queue.queue.clearRetainingCapacity();
+
+    try mgr.begin(&stub, 0, 0, 1, .{});
+    try mgr.update(6, 6, null);
+    try mgr.end(6, 6, null);
+    try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
+    try std.testing.expect(queue.queue.items[3].data.drop.accepted);
 }
 
 /// Application class for managing the event loop and UI components
@@ -857,7 +1176,7 @@ pub const Application = struct {
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
-        app.drag_manager = DragManager.init(&app.event_queue);
+        app.drag_manager = DragManager.init(&app.event_queue, allocator);
 
         return app;
     }
@@ -877,6 +1196,7 @@ pub const Application = struct {
         self.animator.deinit();
         self.timer_manager.deinit();
         self.focus_manager.deinit();
+        self.drag_manager.deinit();
         self.event_queue.deinit();
     }
 
@@ -1021,6 +1341,21 @@ pub const Application = struct {
     /// Finish a drag gesture and emit drop events.
     pub fn endDrag(self: *Application, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
         try self.drag_manager.end(x, y, drop_target);
+    }
+
+    /// Register a widget as a drop target.
+    pub fn registerDropTarget(self: *Application, target: DropTarget) !void {
+        try self.drag_manager.registerTarget(target);
+    }
+
+    /// Remove a registered drop target.
+    pub fn unregisterDropTarget(self: *Application, target: *widget.Widget) bool {
+        return self.drag_manager.unregisterTarget(target);
+    }
+
+    /// Hit-test registered drop targets at the given coordinates.
+    pub fn hitTestDropTarget(self: *Application, x: u16, y: u16) ?*DropTarget {
+        return self.drag_manager.hitTest(x, y);
     }
 
     /// Schedule a timer callback
