@@ -23,7 +23,7 @@ import termios
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 # Palette approximating xterm defaults.
 BASE_COLORS = [
@@ -88,51 +88,53 @@ class TerminalEmulator:
         self.current_fg = (230, 230, 230)
         self.current_bg = (10, 12, 16)
         self.bold = False
+        self.inverse = False
         self.state = "normal"
         self.csi_buf = ""
         self.osc_active = False
 
     def feed(self, data: bytes) -> None:
+        text = data.decode("utf-8", errors="replace")
         i = 0
-        while i < len(data):
-            b = data[i]
+        while i < len(text):
+            ch = text[i]
+            code = ord(ch)
             if self.state == "normal":
-                if b == 0x1B:  # ESC
+                if ch == "\x1b":  # ESC
                     self.state = "esc"
-                elif b == 0x0D:  # CR
+                elif ch == "\r":  # CR
                     self.cx = 0
-                elif b == 0x0A:  # LF
+                elif ch == "\n":  # LF
                     self._newline()
-                elif b == 0x08:  # BS
+                elif ch == "\x08":  # BS
                     self.cx = max(0, self.cx - 1)
-                elif b == 0x09:  # TAB
+                elif ch == "\t":  # TAB
                     self.cx = min(self.cols - 1, ((self.cx // 8) + 1) * 8)
-                elif b == 0x07:  # BEL
+                elif ch == "\x07":  # BEL
                     pass
-                elif 0x20 <= b <= 0x7E or b >= 0xA0:
-                    self._put_char(chr(b))
+                elif 0x20 <= code <= 0x7E or code >= 0xA0:
+                    self._put_char(ch)
                 i += 1
             elif self.state == "esc":
-                if b == ord("["):
+                if ch == "[":
                     self.state = "csi"
                     self.csi_buf = ""
-                elif b == ord("]"):
+                elif ch == "]":
                     self.osc_active = True
                     self.state = "osc"
                 else:
                     self.state = "normal"
                 i += 1
             elif self.state == "osc":
-                if b == 0x07:  # BEL terminates OSC
+                if ch == "\x07":  # BEL terminates OSC
                     self.osc_active = False
                     self.state = "normal"
-                elif b == 0x1B and i + 1 < len(data) and data[i + 1] == ord("\\"):
+                elif ch == "\x1b" and i + 1 < len(text) and text[i + 1] == "\\":
                     self.osc_active = False
                     self.state = "normal"
                     i += 1
                 i += 1
             elif self.state == "csi":
-                ch = chr(b)
                 if "@" <= ch <= "~":
                     self._handle_csi(ch, self.csi_buf)
                     self.state = "normal"
@@ -148,18 +150,26 @@ class TerminalEmulator:
             self._scroll(1)
 
     def _scroll(self, count: int) -> None:
+        fg, bg = self._effective_colors()
         for _ in range(count):
             self.cells.pop(0)
-            self.cells.append([Cell(fg=self.current_fg, bg=self.current_bg, bold=self.bold) for _ in range(self.cols)])
+            self.cells.append([Cell(fg=fg, bg=bg, bold=self.bold) for _ in range(self.cols)])
 
     def _put_char(self, ch: str) -> None:
+        fg, bg = self._effective_colors()
         if self.cx >= self.cols:
             self._newline()
         if self.cy >= self.rows:
             self._scroll(1)
             self.cy = self.rows - 1
-        self.cells[self.cy][self.cx] = Cell(ch=ch, fg=self.current_fg, bg=self.current_bg, bold=self.bold)
+        self.cells[self.cy][self.cx] = Cell(ch=ch, fg=fg, bg=bg, bold=self.bold)
         self.cx += 1
+
+    def _effective_colors(self) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
+        fg, bg = self.current_fg, self.current_bg
+        if self.inverse:
+            fg, bg = bg, fg
+        return fg, bg
 
     def _handle_csi(self, final: str, params_raw: str) -> None:
         private = params_raw.startswith("?")
@@ -194,9 +204,10 @@ class TerminalEmulator:
                     start, end = 0, self.cx + 1
                 else:
                     start, end = 0, self.cols
+                fg, bg = self._effective_colors()
                 for x in range(start, min(end, self.cols)):
                     if 0 <= self.cy < self.rows:
-                        self.cells[self.cy][x] = Cell(fg=self.current_fg, bg=self.current_bg, bold=self.bold)
+                        self.cells[self.cy][x] = Cell(fg=fg, bg=bg, bold=self.bold)
         elif final == "m":
             self._apply_sgr(ints)
         elif final == "s":
@@ -218,8 +229,15 @@ class TerminalEmulator:
                 self.current_fg = (230, 230, 230)
                 self.current_bg = (10, 12, 16)
                 self.bold = False
+                self.inverse = False
             elif p == 1:
                 self.bold = True
+            elif p in (2, 21, 22):
+                self.bold = False
+            elif p == 7:
+                self.inverse = True
+            elif p == 27:
+                self.inverse = False
             elif 30 <= p <= 37:
                 self.current_fg = BASE_COLORS[p - 30]
             elif 90 <= p <= 97:
@@ -548,20 +566,59 @@ def render_svg(screen: TerminalEmulator, cell_w: int = 9, cell_h: int = 16, padd
 def capture_to_svg(name: str, cmd: List[str], out_dir: Path, rows: int, cols: int, duration: float) -> Path:
     print(f"[capture] {name}: running {' '.join(cmd)}")
     data = run_capture(cmd, rows, cols, duration)
+    return data_to_svg(name, data, out_dir, rows, cols)
+
+
+def data_to_svg(
+    name: str,
+    data: bytes,
+    out_dir: Path,
+    rows: int,
+    cols: int,
+    *,
+    cell_w: int = 9,
+    cell_h: int = 16,
+    padding: int = 10,
+) -> Path:
     screen = TerminalEmulator(cols, rows)
     screen.feed(data)
     out_path = out_dir / f"{name}.svg"
-    out_path.write_text(render_svg(screen), encoding="utf-8")
+    out_path.write_text(render_svg(screen, cell_w=cell_w, cell_h=cell_h, padding=padding), encoding="utf-8")
     return out_path
+
+
+def render_from_ansi(raw_files: Iterable[Path], out_dir: Path, rows: int, cols: int) -> None:
+    for raw_path in raw_files:
+        if not raw_path.exists():
+            print(f"[ansi] {raw_path} missing, skipping")
+            continue
+        data = raw_path.read_bytes()
+        if not data:
+            print(f"[ansi] {raw_path} is empty, skipping")
+            continue
+        print(f"[ansi] {raw_path.name}: rendering with colors")
+        out_path = data_to_svg(raw_path.stem, data, out_dir, rows, cols)
+        print(f"[ansi] wrote {out_path}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SVG screenshots for Zit demos without external recorders.")
-    parser.add_argument("--rows", type=int, default=28, help="Terminal rows")
-    parser.add_argument("--cols", type=int, default=110, help="Terminal columns")
+    parser.add_argument("--rows", type=int, default=35, help="Terminal rows")
+    parser.add_argument("--cols", type=int, default=100, help="Terminal columns")
     parser.add_argument("--duration", type=float, default=3.0, help="Seconds to capture before terminating")
     parser.add_argument("--out", type=Path, default=Path("assets"), help="Output directory for SVGs")
     parser.add_argument("--bin-dir", type=Path, default=Path("zig-out/bin"), help="Directory containing compiled demos")
+    parser.add_argument(
+        "--from-raw",
+        action="store_true",
+        help="Render screenshots from saved ANSI captures in assets/raw instead of running demos directly.",
+    )
+    parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=Path("assets/raw"),
+        help="Directory containing .ansi captures (used with --from-raw).",
+    )
     parser.add_argument("--mock", action="store_true", help="Generate stylized mock screens without running demos (useful when PTYs are unavailable).")
     args = parser.parse_args()
 
@@ -580,6 +637,11 @@ def main() -> None:
             out_path = out_dir / f"{name}.svg"
             out_path.write_text(render_svg(screen), encoding="utf-8")
             print(f"[mock] wrote {out_path}")
+    elif args.from_raw:
+        raw_files = sorted(args.raw_dir.glob("*.ansi"))
+        if not raw_files:
+            raise SystemExit(f"No .ansi captures found in {args.raw_dir}.")
+        render_from_ansi(raw_files, out_dir, args.rows, args.cols)
     else:
         demos = {
             "system_monitor_example": args.bin_dir / "system_monitor",
