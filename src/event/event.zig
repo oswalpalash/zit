@@ -378,7 +378,7 @@ pub const DebugHooks = struct {
     trace_ctx: ?*anyopaque = null,
 };
 
-inline fn traceEvent(hooks: DebugHooks, ev: *Event, phase: Event.PropagationPhase, node: ?*widget.Widget) void {
+pub inline fn traceEvent(hooks: DebugHooks, ev: *Event, phase: Event.PropagationPhase, node: ?*widget.Widget) void {
     if (hooks.event_trace) |trace_fn| {
         trace_fn(ev, phase, node, ev.handled, hooks.trace_ctx);
     }

@@ -29,7 +29,7 @@ pub const MessageCatalog = struct {
     /// Insert or replace a localized string (copied into catalog memory).
     pub fn set(self: *MessageCatalog, key: []const u8, value: []const u8) !void {
         const duped = try self.allocator.dupe(u8, value);
-        if (self.strings.fetchSwapRemove(key)) |removed| {
+        if (self.strings.fetchRemove(key)) |removed| {
             self.allocator.free(removed.value);
         }
         try self.strings.put(self.allocator, key, duped);
@@ -84,11 +84,14 @@ pub fn formatNumber(allocator: std.mem.Allocator, value: anytype, opts: NumberFo
     const T = @TypeOf(value);
     const info = @typeInfo(T);
     var raw: []u8 = undefined;
-    if (info == .Float) {
-        const precision = opts.precision orelse 2;
-        raw = try std.fmt.allocPrint(allocator, "{.{}}", .{ precision, value });
-    } else {
-        raw = try std.fmt.allocPrint(allocator, "{}", .{value});
+    switch (info) {
+        .float, .comptime_float => {
+            const precision = opts.precision orelse 2;
+            raw = try std.fmt.allocPrint(allocator, "{.{}}", .{ precision, value });
+        },
+        else => {
+            raw = try std.fmt.allocPrint(allocator, "{}", .{value});
+        },
     }
     errdefer allocator.free(raw);
 
@@ -96,25 +99,25 @@ pub fn formatNumber(allocator: std.mem.Allocator, value: anytype, opts: NumberFo
     const int_part = if (dot) |idx| raw[0..idx] else raw;
     const frac_part = if (dot) |idx| raw[idx + 1 ..] else raw[0..0];
 
-    var out = std.ArrayList(u8).init(allocator);
-    errdefer out.deinit();
+    var out = std.ArrayListUnmanaged(u8){};
+    errdefer out.deinit(allocator);
 
     const negative = int_part.len > 0 and int_part[0] == '-';
     const digits = if (negative) int_part[1..] else int_part;
 
     if (!opts.grouping or digits.len <= 3) {
-        if (negative) try out.append('-');
-        try out.appendSlice(digits);
+        if (negative) try out.append(allocator, '-');
+        try out.appendSlice(allocator, digits);
     } else {
-        if (negative) try out.append('-');
+        if (negative) try out.append(allocator, '-');
         var idx: isize = @intCast(digits.len);
         var group_count: u8 = 0;
         while (idx > 0) {
             idx -= 1;
-            try out.append(digits[@intCast(idx)]);
+            try out.append(allocator, digits[@intCast(idx)]);
             group_count += 1;
             if (group_count == 3 and idx > 0) {
-                try out.append(opts.group_separator);
+                try out.append(allocator, opts.group_separator);
                 group_count = 0;
             }
         }
@@ -123,12 +126,12 @@ pub fn formatNumber(allocator: std.mem.Allocator, value: anytype, opts: NumberFo
     }
 
     if (frac_part.len > 0) {
-        try out.append(opts.decimal_point);
-        try out.appendSlice(frac_part);
+        try out.append(allocator, opts.decimal_point);
+        try out.appendSlice(allocator, frac_part);
     }
 
     allocator.free(raw);
-    return out.toOwnedSlice();
+    return out.toOwnedSlice(allocator);
 }
 
 pub const DateFormatOptions = struct {
@@ -140,32 +143,34 @@ pub const DateFormatOptions = struct {
 
 /// Minimal ISO-like date/time formatter using UTC math by default.
 pub fn formatDateTime(allocator: std.mem.Allocator, epoch_seconds: i64, opts: DateFormatOptions) ![]u8 {
-    var ts: std.c.time_t = @intCast(epoch_seconds + opts.timezone_offset_s);
-    var tm: std.c.tm = undefined;
-    const tm_ptr = std.c.gmtime_r(&ts, &tm);
-    if (tm_ptr == null) return error.InvalidTimestamp;
+    const adjusted = epoch_seconds + opts.timezone_offset_s;
+    if (adjusted < 0) return error.InvalidTimestamp;
+    const epoch = std.time.epoch.EpochSeconds{ .secs = @as(u64, @intCast(adjusted)) };
+    const year_day = epoch.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch.getDaySeconds();
 
     if (!opts.include_time) {
         return std.fmt.allocPrint(allocator, "{d:0>4}{c}{d:0>2}{c}{d:0>2}", .{
-            tm_ptr.*.tm_year + 1900,
+            year_day.year,
             opts.date_separator,
-            tm_ptr.*.tm_mon + 1,
+            month_day.month.numeric(),
             opts.date_separator,
-            tm_ptr.*.tm_mday,
+            month_day.day_index + 1,
         });
     }
 
     return std.fmt.allocPrint(allocator, "{d:0>4}{c}{d:0>2}{c}{d:0>2} {d:0>2}{c}{d:0>2}{c}{d:0>2}", .{
-        tm_ptr.*.tm_year + 1900,
+        year_day.year,
         opts.date_separator,
-        tm_ptr.*.tm_mon + 1,
+        month_day.month.numeric(),
         opts.date_separator,
-        tm_ptr.*.tm_mday,
-        tm_ptr.*.tm_hour,
+        month_day.day_index + 1,
+        day_seconds.getHoursIntoDay(),
         opts.time_separator,
-        tm_ptr.*.tm_min,
+        day_seconds.getMinutesIntoHour(),
         opts.time_separator,
-        tm_ptr.*.tm_sec,
+        day_seconds.getSecondsIntoMinute(),
     });
 }
 

@@ -2,6 +2,108 @@ const std = @import("std");
 const render = @import("../render/render.zig");
 const layout = @import("../layout/layout.zig");
 const widget = @import("../widget/widget.zig");
+const input = @import("../input/input.zig");
+
+/// Errors emitted by snapshot helpers.
+pub const SnapshotError = error{GoldenMissing};
+
+/// Options for comparing a snapshot against a golden file.
+pub const SnapshotOptions = struct {
+    /// Force updating the golden file even if environment variables are unset.
+    update: bool = false,
+    /// Environment variable that opts into updating or creating golden files.
+    env_var: ?[]const u8 = "ZIT_UPDATE_SNAPSHOTS",
+    /// Allow creating a golden file when it is missing (only when update is enabled).
+    allow_create: bool = true,
+};
+
+fn shouldUpdateGolden(opts: SnapshotOptions) bool {
+    if (opts.update) return true;
+    if (opts.env_var) |name| {
+        const allocator = std.heap.page_allocator;
+        const value = std.process.getEnvVarOwned(allocator, name) catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => return false,
+            else => return false,
+        };
+        defer allocator.free(value);
+        return true;
+    }
+    return false;
+}
+
+fn writeGolden(path: []const u8, contents: []const u8) !void {
+    const cwd = std.fs.cwd();
+    if (std.fs.path.dirname(path)) |dir| {
+        try cwd.makePath(dir);
+    }
+
+    var file = try cwd.createFile(path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(contents);
+}
+
+fn readGolden(allocator: std.mem.Allocator, golden_path: []const u8) !?[]u8 {
+    const cwd = std.fs.cwd();
+    return cwd.readFileAlloc(allocator, golden_path, 4 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+}
+
+fn printDiff(golden_path: []const u8, expected: []const u8, actual: []const u8) void {
+    std.debug.print("Snapshot mismatch for {s}\n", .{golden_path});
+    std.debug.print("--- golden\n+++ snapshot\n", .{});
+
+    var expected_it = std.mem.splitScalar(u8, expected, '\n');
+    var actual_it = std.mem.splitScalar(u8, actual, '\n');
+    var line_no: usize = 1;
+    while (true) : (line_no += 1) {
+        const expected_line = expected_it.next();
+        const actual_line = actual_it.next();
+        if (expected_line == null and actual_line == null) break;
+
+        const left = expected_line orelse "";
+        const right = actual_line orelse "";
+        if (std.mem.eql(u8, left, right)) continue;
+
+        std.debug.print("{d:4} - {s}\n", .{ line_no, left });
+        std.debug.print("{d:4} + {s}\n", .{ line_no, right });
+    }
+    std.debug.print("\n", .{});
+}
+
+/// Compare a snapshot against a golden file with optional auto-update.
+pub fn expectSnapshotMatch(
+    allocator: std.mem.Allocator,
+    snapshot: Snapshot,
+    golden_path: []const u8,
+    opts: SnapshotOptions,
+) !void {
+    const update = shouldUpdateGolden(opts);
+    const golden = try readGolden(allocator, golden_path);
+    defer if (golden) |buf| allocator.free(buf);
+
+    const snapshot_text = snapshot.text();
+    if (golden == null) {
+        if (update and opts.allow_create) {
+            try writeGolden(golden_path, snapshot_text);
+            return;
+        }
+        printDiff(golden_path, "", snapshot_text);
+        return SnapshotError.GoldenMissing;
+    }
+
+    const expected = golden.?;
+    if (!std.mem.eql(u8, expected, snapshot_text)) {
+        if (update) {
+            try writeGolden(golden_path, snapshot_text);
+            return;
+        }
+
+        printDiff(golden_path, expected, snapshot_text);
+        try std.testing.expectEqualStrings(expected, snapshot_text);
+    }
+}
 
 /// Snapshot of a rendered buffer for assertions.
 pub const Snapshot = struct {
@@ -51,6 +153,16 @@ pub const Snapshot = struct {
         try std.testing.expectEqualStrings(expected, self.text());
     }
 
+    /// Assert that this snapshot matches a golden file.
+    pub fn expectGolden(
+        self: Snapshot,
+        allocator: std.mem.Allocator,
+        golden_path: []const u8,
+        opts: SnapshotOptions,
+    ) !void {
+        try expectSnapshotMatch(allocator, self, golden_path, opts);
+    }
+
     fn fromBuffer(allocator: std.mem.Allocator, buffer: *render.Buffer) !Snapshot {
         const max_utf8_bytes_per_cell = 32;
         const newline_bytes = 1;
@@ -82,6 +194,11 @@ pub const Snapshot = struct {
 /// Headless renderer wrapper for widget tests.
 pub const MockTerminal = struct {
     renderer: render.Renderer,
+    allocator: std.mem.Allocator,
+    size: layout.Size,
+    input_queue: std.ArrayListUnmanaged(input.Event) = .{},
+    input_cursor: usize = 0,
+    output_log: std.ArrayListUnmanaged(u8) = .{},
 
     /// Initialize a deterministic renderer for tests.
     ///
@@ -103,7 +220,11 @@ pub const MockTerminal = struct {
         renderer.capabilities.colors_256 = true;
         renderer.capabilities.rgb_colors = true;
         renderer.capabilities.bidi = false;
-        return MockTerminal{ .renderer = renderer };
+        return MockTerminal{
+            .renderer = renderer,
+            .allocator = allocator,
+            .size = layout.Size.init(width, height),
+        };
     }
 
     /// Tear down renderer resources.
@@ -118,6 +239,40 @@ pub const MockTerminal = struct {
     /// ```
     pub fn deinit(self: *MockTerminal) void {
         self.renderer.deinit();
+        self.input_queue.deinit(self.allocator);
+        self.output_log.deinit(self.allocator);
+    }
+
+    /// Resize the simulated terminal and underlying buffers.
+    pub fn resize(self: *MockTerminal, width: u16, height: u16) !void {
+        self.size = layout.Size.init(width, height);
+        try self.renderer.resize(width, height);
+    }
+
+    /// Queue a synthetic input event for consumption by tests.
+    pub fn pushInput(self: *MockTerminal, event: input.Event) !void {
+        try self.input_queue.append(self.allocator, event);
+    }
+
+    /// Queue printable characters as key events.
+    pub fn pushKeys(self: *MockTerminal, text: []const u8) !void {
+        var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+        while (it.nextCodepoint()) |cp| {
+            try self.pushInput(input.Event{ .key = input.KeyEvent.init(cp, input.KeyModifiers{}) });
+        }
+    }
+
+    /// Pop the next queued input event if available.
+    pub fn nextInput(self: *MockTerminal) ?input.Event {
+        if (self.input_cursor >= self.input_queue.items.len) return null;
+        defer self.input_cursor += 1;
+        return self.input_queue.items[self.input_cursor];
+    }
+
+    /// Clear the recorded input events.
+    pub fn clearInputs(self: *MockTerminal) void {
+        self.input_queue.clearRetainingCapacity();
+        self.input_cursor = 0;
     }
 
     /// Produce a snapshot of the current back buffer (no terminal IO).
@@ -134,35 +289,150 @@ pub const MockTerminal = struct {
     pub fn snapshot(self: *MockTerminal, allocator: std.mem.Allocator) !Snapshot {
         return Snapshot.fromBuffer(allocator, &self.renderer.back);
     }
+
+    /// Capture the renderer's ANSI output for the current back buffer.
+    pub fn captureOutput(self: *MockTerminal) ![]const u8 {
+        self.output_log.clearRetainingCapacity();
+        const writer = self.output_log.writer(self.allocator);
+        try self.renderer.renderToWriter(writer);
+        return self.output_log.items;
+    }
+};
+
+/// Lightweight harness that keeps a mock terminal, sizing, and rendering helpers together.
+pub const WidgetHarness = struct {
+    allocator: std.mem.Allocator,
+    size: layout.Size,
+    terminal: MockTerminal,
+
+    pub fn init(allocator: std.mem.Allocator, size: layout.Size) !WidgetHarness {
+        return WidgetHarness{
+            .allocator = allocator,
+            .size = size,
+            .terminal = try MockTerminal.init(allocator, size.width, size.height),
+        };
+    }
+
+    pub fn deinit(self: *WidgetHarness) void {
+        self.terminal.deinit();
+    }
+
+    pub fn resize(self: *WidgetHarness, size: layout.Size) !void {
+        self.size = size;
+        try self.terminal.resize(size.width, size.height);
+    }
+
+    fn applyLayout(self: *WidgetHarness, widget_ptr: *widget.Widget) !void {
+        try widget_ptr.layout(layout.Rect.init(0, 0, self.size.width, self.size.height));
+    }
+
+    /// Render a widget to the mock terminal and return a text snapshot.
+    pub fn render(self: *WidgetHarness, widget_ptr: *widget.Widget) !Snapshot {
+        try self.applyLayout(widget_ptr);
+        try widget_ptr.draw(&self.terminal.renderer);
+        return self.terminal.snapshot(self.allocator);
+    }
+
+    /// Render a widget and return the ANSI bytes a real terminal would receive.
+    pub fn renderAnsi(self: *WidgetHarness, widget_ptr: *widget.Widget) ![]const u8 {
+        try self.applyLayout(widget_ptr);
+        try widget_ptr.draw(&self.terminal.renderer);
+        return self.terminal.captureOutput();
+    }
+
+    /// Render a widget and assert it matches inline text.
+    pub fn expectRenders(self: *WidgetHarness, widget_ptr: *widget.Widget, expected: []const u8) !void {
+        var snap = try self.render(widget_ptr);
+        defer snap.deinit(self.allocator);
+        try snap.expectEqual(expected);
+    }
+
+    /// Render a widget and assert it matches a golden snapshot.
+    pub fn expectGolden(
+        self: *WidgetHarness,
+        widget_ptr: *widget.Widget,
+        golden_path: []const u8,
+        opts: SnapshotOptions,
+    ) !void {
+        var snap = try self.render(widget_ptr);
+        defer snap.deinit(self.allocator);
+        try expectSnapshotMatch(self.allocator, snap, golden_path, opts);
+    }
+
+    fn ensureLayout(self: *WidgetHarness, widget_ptr: *widget.Widget) !void {
+        if (widget_ptr.rect.width == 0 and widget_ptr.rect.height == 0) {
+            try self.applyLayout(widget_ptr);
+        }
+    }
+
+    /// Send a single event to a widget, laying it out first if needed.
+    pub fn sendEvent(self: *WidgetHarness, widget_ptr: *widget.Widget, event: input.Event) !bool {
+        try self.ensureLayout(widget_ptr);
+        return widget_ptr.handleEvent(event);
+    }
+
+    /// Send multiple events and return how many were handled.
+    pub fn sendEvents(self: *WidgetHarness, widget_ptr: *widget.Widget, events: []const input.Event) !usize {
+        var handled: usize = 0;
+        for (events) |ev| {
+            if (try self.sendEvent(widget_ptr, ev)) handled += 1;
+        }
+        return handled;
+    }
+
+    /// Send printable characters as key events and return how many were handled.
+    pub fn sendKeys(self: *WidgetHarness, widget_ptr: *widget.Widget, text: []const u8) !usize {
+        var handled: usize = 0;
+        var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+        while (it.nextCodepoint()) |cp| {
+            const ev = input.Event{ .key = input.KeyEvent.init(cp, input.KeyModifiers{}) };
+            if (try self.sendEvent(widget_ptr, ev)) handled += 1;
+        }
+        return handled;
+    }
+
+    /// Simulate a primary button click at a coordinate.
+    pub fn click(self: *WidgetHarness, widget_ptr: *widget.Widget, x: u16, y: u16) !bool {
+        return self.sendEvent(widget_ptr, input.Event{ .mouse = input.MouseEvent.init(.press, x, y, 1, 0) });
+    }
+
+    /// Mark a widget focused for input-heavy tests.
+    pub fn focus(self: *WidgetHarness, widget_ptr: *widget.Widget) void {
+        _ = self;
+        widget_ptr.setFocus(true);
+    }
 };
 
 /// Convenience helper for rendering a widget into a mock terminal.
-///
-/// Parameters:
-/// - `allocator`: allocator used for the renderer and returned snapshot.
-/// - `widget_ptr`: widget to lay out and draw.
-/// - `size`: dimensions of the simulated terminal.
-/// Returns: snapshot of the widget rendering.
-/// Errors: layout, draw, or allocation failures.
-/// Example:
-/// ```
-/// var label = try widget.LabelBuilder.init(alloc).content("Hi").build();
-/// defer label.deinit();
-/// const snap = try renderWidget(alloc, &label.widget, layout.Size.init(4, 1));
-/// defer snap.deinit(alloc);
-/// ```
 pub fn renderWidget(
     allocator: std.mem.Allocator,
     widget_ptr: *widget.Widget,
     size: layout.Size,
 ) !Snapshot {
-    var mock = try MockTerminal.init(allocator, size.width, size.height);
-    defer mock.deinit();
-
-    try widget_ptr.layout(layout.Rect.init(0, 0, size.width, size.height));
-    try widget_ptr.draw(&mock.renderer);
-    return mock.snapshot(allocator);
+    var harness = try WidgetHarness.init(allocator, size);
+    defer harness.deinit();
+    return harness.render(widget_ptr);
 }
+
+/// Minimal builders tuned for tests so common widgets are one call away.
+pub const TestWidgetBuilders = struct {
+    pub fn button(allocator: std.mem.Allocator, text: []const u8) !widget.Button {
+        var builder = widget.ButtonBuilder.init(allocator);
+        return builder.text(text).build();
+    }
+
+    pub fn label(allocator: std.mem.Allocator, text: []const u8) !widget.Label {
+        var builder = widget.LabelBuilder.init(allocator);
+        return builder.content(text).build();
+    }
+
+    pub fn focusedInput(allocator: std.mem.Allocator, placeholder: []const u8) !*widget.InputField {
+        var builder = widget.InputBuilder.init(allocator);
+        var field = try builder.withPlaceholder(placeholder).build();
+        field.widget.focused = true;
+        return field;
+    }
+};
 
 test "mock terminal captures widget output" {
     const alloc = std.testing.allocator;
@@ -205,4 +475,56 @@ test "renderWidget tolerates zero-sized targets" {
     var snap = try renderWidget(alloc, &label.widget, layout.Size.init(0, 0));
     defer snap.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 0), snap.text().len);
+}
+
+test "snapshot comparison uses golden files" {
+    const alloc = std.testing.allocator;
+    var btn_builder = widget.ButtonBuilder.init(alloc);
+    var btn = try btn_builder.text("Go").build();
+    defer btn.deinit();
+
+    var snap = try renderWidget(alloc, &btn.widget, layout.Size.init(12, 3));
+    defer snap.deinit(alloc);
+
+    try snap.expectGolden(alloc, "src/testing/golden/button_basic.snap", .{});
+}
+
+test "mock terminal captures ansi output and queues input" {
+    const alloc = std.testing.allocator;
+    var mock = try MockTerminal.init(alloc, 6, 2);
+    defer mock.deinit();
+
+    try mock.pushKeys("hi");
+    if (mock.nextInput()) |first| {
+        try std.testing.expectEqual(input.EventType.key, std.meta.activeTag(first));
+        try std.testing.expectEqual(@as(u21, 'h'), first.key.key);
+    } else return error.TestExpectedEqual;
+
+    if (mock.nextInput()) |second| {
+        try std.testing.expectEqual(input.EventType.key, std.meta.activeTag(second));
+        try std.testing.expectEqual(@as(u21, 'i'), second.key.key);
+    } else return error.TestExpectedEqual;
+
+    try std.testing.expectEqual(@as(?input.Event, null), mock.nextInput());
+
+    mock.renderer.drawStr(0, 0, "Hi!", render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
+    const ansi = try mock.captureOutput();
+    try std.testing.expect(ansi.len > 0);
+}
+
+test "widget harness simulates typing and assertions" {
+    const alloc = std.testing.allocator;
+    var field_builder = widget.InputBuilder.init(alloc);
+    var field = try field_builder.withPlaceholder("name").build();
+    defer field.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(12, 1));
+    defer harness.deinit();
+    harness.focus(&field.widget);
+
+    _ = try harness.sendKeys(&field.widget, "ok");
+
+    var snap = try harness.render(&field.widget);
+    defer snap.deinit(alloc);
+    try std.testing.expect(std.mem.indexOf(u8, snap.text(), "ok") != null);
 }
