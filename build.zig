@@ -224,6 +224,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "notifications", .description = "Run the notifications widget example", .path = "examples/widget_examples/notifications_example.zig", .step_name = "notifications-example" },
         .{ .name = "table_widget", .description = "Run the table widget example with typeahead", .path = "examples/widget_examples/table_example.zig", .step_name = "table-example" },
         .{ .name = "file_browser", .description = "Run the file browser widget example", .path = "examples/widget_examples/file_browser_example.zig", .step_name = "file-browser-example" },
+        .{ .name = "file_manager", .description = "Run the tree+list file manager example", .path = "examples/widget_examples/file_manager_example.zig", .step_name = "file-manager-example" },
     };
 
     for (widget_examples) |example| {
