@@ -478,6 +478,7 @@ pub const EventDispatcher = struct {
 pub const EventQueue = struct {
     /// Event queue
     queue: std.ArrayList(Event),
+    head: usize = 0,
     /// Event dispatcher
     dispatcher: EventDispatcher,
     /// Allocator for event queue operations
@@ -498,6 +499,19 @@ pub const EventQueue = struct {
         self.dispatcher.deinit();
     }
 
+    fn recycle(self: *EventQueue) void {
+        self.queue.clearRetainingCapacity();
+        self.head = 0;
+    }
+
+    pub fn popFront(self: *EventQueue) ?Event {
+        if (self.head >= self.queue.items.len) return null;
+        const ev = self.queue.items[self.head];
+        self.head += 1;
+        if (self.head >= self.queue.items.len) self.recycle();
+        return ev;
+    }
+
     /// Push an event to the queue
     pub fn pushEvent(self: *EventQueue, event: Event) !void {
         try self.queue.append(self.allocator, event);
@@ -506,8 +520,8 @@ pub const EventQueue = struct {
     /// Process all events in the queue
     pub fn processEvents(self: *EventQueue) !void {
         // Use standard dispatch (no propagation)
-        while (self.queue.items.len > 0) {
-            var event = self.queue.orderedRemove(0);
+        while (self.popFront()) |event_val| {
+            var event = event_val;
             _ = self.dispatcher.dispatchEvent(&event);
 
             // Clean up custom event data if needed
@@ -698,7 +712,7 @@ pub const EventQueue = struct {
     /// Wait for a specific event condition
     pub fn waitForEvent(self: *EventQueue, condition: *const fn (*Event) bool, callback: ?*const fn (Event) void) !void {
         // Check current queue for matching event
-        for (self.queue.items) |*event| {
+        for (self.queue.items[self.head..]) |*event| {
             if (condition(event)) {
                 if (callback != null) {
                     callback.?(event.*);
