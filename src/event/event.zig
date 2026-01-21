@@ -549,6 +549,8 @@ pub const EventQueue = struct {
     allocator: std.mem.Allocator,
     /// Optional debug hooks
     debug_hooks: DebugHooks = .{},
+    /// Reusable buffer for propagation paths to avoid per-event allocations
+    path_scratch: std.ArrayListUnmanaged(*widget.Widget) = .{},
 
     /// Initialize a new event queue
     pub fn init(allocator: std.mem.Allocator) EventQueue {
@@ -562,6 +564,7 @@ pub const EventQueue = struct {
     /// Clean up event queue resources
     pub fn deinit(self: *EventQueue) void {
         self.queue.deinit(self.allocator);
+        self.path_scratch.deinit(self.allocator);
         self.dispatcher.deinit();
     }
 
@@ -609,7 +612,7 @@ pub const EventQueue = struct {
     /// Process all events in the queue with propagation
     pub fn processEventsWithPropagation(self: *EventQueue, allocator: std.mem.Allocator) !void {
         const propagation = @import("propagation.zig");
-        try propagation.processEventsWithPropagation(self, allocator);
+        try propagation.processEventsWithPropagation(self, allocator, &self.path_scratch);
     }
 
     /// Attach debug hooks to observe event flow.
