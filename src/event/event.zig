@@ -60,6 +60,8 @@ pub const Event = struct {
     phase: PropagationPhase = .bubbling,
     /// Whether propagation should stop
     stop_propagation: bool = false,
+    /// Node currently processing the event during propagation
+    current_target: ?*widget.Widget = null,
     /// Event data
     data: EventData,
 
@@ -108,6 +110,7 @@ pub const Event = struct {
         return Event{
             .type = event_type,
             .target = target,
+            .current_target = target,
             .timestamp = std.time.milliTimestamp(),
             .data = data,
         };
@@ -127,12 +130,17 @@ pub const Event = struct {
     pub fn setPhase(self: *Event, phase: PropagationPhase) void {
         self.phase = phase;
     }
+
+    /// Update the current target while keeping the original target intact.
+    pub fn setCurrentTarget(self: *Event, target: ?*widget.Widget) void {
+        self.current_target = target;
+    }
 };
 
 /// Key event data
 pub const KeyEventData = struct {
-    /// Key code
-    key: input.KeyCode,
+    /// Key code (unicode scalar or special key identifier)
+    key: u21,
     /// Key modifiers
     modifiers: input.KeyModifiers,
     /// Raw key value
@@ -393,6 +401,9 @@ pub const EventDispatcher = struct {
 
     /// Dispatch an event to all registered listeners
     pub fn dispatchEvent(self: *EventDispatcher, event: *Event) bool {
+        if (event.current_target == null) {
+            event.setCurrentTarget(event.target);
+        }
         var handled = false;
 
         // Iterate through listeners in reverse order (newest first)
@@ -428,24 +439,35 @@ pub const EventDispatcher = struct {
 
     /// Dispatch an event with both capturing and bubbling phases
     pub fn dispatchEventWithPropagation(self: *EventDispatcher, event: *Event, widget_path: []*widget.Widget) bool {
+        event.setCurrentTarget(null);
+        if (event.target == null and widget_path.len > 0) {
+            event.target = widget_path[widget_path.len - 1];
+        }
+        const original_target = event.target;
         var handled = false;
 
         // Capturing phase (top-down)
         event.setPhase(.capturing);
-        for (widget_path) |w| {
-            event.target = w;
-            if (self.dispatchEvent(event)) {
-                handled = true;
-            }
+        if (widget_path.len > 1) {
+            var i: usize = 0;
+            while (i + 1 < widget_path.len) {
+                const node = widget_path[i];
+                event.setCurrentTarget(node);
+                if (self.dispatchEvent(event)) {
+                    handled = true;
+                }
 
-            if (event.stop_propagation) {
-                return handled;
+                if (event.stop_propagation) {
+                    return handled;
+                }
+                i += 1;
             }
         }
 
         // Target phase
-        if (event.target != null) {
+        if (original_target != null) {
             event.setPhase(.target);
+            event.setCurrentTarget(original_target);
             if (self.dispatchEvent(event)) {
                 handled = true;
             }
@@ -455,18 +477,22 @@ pub const EventDispatcher = struct {
             }
         }
 
-        // Bubbling phase (bottom-up)
+        // Bubbling phase (bottom-up, excluding the target)
         event.setPhase(.bubbling);
-        var i: usize = widget_path.len;
-        while (i > 0) {
-            i -= 1;
-            event.target = widget_path[i];
-            if (self.dispatchEvent(event)) {
-                handled = true;
-            }
+        if (widget_path.len > 1) {
+            var i: usize = widget_path.len - 1;
+            while (i > 0) {
+                i -= 1;
+                const node = widget_path[i];
+                if (node == original_target) continue;
+                event.setCurrentTarget(node);
+                if (self.dispatchEvent(event)) {
+                    handled = true;
+                }
 
-            if (event.stop_propagation) {
-                break;
+                if (event.stop_propagation) {
+                    break;
+                }
             }
         }
 
@@ -551,7 +577,7 @@ pub const EventQueue = struct {
     }
 
     /// Create a key press event
-    pub fn createKeyPressEvent(self: *EventQueue, key: input.KeyCode, modifiers: input.KeyModifiers, raw: u32, target: ?*widget.Widget) !void {
+    pub fn createKeyPressEvent(self: *EventQueue, key: u21, modifiers: input.KeyModifiers, raw: u32, target: ?*widget.Widget) !void {
         const event = Event.init(.key_press, target, Event.EventData{
             .key_press = KeyEventData{
                 .key = key,
@@ -564,7 +590,7 @@ pub const EventQueue = struct {
     }
 
     /// Create a key release event
-    pub fn createKeyReleaseEvent(self: *EventQueue, key: input.KeyCode, modifiers: input.KeyModifiers, raw: u32, target: ?*widget.Widget) !void {
+    pub fn createKeyReleaseEvent(self: *EventQueue, key: u21, modifiers: input.KeyModifiers, raw: u32, target: ?*widget.Widget) !void {
         const event = Event.init(.key_release, target, Event.EventData{
             .key_release = KeyEventData{
                 .key = key,
@@ -732,6 +758,8 @@ pub const FocusManager = struct {
     focused_widget: ?*widget.Widget,
     /// Focus history stack
     focus_history: std.ArrayList(*widget.Widget),
+    /// Ordered list of focusable widgets for traversal
+    focus_chain: std.ArrayList(*widget.Widget),
     /// Event queue reference
     event_queue: *EventQueue,
     /// Allocator
@@ -746,6 +774,7 @@ pub const FocusManager = struct {
         return FocusManager{
             .focused_widget = null,
             .focus_history = std.ArrayList(*widget.Widget).empty,
+            .focus_chain = std.ArrayList(*widget.Widget).empty,
             .event_queue = event_queue,
             .allocator = allocator,
             .accessibility = null,
@@ -755,17 +784,22 @@ pub const FocusManager = struct {
     /// Clean up focus manager resources
     pub fn deinit(self: *FocusManager) void {
         self.focus_history.deinit(self.allocator);
+        self.focus_chain.deinit(self.allocator);
     }
 
     /// Request focus for a widget
     pub fn requestFocus(self: *FocusManager, target_widget: *widget.Widget) !bool {
+        if (!target_widget.canFocus()) {
+            return false;
+        }
+        try self.ensureTracked(target_widget);
         // Check if focus stealing is allowed
         if (!self.allow_focus_stealing and self.focused_widget != null) {
             // Ask current widget if it's willing to give up focus
-            const focus_data = FocusRequestData{
+            var focus_data = FocusRequestData{
                 .requesting_widget = target_widget,
                 .current_widget = self.focused_widget.?,
-                .allow = false,
+                .allow = true,
             };
 
             try self.event_queue.createCustomEventWithFilter(FOCUS_REQUEST_EVENT_ID, @ptrCast(&focus_data), null, "focus_request", null, self.focused_widget);
@@ -804,13 +838,100 @@ pub const FocusManager = struct {
 
     /// Focus previous widget in history
     pub fn focusPrevious(self: *FocusManager) !bool {
-        if (self.focus_history.items.len < 2) {
-            return false;
+        if (self.focus_history.items.len >= 2) {
+            _ = self.focus_history.pop();
+            while (self.focus_history.items.len > 0) {
+                const previous = self.focus_history.getLast();
+                if (previous.canFocus()) {
+                    return try self.requestFocus(previous);
+                }
+                _ = self.focus_history.pop();
+            }
         }
 
-        _ = self.focus_history.pop();
-        const previous = self.focus_history.getLast();
-        return try self.requestFocus(previous);
+        return try self.focusPreviousInChain();
+    }
+
+    /// Register a widget as focusable for traversal order.
+    pub fn registerFocusable(self: *FocusManager, target_widget: *widget.Widget) !void {
+        if (!target_widget.canFocus()) return;
+        try self.ensureTracked(target_widget);
+    }
+
+    /// Unregister a widget from the focus chain.
+    pub fn unregisterFocusable(self: *FocusManager, target_widget: *widget.Widget) void {
+        if (self.findInChain(target_widget)) |idx| {
+            _ = self.focus_chain.orderedRemove(idx);
+        }
+        if (self.focused_widget == target_widget) {
+            self.focused_widget = null;
+        }
+    }
+
+    /// Move focus forward through the registered chain, skipping unfocusable items.
+    pub fn focusNext(self: *FocusManager) !bool {
+        self.pruneChain();
+        if (self.focus_chain.items.len == 0) return false;
+
+        const start_idx: isize = if (self.focused_widget) |focused| blk: {
+            if (self.findInChain(focused)) |idx| break :blk @as(isize, @intCast(idx));
+            break :blk -1;
+        } else -1;
+
+        var idx: usize = if (start_idx >= 0) @intCast(start_idx) else self.focus_chain.items.len - 1;
+        var attempts: usize = 0;
+        while (attempts < self.focus_chain.items.len) : (attempts += 1) {
+            idx = (idx + 1) % self.focus_chain.items.len;
+            const candidate = self.focus_chain.items[idx];
+            if (!candidate.canFocus()) continue;
+            return try self.requestFocus(candidate);
+        }
+
+        return false;
+    }
+
+    fn focusPreviousInChain(self: *FocusManager) !bool {
+        self.pruneChain();
+        if (self.focus_chain.items.len == 0) return false;
+
+        const start_idx: isize = if (self.focused_widget) |focused| blk: {
+            if (self.findInChain(focused)) |idx| break :blk @as(isize, @intCast(idx));
+            break :blk 0;
+        } else 0;
+
+        var idx: usize = @intCast((start_idx + @as(isize, self.focus_chain.items.len)) % @as(isize, self.focus_chain.items.len));
+        var attempts: usize = 0;
+        while (attempts < self.focus_chain.items.len) : (attempts += 1) {
+            idx = (idx + self.focus_chain.items.len - 1) % self.focus_chain.items.len;
+            const candidate = self.focus_chain.items[idx];
+            if (!candidate.canFocus()) continue;
+            return try self.requestFocus(candidate);
+        }
+
+        return false;
+    }
+
+    fn ensureTracked(self: *FocusManager, target_widget: *widget.Widget) !void {
+        if (self.findInChain(target_widget) != null) return;
+        try self.focus_chain.append(self.allocator, target_widget);
+    }
+
+    fn findInChain(self: *FocusManager, target_widget: *widget.Widget) ?usize {
+        for (self.focus_chain.items, 0..) |w, i| {
+            if (w == target_widget) return i;
+        }
+        return null;
+    }
+
+    fn pruneChain(self: *FocusManager) void {
+        var i: usize = 0;
+        while (i < self.focus_chain.items.len) {
+            if (!self.focus_chain.items[i].canFocus()) {
+                _ = self.focus_chain.orderedRemove(i);
+                continue;
+            }
+            i += 1;
+        }
     }
 };
 
@@ -1150,6 +1271,230 @@ test "drop targets gate acceptance" {
     try mgr.end(6, 6, null);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
     try std.testing.expect(queue.queue.items[3].data.drop.accepted);
+}
+
+test "propagation captures target then bubbles with current target set" {
+    const alloc = std.testing.allocator;
+    var dispatcher = EventDispatcher.init(alloc);
+    defer dispatcher.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    const Node = struct { widget: widget.Widget };
+    var root = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    var branch = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    var leaf = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    branch.widget.parent = &root.widget;
+    leaf.widget.parent = &branch.widget;
+
+    var order = std.ArrayList([]const u8).empty;
+    defer order.deinit(alloc);
+
+    const Logger = struct {
+        pub var log: *std.ArrayList([]const u8) = undefined;
+        pub var root_ptr: *widget.Widget = undefined;
+        pub var branch_ptr: *widget.Widget = undefined;
+        pub var leaf_ptr: *widget.Widget = undefined;
+        pub var allocator: std.mem.Allocator = undefined;
+
+        pub fn listener(ev: *Event) bool {
+            const current = ev.current_target orelse return false;
+            const label: []const u8 = if (current == root_ptr)
+                "root"
+            else if (current == branch_ptr)
+                "branch"
+            else
+                "leaf";
+            log.append(allocator, label) catch unreachable;
+            return false;
+        }
+    };
+
+    Logger.log = &order;
+    Logger.root_ptr = &root.widget;
+    Logger.branch_ptr = &branch.widget;
+    Logger.leaf_ptr = &leaf.widget;
+    Logger.allocator = alloc;
+    _ = try dispatcher.addEventListener(.key_press, Logger.listener, null);
+
+    var ev = Event.init(.key_press, &leaf.widget, Event.EventData{
+        .key_press = KeyEventData{
+            .key = @as(u21, input.KeyCode.ENTER),
+            .modifiers = .{},
+            .raw = 0,
+        },
+    });
+
+    const propagation = @import("propagation.zig");
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+
+    try std.testing.expectEqual(@as(usize, 5), order.items.len);
+    try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order.items[1]));
+    try std.testing.expect(std.mem.eql(u8, "leaf", order.items[2]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order.items[3]));
+    try std.testing.expect(std.mem.eql(u8, "root", order.items[4]));
+}
+
+test "stopPropagation halts remaining phases" {
+    const alloc = std.testing.allocator;
+    var dispatcher = EventDispatcher.init(alloc);
+    defer dispatcher.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    const Node = struct { widget: widget.Widget };
+    var root = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    var branch = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    var leaf = Node{ .widget = widget.Widget.init(&dummy_vtable) };
+    branch.widget.parent = &root.widget;
+    leaf.widget.parent = &branch.widget;
+
+    var order = std.ArrayList([]const u8).empty;
+    defer order.deinit(alloc);
+
+    const Stopper = struct {
+        pub var log: *std.ArrayList([]const u8) = undefined;
+        pub var branch_ptr: *widget.Widget = undefined;
+        pub var allocator: std.mem.Allocator = undefined;
+
+        pub fn listener(ev: *Event) bool {
+            const current = ev.current_target orelse return false;
+            if (current == branch_ptr) {
+                log.append(allocator, "branch") catch unreachable;
+                ev.stopPropagation();
+            } else {
+                log.append(allocator, "root") catch unreachable;
+            }
+            return false;
+        }
+    };
+
+    Stopper.log = &order;
+    Stopper.branch_ptr = &branch.widget;
+    Stopper.allocator = alloc;
+    _ = try dispatcher.addEventListener(.key_press, Stopper.listener, null);
+
+    var ev = Event.init(.key_press, &leaf.widget, Event.EventData{
+        .key_press = KeyEventData{
+            .key = @as(u21, input.KeyCode.ENTER),
+            .modifiers = .{},
+            .raw = 0,
+        },
+    });
+
+    const propagation = @import("propagation.zig");
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+
+    try std.testing.expectEqual(@as(usize, 2), order.items.len);
+    try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order.items[1]));
+    try std.testing.expect(ev.stop_propagation);
+}
+
+test "focus traversal respects registered order and focusability" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var manager = FocusManager.init(alloc, &queue);
+    defer manager.deinit();
+
+    const vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(widget_ptr: *anyopaque) bool {
+                const self = @as(*widget.Widget, @ptrCast(@alignCast(widget_ptr)));
+                return self.enabled;
+            }
+        }.can,
+    };
+
+    var first = widget.Widget.init(&vtable);
+    var second = widget.Widget.init(&vtable);
+
+    try manager.registerFocusable(&first);
+    try manager.registerFocusable(&second);
+
+    try std.testing.expect(try manager.focusNext());
+    try std.testing.expectEqual(&first, manager.focused_widget.?);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.focus_change, queue.queue.items[0].type);
+    try std.testing.expect(queue.queue.items[0].data.focus_change.gained);
+    try std.testing.expectEqual(&first, queue.queue.items[0].target.?);
+
+    try std.testing.expect(try manager.focusNext());
+    try std.testing.expectEqual(&second, manager.focused_widget.?);
+    try std.testing.expectEqual(@as(usize, 2), queue.queue.items.len);
+    try std.testing.expectEqual(&first, queue.queue.items[0].target.?);
+    try std.testing.expect(!queue.queue.items[0].data.focus_change.gained);
+    try std.testing.expectEqual(&second, queue.queue.items[1].target.?);
+
+    // Disable second to ensure traversal skips it.
+    second.setEnabled(false);
+    try std.testing.expect(try manager.focusNext());
+    try std.testing.expectEqual(&first, manager.focused_widget.?);
+    try std.testing.expectEqual(@as(usize, 2), queue.queue.items.len);
+    try std.testing.expect(queue.queue.items[1].data.focus_change.gained);
+    try std.testing.expectEqual(&first, queue.queue.items[1].target.?);
 }
 
 /// Application class for managing the event loop and UI components
