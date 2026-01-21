@@ -384,6 +384,14 @@ inline fn traceEvent(hooks: DebugHooks, ev: *Event, phase: Event.PropagationPhas
     }
 }
 
+/// Optional hook executed before an event is dispatched. Return true to consume it.
+pub const EventPreprocessorFn = *const fn (event: *Event, ctx: ?*anyopaque) bool;
+
+pub const EventPreprocessor = struct {
+    handler: EventPreprocessorFn,
+    ctx: ?*anyopaque = null,
+};
+
 /// Event dispatcher for managing event listeners and dispatching events
 pub const EventDispatcher = struct {
     /// Event listeners
@@ -551,6 +559,8 @@ pub const EventQueue = struct {
     debug_hooks: DebugHooks = .{},
     /// Reusable buffer for propagation paths to avoid per-event allocations
     path_scratch: std.ArrayListUnmanaged(*widget.Widget) = .{},
+    /// Optional pre-dispatch hook (shortcuts, global handlers, etc.)
+    preprocessor: ?EventPreprocessor = null,
 
     /// Initialize a new event queue
     pub fn init(allocator: std.mem.Allocator) EventQueue {
@@ -566,6 +576,19 @@ pub const EventQueue = struct {
         self.queue.deinit(self.allocator);
         self.path_scratch.deinit(self.allocator);
         self.dispatcher.deinit();
+    }
+
+    /// Attach or clear a pre-dispatch hook.
+    pub fn setPreprocessor(self: *EventQueue, pre: ?EventPreprocessor) void {
+        self.preprocessor = pre;
+    }
+
+    /// Run the configured preprocessor, if any.
+    pub fn preprocess(self: *EventQueue, ev: *Event) bool {
+        if (self.preprocessor) |pre| {
+            return pre.handler(ev, pre.ctx);
+        }
+        return false;
     }
 
     fn recycle(self: *EventQueue) void {
@@ -595,6 +618,9 @@ pub const EventQueue = struct {
         // Use standard dispatch (no propagation)
         while (self.popFront()) |event_val| {
             var event = event_val;
+            if (self.preprocess(&event)) {
+                continue;
+            }
             _ = self.dispatcher.dispatchEvent(&event);
             event.setPhase(.target);
             traceEvent(self.debug_hooks, &event, .target, event.target);
@@ -1228,6 +1254,203 @@ pub const DropVisuals = struct {
     }
 };
 
+/// Normalized key combination used for shortcut lookup.
+pub const KeyCombo = struct {
+    key: u21,
+    modifiers: input.KeyModifiers = .{},
+
+    pub fn hash(self: KeyCombo) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(std.mem.asBytes(&self.key));
+        hasher.update(std.mem.asBytes(&self.modifiers));
+        return hasher.final();
+    }
+
+    pub fn eql(a: KeyCombo, b: KeyCombo) bool {
+        return a.key == b.key and a.modifiers.ctrl == b.modifiers.ctrl and a.modifiers.alt == b.modifiers.alt and a.modifiers.shift == b.modifiers.shift;
+    }
+};
+
+pub const ShortcutScope = enum { global, focused_only };
+
+pub const ShortcutContext = struct {
+    event: *Event,
+    target: ?*widget.Widget,
+};
+
+pub const ShortcutCallback = *const fn (ctx: ShortcutContext, user_data: ?*anyopaque) bool;
+
+pub const ShortcutSummary = struct {
+    combo: []const u8,
+    description: []const u8,
+    scope: ShortcutScope,
+};
+
+pub const ShortcutRegistry = struct {
+    allocator: std.mem.Allocator,
+    shortcuts: std.ArrayList(ShortcutEntry),
+    lookup: std.AutoHashMap(KeyCombo, usize),
+    next_id: u32 = 1,
+
+    const ShortcutEntry = struct {
+        id: u32,
+        combo: KeyCombo,
+        description: []const u8,
+        callback: ShortcutCallback,
+        user_data: ?*anyopaque,
+        scope: ShortcutScope,
+    };
+
+    pub fn init(allocator: std.mem.Allocator) ShortcutRegistry {
+        return ShortcutRegistry{
+            .allocator = allocator,
+            .shortcuts = std.ArrayList(ShortcutEntry).empty,
+            .lookup = std.AutoHashMap(KeyCombo, usize).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *ShortcutRegistry) void {
+        for (self.shortcuts.items) |entry| {
+            self.allocator.free(entry.description);
+        }
+        self.shortcuts.deinit(self.allocator);
+        self.lookup.deinit();
+    }
+
+    pub fn register(self: *ShortcutRegistry, combo: KeyCombo, description: []const u8, callback: ShortcutCallback, user_data: ?*anyopaque, scope: ShortcutScope) !u32 {
+        if (self.lookup.get(combo) != null) return error.ShortcutConflict;
+
+        const id = self.next_id;
+        self.next_id += 1;
+        const desc_copy = try self.allocator.dupe(u8, description);
+
+        const idx = self.shortcuts.items.len;
+        try self.shortcuts.append(self.allocator, ShortcutEntry{
+            .id = id,
+            .combo = combo,
+            .description = desc_copy,
+            .callback = callback,
+            .user_data = user_data,
+            .scope = scope,
+        });
+        try self.lookup.put(combo, idx);
+        return id;
+    }
+
+    pub fn unregister(self: *ShortcutRegistry, id: u32) bool {
+        var removed = false;
+        var i: usize = 0;
+        while (i < self.shortcuts.items.len) {
+            if (self.shortcuts.items[i].id == id) {
+                self.allocator.free(self.shortcuts.items[i].description);
+                _ = self.shortcuts.orderedRemove(i);
+                removed = true;
+                break;
+            }
+            i += 1;
+        }
+        if (!removed) return false;
+
+        self.lookup.clearRetainingCapacity();
+        for (self.shortcuts.items, 0..) |entry, idx| {
+            self.lookup.put(entry.combo, idx) catch {};
+        }
+        return true;
+    }
+
+    pub fn handle(self: *ShortcutRegistry, ev: *Event) bool {
+        if (ev.type != .key_press) return false;
+        const combo = KeyCombo{ .key = ev.data.key_press.key, .modifiers = ev.data.key_press.modifiers };
+        if (self.lookup.get(combo)) |idx| {
+            const entry = self.shortcuts.items[idx];
+            if (entry.scope == .focused_only and ev.target == null) return false;
+            const ctx = ShortcutContext{ .event = ev, .target = ev.target };
+            const handled = entry.callback(ctx, entry.user_data);
+            if (handled) {
+                ev.handled = true;
+            }
+            return handled;
+        }
+        return false;
+    }
+
+    pub fn summaries(self: *ShortcutRegistry, allocator: std.mem.Allocator) ![]ShortcutSummary {
+        var list = std.ArrayList(ShortcutSummary).init(allocator);
+        errdefer {
+            for (list.items) |entry| {
+                allocator.free(entry.combo);
+                allocator.free(entry.description);
+            }
+            list.deinit();
+        }
+
+        for (self.shortcuts.items) |entry| {
+            const combo_str = try formatCombo(entry.combo, allocator);
+            const desc_copy = try allocator.dupe(u8, entry.description);
+            try list.append(.{
+                .combo = combo_str,
+                .description = desc_copy,
+                .scope = entry.scope,
+            });
+        }
+        return list.toOwnedSlice();
+    }
+
+    fn formatCombo(combo: KeyCombo, allocator: std.mem.Allocator) ![]const u8 {
+        var buf = std.ArrayList(u8).init(allocator);
+        errdefer buf.deinit();
+
+        const mods = try combo.modifiers.toString(allocator);
+        defer allocator.free(mods);
+        try buf.appendSlice(mods);
+
+        var key_name: []const u8 = undefined;
+        var stack_buf: [8]u8 = undefined;
+        if (combo.key < 128 and std.ascii.isPrint(@intCast(combo.key))) {
+            stack_buf[0] = @intCast(combo.key);
+            key_name = stack_buf[0..1];
+        } else {
+            key_name = switch (combo.key) {
+                input.KeyCode.UP => "Up",
+                input.KeyCode.DOWN => "Down",
+                input.KeyCode.LEFT => "Left",
+                input.KeyCode.RIGHT => "Right",
+                input.KeyCode.HOME => "Home",
+                input.KeyCode.END => "End",
+                input.KeyCode.PAGE_UP => "PageUp",
+                input.KeyCode.PAGE_DOWN => "PageDown",
+                input.KeyCode.ENTER => "Enter",
+                input.KeyCode.ESCAPE => "Esc",
+                else => "Key",
+            };
+        }
+
+        try buf.appendSlice(key_name);
+        return buf.toOwnedSlice();
+    }
+};
+
+/// Minimal helper to paint a shortcut cheat-sheet overlay.
+pub const ShortcutOverlay = struct {
+    pub fn draw(renderer: *render.Renderer, rect: layout.Rect, shortcuts: []const ShortcutSummary, fg: render.Color, bg: render.Color) void {
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, render.Style{});
+        renderer.drawBox(rect.x, rect.y, rect.width, rect.height, render.BorderStyle.double, fg, bg, render.Style{ .bold = true });
+
+        var y: i16 = rect.y + 1;
+        for (shortcuts) |shortcut| {
+            if (y >= rect.y + rect.height - 1) break;
+            var buf: [256]u8 = undefined;
+            const text = std.fmt.bufPrint(&buf, "{s}  {s}", .{ shortcut.combo, shortcut.description }) catch shortcut.description;
+            var x: i16 = rect.x + 2;
+            for (text) |ch| {
+                if (x >= rect.x + rect.width - 1) break;
+                renderer.drawChar(x, y, ch, fg, bg, render.Style{});
+                x += 1;
+            }
+            y += 1;
+        }
+    }
+};
 test "drag manager enqueues lifecycle events" {
     const alloc = std.testing.allocator;
     var queue = EventQueue.init(alloc);
@@ -1724,6 +1947,8 @@ pub const Application = struct {
     accessibility: ?*accessibility.Manager = null,
     /// Drag-and-drop coordinator
     drag_manager: DragManager,
+    /// Global shortcut registry
+    shortcut_registry: ShortcutRegistry,
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -1734,6 +1959,7 @@ pub const Application = struct {
             .animator = animation.Animator.init(allocator),
             .timer_manager = timer.TimerManager.init(allocator),
             .drag_manager = undefined,
+            .shortcut_registry = ShortcutRegistry.init(allocator),
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
@@ -1758,6 +1984,7 @@ pub const Application = struct {
         self.timer_manager.deinit();
         self.focus_manager.deinit();
         self.drag_manager.deinit();
+        self.shortcut_registry.deinit();
         self.event_queue.deinit();
     }
 
@@ -1800,6 +2027,8 @@ pub const Application = struct {
         if (self.root == null) {
             return error.NoRootWidget;
         }
+
+        self.ensureShortcutHook();
 
         if (self.use_propagation) {
             try self.event_queue.processEventsWithPropagation(self.allocator);
@@ -1886,6 +2115,33 @@ pub const Application = struct {
     /// Route debug hooks (event tracing, etc.) into the event queue.
     pub fn setDebugHooks(self: *Application, hooks: DebugHooks) void {
         self.event_queue.setDebugHooks(hooks);
+    }
+
+    fn ensureShortcutHook(self: *Application) void {
+        if (self.event_queue.preprocessor == null) {
+            self.event_queue.setPreprocessor(.{ .handler = Application.shortcutPreprocessor, .ctx = self });
+        }
+    }
+
+    fn shortcutPreprocessor(ev: *Event, ctx: ?*anyopaque) bool {
+        const app = @as(*Application, @ptrCast(@alignCast(ctx.?)));
+        return app.shortcut_registry.handle(ev);
+    }
+
+    /// Register a global or focused-only shortcut.
+    pub fn registerShortcut(self: *Application, combo: KeyCombo, description: []const u8, callback: ShortcutCallback, user_data: ?*anyopaque, scope: ShortcutScope) !u32 {
+        self.ensureShortcutHook();
+        return try self.shortcut_registry.register(combo, description, callback, user_data, scope);
+    }
+
+    /// Remove a previously registered shortcut.
+    pub fn unregisterShortcut(self: *Application, id: u32) bool {
+        return self.shortcut_registry.unregister(id);
+    }
+
+    /// Materialize summaries suitable for a help overlay. Caller owns the slices.
+    pub fn shortcutSummaries(self: *Application, allocator: std.mem.Allocator) ![]ShortcutSummary {
+        return try self.shortcut_registry.summaries(allocator);
     }
 
     /// Request focus for a widget
