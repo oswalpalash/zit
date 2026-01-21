@@ -9,6 +9,12 @@ if ! command -v zig >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "Running zig fmt --check src/"
+if ! zig fmt --check src/; then
+  echo "zig fmt --check failed; aborting commit."
+  exit 1
+fi
+
 echo "Running zig build..."
 if ! zig build; then
   echo "zig build failed; aborting commit."
