@@ -289,24 +289,50 @@ pub const Layout = struct {
 pub const FlexChild = struct {
     /// The child element
     element: LayoutElement,
-    /// Flex factor (0 = non-flexible)
-    flex: u16,
+    /// Flex grow factor (0 = non-flexible)
+    flex_grow: u16,
+    /// Flex shrink factor when overflowing
+    flex_shrink: u16,
     /// Alignment in the cross axis
     cross_alignment: ?FlexAlignment,
     /// Margin around the child
     margin_insets: EdgeInsets,
+    /// Optional sizing hints
+    size_hints: SizeHints,
     /// Cached size from last layout
     cached_size: Size,
+
+    const SizeHints = struct {
+        min: ?Size = null,
+        max: ?Size = null,
+        preferred: ?Size = null,
+    };
 
     /// Create a new flex child
     pub fn init(element: LayoutElement, flex: u16) FlexChild {
         return FlexChild{
             .element = element,
-            .flex = flex,
+            .flex_grow = flex,
+            .flex_shrink = flex,
             .cross_alignment = null,
             .margin_insets = EdgeInsets.all(0),
+            .size_hints = .{},
             .cached_size = Size.zero(),
         };
+    }
+
+    /// Adjust the flex grow factor
+    pub fn grow(self: FlexChild, factor: u16) FlexChild {
+        var result = self;
+        result.flex_grow = factor;
+        return result;
+    }
+
+    /// Adjust the flex shrink factor
+    pub fn shrink(self: FlexChild, factor: u16) FlexChild {
+        var result = self;
+        result.flex_shrink = factor;
+        return result;
     }
 
     /// Set the cross axis alignment
@@ -322,6 +348,27 @@ pub const FlexChild = struct {
         result.margin_insets = margin_value;
         return result;
     }
+
+    /// Set a minimum size hint
+    pub fn minSize(self: FlexChild, size: Size) FlexChild {
+        var result = self;
+        result.size_hints.min = size;
+        return result;
+    }
+
+    /// Set a maximum size hint
+    pub fn maxSize(self: FlexChild, size: Size) FlexChild {
+        var result = self;
+        result.size_hints.max = size;
+        return result;
+    }
+
+    /// Set a preferred size hint
+    pub fn preferredSize(self: FlexChild, size: Size) FlexChild {
+        var result = self;
+        result.size_hints.preferred = size;
+        return result;
+    }
 };
 
 /// Flex layout manager
@@ -335,6 +382,18 @@ pub const FlexLayout = struct {
     const ChildMeasure = struct {
         main_with_margin: u16,
         cross_with_margin: u16,
+        min_main: u16,
+        max_main: u16,
+    };
+
+    const FlexCache = struct {
+        valid: bool = false,
+        available_main: u16 = 0,
+        available_cross: u16 = 0,
+        metrics: LayoutMetrics = .{ .used_main = 0, .max_cross = 0, .gap_total = 0 },
+        gap_value: u16 = 0,
+        start_offset: u16 = 0,
+        content_size: Size = Size.zero(),
     };
 
     /// Base layout
@@ -351,6 +410,8 @@ pub const FlexLayout = struct {
     padding_insets: EdgeInsets,
     /// Gap between children
     gap_size: u16,
+    /// Cached layout results
+    cache: FlexCache,
 
     /// Initialize a new flex layout
     pub fn init(allocator: std.mem.Allocator, direction: FlexDirection) !*FlexLayout {
@@ -363,6 +424,7 @@ pub const FlexLayout = struct {
             .children = std.ArrayList(FlexChild).empty,
             .padding_insets = EdgeInsets.all(0),
             .gap_size = 0,
+            .cache = .{},
         };
         return layout;
     }
@@ -376,30 +438,35 @@ pub const FlexLayout = struct {
     /// Set the main axis alignment
     pub fn mainAlignment(self: *FlexLayout, alignment: FlexAlignment) *FlexLayout {
         self.main_alignment = alignment;
+        self.cache.valid = false;
         return self;
     }
 
     /// Set the cross axis alignment
     pub fn crossAlignment(self: *FlexLayout, alignment: FlexAlignment) *FlexLayout {
         self.cross_alignment = alignment;
+        self.cache.valid = false;
         return self;
     }
 
     /// Set the padding
     pub fn padding(self: *FlexLayout, padding_value: EdgeInsets) *FlexLayout {
         self.padding_insets = padding_value;
+        self.cache.valid = false;
         return self;
     }
 
     /// Set the gap between children
     pub fn gap(self: *FlexLayout, gap_value: u16) *FlexLayout {
         self.gap_size = gap_value;
+        self.cache.valid = false;
         return self;
     }
 
     /// Add a child element
     pub fn addChild(self: *FlexLayout, child: FlexChild) !void {
         try self.children.append(self.base.allocator, child);
+        self.cache.valid = false;
     }
 
     /// Calculate the layout for this element
@@ -410,45 +477,17 @@ pub const FlexLayout = struct {
 
     /// Calculate the layout for this element
     pub fn calculateLayout(self: *FlexLayout, constraints: Constraints) Size {
-        // Apply padding to constraints
-        const padded_constraints = Constraints{
-            .min_width = if (constraints.min_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.min_width - self.padding_insets.left - self.padding_insets.right
-            else
-                0,
-            .max_width = if (constraints.max_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.max_width - self.padding_insets.left - self.padding_insets.right
-            else
-                0,
-            .min_height = if (constraints.min_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.min_height - self.padding_insets.top - self.padding_insets.bottom
-            else
-                0,
-            .max_height = if (constraints.max_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.max_height - self.padding_insets.top - self.padding_insets.bottom
-            else
-                0,
-        };
+        const padded_constraints = self.applyPadding(constraints);
 
         const is_row = self.direction == .row;
         const available_main = if (is_row) padded_constraints.max_width else padded_constraints.max_height;
         const available_cross = if (is_row) padded_constraints.max_height else padded_constraints.max_width;
 
-        const metrics = self.measureChildren(available_main, available_cross);
-
-        const used_main_clamped: u16 = if (metrics.used_main > @as(u32, available_main))
-            available_main
-        else
-            @intCast(metrics.used_main);
-
-        const content_size = if (is_row)
-            Size.init(used_main_clamped, @min(metrics.max_cross, available_cross))
-        else
-            Size.init(@min(metrics.max_cross, available_cross), used_main_clamped);
+        self.ensureCache(available_main, available_cross);
 
         return Size{
-            .width = content_size.width + self.padding_insets.left + self.padding_insets.right,
-            .height = content_size.height + self.padding_insets.top + self.padding_insets.bottom,
+            .width = self.cache.content_size.width + self.padding_insets.left + self.padding_insets.right,
+            .height = self.cache.content_size.height + self.padding_insets.top + self.padding_insets.bottom,
         };
     }
 
@@ -472,38 +511,12 @@ pub const FlexLayout = struct {
         const available_main = if (is_row) padded_rect.width else padded_rect.height;
         const available_cross = if (is_row) padded_rect.height else padded_rect.width;
 
-        const metrics = self.measureChildren(available_main, available_cross);
+        self.ensureCache(available_main, available_cross);
+
         const child_count = self.children.items.len;
-        const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
         if (child_count == 0) return;
 
-        const main_limit_u32: u32 = available_main;
-        const free_space: u32 = if (metrics.used_main >= main_limit_u32) 0 else main_limit_u32 - metrics.used_main;
-
-        var gap_value: u16 = self.gap_size;
-        var start_offset: u16 = 0;
-
-        switch (self.main_alignment) {
-            .start => {},
-            .center => start_offset = @intCast(@min(free_space / 2, @as(u32, std.math.maxInt(u16)))),
-            .end => start_offset = @intCast(@min(free_space, @as(u32, std.math.maxInt(u16)))),
-            .space_between => if (child_count_u32 > 1) {
-                const extra_gap = free_space / (child_count_u32 - 1);
-                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
-            },
-            .space_around => if (child_count_u32 > 0) {
-                const extra_gap = free_space / child_count_u32;
-                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
-                start_offset = @intCast(@min(@divFloor(@as(u32, gap_value), 2), @as(u32, std.math.maxInt(u16))));
-            },
-            .space_evenly => if (child_count_u32 > 0) {
-                const extra_gap = free_space / (child_count_u32 + 1);
-                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
-                start_offset = gap_value;
-            },
-        }
-
-        var current_position: u32 = start_offset;
+        var current_position: u32 = self.cache.start_offset;
         const main_origin: u32 = if (is_row) padded_rect.x else padded_rect.y;
         const cross_origin: u32 = if (is_row) padded_rect.y else padded_rect.x;
 
@@ -556,9 +569,86 @@ pub const FlexLayout = struct {
             current_position += margin_main_after;
 
             if (idx + 1 < child_count) {
-                current_position += gap_value;
+                current_position += self.cache.gap_value;
             }
         }
+    }
+
+    fn ensureCache(self: *FlexLayout, available_main: u16, available_cross: u16) void {
+        if (self.cache.valid and self.cache.available_main == available_main and self.cache.available_cross == available_cross) {
+            return;
+        }
+
+        const child_count = self.children.items.len;
+        const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
+        const metrics = self.measureChildren(available_main, available_cross);
+        const main_limit_u32: u32 = available_main;
+        const free_space: u32 = if (metrics.used_main >= main_limit_u32) 0 else main_limit_u32 - metrics.used_main;
+
+        var gap_value: u16 = self.gap_size;
+        var start_offset: u16 = 0;
+
+        switch (self.main_alignment) {
+            .start => {},
+            .center => start_offset = @intCast(@min(free_space / 2, @as(u32, std.math.maxInt(u16)))),
+            .end => start_offset = @intCast(@min(free_space, @as(u32, std.math.maxInt(u16)))),
+            .space_between => if (child_count_u32 > 1) {
+                const extra_gap = free_space / (child_count_u32 - 1);
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+            },
+            .space_around => if (child_count_u32 > 0) {
+                const extra_gap = free_space / child_count_u32;
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+                start_offset = @intCast(@min(@divFloor(@as(u32, gap_value), 2), @as(u32, std.math.maxInt(u16))));
+            },
+            .space_evenly => if (child_count_u32 > 0) {
+                const extra_gap = free_space / (child_count_u32 + 1);
+                gap_value = @intCast(@min(@as(u32, self.gap_size) + extra_gap, @as(u32, std.math.maxInt(u16))));
+                start_offset = gap_value;
+            },
+        }
+
+        const used_main_clamped: u16 = if (metrics.used_main > @as(u32, available_main))
+            available_main
+        else
+            @intCast(metrics.used_main);
+
+        const is_row = self.direction == .row;
+        const content_size = if (is_row)
+            Size.init(used_main_clamped, @min(metrics.max_cross, available_cross))
+        else
+            Size.init(@min(metrics.max_cross, available_cross), used_main_clamped);
+
+        self.cache = FlexCache{
+            .valid = true,
+            .available_main = available_main,
+            .available_cross = available_cross,
+            .metrics = metrics,
+            .gap_value = gap_value,
+            .start_offset = start_offset,
+            .content_size = content_size,
+        };
+    }
+
+    fn applyPadding(self: *FlexLayout, constraints: Constraints) Constraints {
+        return Constraints{
+            .min_width = if (constraints.min_width > self.padding_insets.left + self.padding_insets.right)
+                constraints.min_width - self.padding_insets.left - self.padding_insets.right
+            else
+                0,
+            .max_width = if (constraints.max_width > self.padding_insets.left + self.padding_insets.right)
+                constraints.max_width - self.padding_insets.left - self.padding_insets.right
+            else
+                0,
+            .min_height = if (constraints.min_height > self.padding_insets.top + self.padding_insets.bottom)
+                constraints.min_height - self.padding_insets.top - self.padding_insets.bottom
+            else
+                0,
+            .max_height = if (constraints.max_height > self.padding_insets.top + self.padding_insets.bottom)
+                constraints.max_height - self.padding_insets.top - self.padding_insets.bottom
+            else
+                0,
+        };
     }
 
     fn measureChildren(self: *FlexLayout, main_limit: u16, cross_limit: u16) LayoutMetrics {
@@ -569,44 +659,112 @@ pub const FlexLayout = struct {
         else
             0;
 
-        var total_flex: u16 = 0;
         var used_main: u32 = 0;
         var max_cross: u16 = 0;
+        var total_grow: u32 = 0;
+        var total_shrink: u32 = 0;
 
-        for (self.children.items) |*child| {
-            if (child.flex == 0) {
-                const measure = self.measureChild(child, main_limit, cross_limit, null);
-                used_main += measure.main_with_margin;
-                max_cross = @max(max_cross, measure.cross_with_margin);
-            } else {
-                total_flex += child.flex;
-            }
+        const NaturalMeasure = struct {
+            main: u16,
+            min_main: u16,
+            max_main: u16,
+        };
+
+        const allocator = self.base.allocator;
+        var naturals = allocator.alloc(NaturalMeasure, child_count) catch {
+            return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+        };
+        defer allocator.free(naturals);
+
+        for (self.children.items, 0..) |*child, idx| {
+            const measure = self.measureChild(child, main_limit, cross_limit, null);
+            naturals[idx] = NaturalMeasure{
+                .main = if (self.direction == .row) child.cached_size.width else child.cached_size.height,
+                .min_main = measure.min_main,
+                .max_main = measure.max_main,
+            };
+
+            used_main += measure.main_with_margin;
+            max_cross = @max(max_cross, measure.cross_with_margin);
+            total_grow += child.flex_grow;
+            total_shrink += child.flex_shrink;
+        }
+
+        var assigned_main = allocator.alloc(u16, child_count) catch {
+            return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+        };
+        defer allocator.free(assigned_main);
+
+        for (naturals, 0..) |natural, idx| {
+            assigned_main[idx] = natural.main;
         }
 
         const main_limit_u32: u32 = main_limit;
-        const remaining_space: u32 = if (main_limit_u32 > used_main + base_gap_total)
-            main_limit_u32 - used_main - base_gap_total
-        else
-            0;
+        const base_used_with_gaps: u32 = used_main + base_gap_total;
 
-        const flex_unit: u16 = if (total_flex > 0) @intCast(remaining_space / total_flex) else 0;
-        var flex_remainder: u16 = if (total_flex > 0) @intCast(remaining_space % total_flex) else 0;
+        if (base_used_with_gaps < main_limit_u32 and total_grow > 0) {
+            var free_space: u32 = main_limit_u32 - base_used_with_gaps;
 
-        for (self.children.items) |*child| {
-            if (child.flex == 0) continue;
+            while (free_space > 0 and total_grow > 0) {
+                var distributed: u32 = 0;
+                for (self.children.items, 0..) |*child, idx| {
+                    if (child.flex_grow == 0) continue;
+                    const natural = naturals[idx];
+                    if (assigned_main[idx] >= natural.max_main) continue;
 
-            var assigned_main_u32: u32 = @as(u32, flex_unit) * child.flex;
-            if (flex_remainder > 0) {
-                assigned_main_u32 += 1;
-                flex_remainder -= 1;
+                    const portion = if (free_space > 0) (free_space * child.flex_grow) / total_grow else 0;
+                    const available_growth = @min(@as(u32, natural.max_main - assigned_main[idx]), portion);
+                    const add_amount: u16 = @intCast(available_growth);
+                    if (add_amount == 0) continue;
+                    assigned_main[idx] = saturatingAdd(assigned_main[idx], add_amount);
+                    distributed += @as(u32, add_amount);
+                }
+                if (distributed == 0) break;
+                if (free_space > distributed) {
+                    free_space -= distributed;
+                } else {
+                    free_space = 0;
+                }
             }
+        } else if (base_used_with_gaps > main_limit_u32 and total_shrink > 0) {
+            var overflow: u32 = base_used_with_gaps - main_limit_u32;
+            var shrink_total = total_shrink;
 
-            const assigned_main: u16 = if (assigned_main_u32 > std.math.maxInt(u16))
-                std.math.maxInt(u16)
-            else
-                @intCast(assigned_main_u32);
+            while (overflow > 0 and shrink_total > 0) {
+                var reduced: u32 = 0;
+                for (self.children.items, 0..) |*child, idx| {
+                    if (child.flex_shrink == 0) continue;
+                    const natural = naturals[idx];
+                    if (assigned_main[idx] <= natural.min_main) continue;
 
-            const measure = self.measureChild(child, main_limit, cross_limit, assigned_main);
+                    const portion = if (overflow > 0) (overflow * child.flex_shrink) / shrink_total else 0;
+                    const max_reduction: u16 = @intCast(@min(@as(u32, assigned_main[idx] - natural.min_main), std.math.maxInt(u16)));
+                    const reduce_amount: u16 = @intCast(@min(@as(u32, portion), @as(u32, max_reduction)));
+                    if (reduce_amount == 0) continue;
+
+                    assigned_main[idx] -= reduce_amount;
+                    reduced += @as(u32, reduce_amount);
+
+                    if (assigned_main[idx] == natural.min_main) {
+                        shrink_total -= child.flex_shrink;
+                    }
+                }
+
+                if (reduced == 0) break;
+                if (overflow > reduced) {
+                    overflow -= reduced;
+                } else {
+                    overflow = 0;
+                }
+            }
+        }
+
+        used_main = 0;
+        max_cross = 0;
+
+        for (self.children.items, 0..) |*child, idx| {
+            const forced = assigned_main[idx];
+            const measure = self.measureChild(child, main_limit, cross_limit, forced);
             used_main += measure.main_with_margin;
             max_cross = @max(max_cross, measure.cross_with_margin);
         }
@@ -619,32 +777,46 @@ pub const FlexLayout = struct {
     }
 
     fn measureChild(self: *FlexLayout, child: *FlexChild, main_limit: u16, cross_limit: u16, forced_main: ?u16) ChildMeasure {
-        const margin_main_before: u16 = if (self.direction == .row) child.margin_insets.left else child.margin_insets.top;
-        const margin_main_after: u16 = if (self.direction == .row) child.margin_insets.right else child.margin_insets.bottom;
-        const margin_cross_before: u16 = if (self.direction == .row) child.margin_insets.top else child.margin_insets.left;
-        const margin_cross_after: u16 = if (self.direction == .row) child.margin_insets.bottom else child.margin_insets.right;
+        const is_row = self.direction == .row;
+        const margin_main_before: u16 = if (is_row) child.margin_insets.left else child.margin_insets.top;
+        const margin_main_after: u16 = if (is_row) child.margin_insets.right else child.margin_insets.bottom;
+        const margin_cross_before: u16 = if (is_row) child.margin_insets.top else child.margin_insets.left;
+        const margin_cross_after: u16 = if (is_row) child.margin_insets.bottom else child.margin_insets.right;
 
         const content_main_limit = trimAvailable(main_limit, margin_main_before + margin_main_after);
         const content_cross_limit = trimAvailable(cross_limit, margin_cross_before + margin_cross_after);
 
-        var child_constraints = if (self.direction == .row)
+        const size_min = child.size_hints.min orelse Size.zero();
+        const default_max = if (is_row)
+            Size.init(content_main_limit, content_cross_limit)
+        else
+            Size.init(content_cross_limit, content_main_limit);
+        const size_max = child.size_hints.max orelse default_max;
+
+        const min_main = @min(if (is_row) size_min.width else size_min.height, content_main_limit);
+        const min_cross = @min(if (is_row) size_min.height else size_min.width, content_cross_limit);
+
+        const max_main = @max(min_main, @min(if (is_row) size_max.width else size_max.height, content_main_limit));
+        const max_cross = @max(min_cross, @min(if (is_row) size_max.height else size_max.width, content_cross_limit));
+
+        var child_constraints = if (is_row)
             Constraints{
-                .min_width = 0,
-                .max_width = content_main_limit,
-                .min_height = 0,
-                .max_height = content_cross_limit,
+                .min_width = min_main,
+                .max_width = max_main,
+                .min_height = min_cross,
+                .max_height = max_cross,
             }
         else
             Constraints{
-                .min_width = 0,
-                .max_width = content_cross_limit,
-                .min_height = 0,
-                .max_height = content_main_limit,
+                .min_width = min_cross,
+                .max_width = max_cross,
+                .min_height = min_main,
+                .max_height = max_main,
             };
 
         if (forced_main) |target| {
-            const clamped = if (target > content_main_limit) content_main_limit else target;
-            if (self.direction == .row) {
+            const clamped = std.math.clamp(target, min_main, max_main);
+            if (is_row) {
                 child_constraints.min_width = clamped;
                 child_constraints.max_width = clamped;
             } else {
@@ -653,15 +825,20 @@ pub const FlexLayout = struct {
             }
         }
 
-        const size = child.element.layout(child_constraints);
-        child.cached_size = size;
+        const measured = child.element.layout(child_constraints);
+        const preferred_width = if (child.size_hints.preferred) |pref| pref.width else measured.width;
+        const preferred_height = if (child.size_hints.preferred) |pref| pref.height else measured.height;
+        const resolved = child_constraints.constrain(preferred_width, preferred_height);
+        child.cached_size = resolved;
 
-        const content_main = if (self.direction == .row) size.width else size.height;
-        const content_cross = if (self.direction == .row) size.height else size.width;
+        const content_main = if (is_row) resolved.width else resolved.height;
+        const content_cross = if (is_row) resolved.height else resolved.width;
 
         return ChildMeasure{
             .main_with_margin = saturatingAdd(content_main, margin_main_before + margin_main_after),
             .cross_with_margin = saturatingAdd(content_cross, margin_cross_before + margin_cross_after),
+            .min_main = min_main,
+            .max_main = max_main,
         };
     }
 
@@ -965,6 +1142,16 @@ pub const GridTrack = union(enum) {
 
 /// Grid layout manager
 pub const GridLayout = struct {
+    const TrackCache = struct {
+        columns: std.ArrayList(u16),
+        rows: std.ArrayList(u16),
+        available_width: u16 = 0,
+        available_height: u16 = 0,
+        horizontal_gap: u16 = 0,
+        vertical_gap: u16 = 0,
+        valid: bool = false,
+    };
+
     /// Base layout
     base: Layout,
     /// Number of columns
@@ -981,6 +1168,8 @@ pub const GridLayout = struct {
     padding_insets: EdgeInsets,
     /// Gap between cells
     gap_size: u16,
+    /// Cached track resolution
+    cache: TrackCache,
 
     /// Initialize a new grid layout
     pub fn init(allocator: std.mem.Allocator, columns: u16, rows: u16) !*GridLayout {
@@ -995,6 +1184,15 @@ pub const GridLayout = struct {
             .cells = std.ArrayList(?LayoutElement).empty,
             .padding_insets = EdgeInsets.all(0),
             .gap_size = 0,
+            .cache = TrackCache{
+                .columns = std.ArrayList(u16).empty,
+                .rows = std.ArrayList(u16).empty,
+                .available_width = 0,
+                .available_height = 0,
+                .horizontal_gap = 0,
+                .vertical_gap = 0,
+                .valid = false,
+            },
         };
 
         try layout.column_tracks.ensureTotalCapacity(layout.base.allocator, columns);
@@ -1021,18 +1219,26 @@ pub const GridLayout = struct {
         self.column_tracks.deinit(self.base.allocator);
         self.row_tracks.deinit(self.base.allocator);
         self.cells.deinit(self.base.allocator);
+        self.cache.columns.deinit(self.base.allocator);
+        self.cache.rows.deinit(self.base.allocator);
         self.base.allocator.destroy(self);
+    }
+
+    fn invalidateCache(self: *GridLayout) void {
+        self.cache.valid = false;
     }
 
     /// Set the padding
     pub fn padding(self: *GridLayout, padding_value: EdgeInsets) *GridLayout {
         self.padding_insets = padding_value;
+        self.invalidateCache();
         return self;
     }
 
     /// Set the gap between cells
     pub fn gap(self: *GridLayout, gap_value: u16) *GridLayout {
         self.gap_size = gap_value;
+        self.invalidateCache();
         return self;
     }
 
@@ -1045,6 +1251,7 @@ pub const GridLayout = struct {
         }
         self.columns = @intCast(tracks.len);
         try self.initCells();
+        self.invalidateCache();
         return self;
     }
 
@@ -1057,6 +1264,7 @@ pub const GridLayout = struct {
         }
         self.rows = @intCast(tracks.len);
         try self.initCells();
+        self.invalidateCache();
         return self;
     }
 
@@ -1068,6 +1276,7 @@ pub const GridLayout = struct {
 
         const index = @as(usize, row) * @as(usize, self.columns) + @as(usize, column);
         self.cells.items[index] = element;
+        self.invalidateCache();
     }
 
     /// Calculate the layout for this element
@@ -1101,15 +1310,11 @@ pub const GridLayout = struct {
         const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
         const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
 
-        const column_sizes = self.resolveTracks(self.column_tracks.items, padded_constraints.max_width, total_horizontal_gap) catch {
+        const track_cache = self.ensureTrackCache(padded_constraints.max_width, padded_constraints.max_height, total_horizontal_gap, total_vertical_gap) catch {
             return Size.zero();
         };
-        defer self.base.allocator.free(column_sizes);
-
-        const row_sizes = self.resolveTracks(self.row_tracks.items, padded_constraints.max_height, total_vertical_gap) catch {
-            return Size.zero();
-        };
-        defer self.base.allocator.free(row_sizes);
+        const column_sizes = track_cache.columns;
+        const row_sizes = track_cache.rows;
 
         var row: usize = 0;
         while (row < row_sizes.len) : (row += 1) {
@@ -1150,11 +1355,9 @@ pub const GridLayout = struct {
         const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
         const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
 
-        const column_sizes = self.resolveTracks(self.column_tracks.items, padded_rect.width, total_horizontal_gap) catch return;
-        defer self.base.allocator.free(column_sizes);
-
-        const row_sizes = self.resolveTracks(self.row_tracks.items, padded_rect.height, total_vertical_gap) catch return;
-        defer self.base.allocator.free(row_sizes);
+        const track_cache = self.ensureTrackCache(padded_rect.width, padded_rect.height, total_horizontal_gap, total_vertical_gap) catch return;
+        const column_sizes = track_cache.columns;
+        const row_sizes = track_cache.rows;
 
         var y: u16 = padded_rect.y;
         var row: usize = 0;
@@ -1179,6 +1382,45 @@ pub const GridLayout = struct {
             }
             y += row_sizes[row] + self.gap_size;
         }
+    }
+
+    fn ensureTrackCache(self: *GridLayout, available_width: u16, available_height: u16, horizontal_gap: u16, vertical_gap: u16) !struct { columns: []const u16, rows: []const u16 } {
+        if (self.cache.valid and
+            self.cache.available_width == available_width and
+            self.cache.available_height == available_height and
+            self.cache.horizontal_gap == horizontal_gap and
+            self.cache.vertical_gap == vertical_gap)
+        {
+            return .{
+                .columns = self.cache.columns.items,
+                .rows = self.cache.rows.items,
+            };
+        }
+
+        const columns = try self.resolveTracks(self.column_tracks.items, available_width, horizontal_gap);
+        defer self.base.allocator.free(columns);
+
+        const rows = try self.resolveTracks(self.row_tracks.items, available_height, vertical_gap);
+        defer self.base.allocator.free(rows);
+
+        self.cache.columns.clearRetainingCapacity();
+        try self.cache.columns.ensureTotalCapacity(self.base.allocator, columns.len);
+        try self.cache.columns.appendSlice(self.base.allocator, columns);
+
+        self.cache.rows.clearRetainingCapacity();
+        try self.cache.rows.ensureTotalCapacity(self.base.allocator, rows.len);
+        try self.cache.rows.appendSlice(self.base.allocator, rows);
+
+        self.cache.available_width = available_width;
+        self.cache.available_height = available_height;
+        self.cache.horizontal_gap = horizontal_gap;
+        self.cache.vertical_gap = vertical_gap;
+        self.cache.valid = true;
+
+        return .{
+            .columns = self.cache.columns.items,
+            .rows = self.cache.rows.items,
+        };
     }
 
     fn resolveTracks(self: *GridLayout, tracks: []const GridTrack, available: u16, gap_total: u16) ![]u16 {
@@ -1362,6 +1604,149 @@ test "flex layout distributes space and aligns children" {
     try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
 }
 
+test "flex layout negotiates preferred and minimum sizes" {
+    const allocator = std.testing.allocator;
+
+    const DummyElement = struct {
+        const Self = @This();
+        size: Size,
+        rect: *Rect,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            _ = constraints;
+            return self.size;
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.rect.* = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var recorded = Rect.init(0, 0, 0, 0);
+    var dummy = DummyElement{ .size = Size.init(2, 1), .rect = &recorded };
+
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+    try layout.addChild(
+        FlexChild.init(dummy.asElement(), 0).minSize(Size.init(4, 3)).preferredSize(Size.init(6, 4)),
+    );
+
+    const measured = layout.calculateLayout(Constraints.tight(20, 10));
+    try std.testing.expectEqual(@as(u16, 6), measured.width);
+    try std.testing.expectEqual(@as(u16, 4), measured.height);
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 30, 10);
+    defer renderer.deinit();
+
+    layout.renderLayout(&renderer, Rect.init(0, 0, 20, 10));
+    try std.testing.expectEqual(@as(u16, 6), recorded.width);
+    try std.testing.expectEqual(@as(u16, 4), recorded.height);
+}
+
+test "flex layout shrinks flex children within constraints" {
+    const allocator = std.testing.allocator;
+
+    const Recorder = struct {
+        const Self = @This();
+        preferred: Size,
+        rect: *Rect,
+
+        fn layout(ctx: *anyopaque, _: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            return self.preferred;
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.rect.* = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var rect_a = Rect.init(0, 0, 0, 0);
+    var rect_b = Rect.init(0, 0, 0, 0);
+    var a = Recorder{ .preferred = Size.init(6, 2), .rect = &rect_a };
+    var b = Recorder{ .preferred = Size.init(6, 2), .rect = &rect_b };
+
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+    try layout.addChild(FlexChild.init(a.asElement(), 1).minSize(Size.init(4, 2)));
+    try layout.addChild(FlexChild.init(b.asElement(), 1).minSize(Size.init(3, 2)));
+
+    const measured = layout.calculateLayout(Constraints.tight(10, 3));
+    try std.testing.expectEqual(@as(u16, 10), measured.width);
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 12, 4);
+    defer renderer.deinit();
+    layout.renderLayout(&renderer, Rect.init(0, 0, 10, 3));
+
+    try std.testing.expectEqual(@as(u16, 5), rect_a.width);
+    try std.testing.expectEqual(@as(u16, 5), rect_b.width);
+    try std.testing.expectEqual(@as(u16, 2), rect_a.height);
+    try std.testing.expectEqual(@as(u16, 2), rect_b.height);
+}
+
+test "flex layout reuses cached measurements for identical constraints" {
+    const allocator = std.testing.allocator;
+
+    const Counting = struct {
+        const Self = @This();
+        preferred: Size,
+        counter: *u32,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.counter.* += 1;
+            return constraints.constrain(self.preferred.width, self.preferred.height);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var layout_calls: u32 = 0;
+    var counting = Counting{ .preferred = Size.init(4, 1), .counter = &layout_calls };
+
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+    try layout.addChild(FlexChild.init(counting.asElement(), 0));
+
+    const measured = layout.calculateLayout(Constraints.tight(8, 3));
+    try std.testing.expectEqual(@as(u16, 4), measured.width);
+    try std.testing.expect(layout_calls >= 1);
+    const calls_after_layout = layout_calls;
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 8, 3);
+    defer renderer.deinit();
+    layout.renderLayout(&renderer, Rect.init(0, 0, 8, 3));
+
+    try std.testing.expectEqual(calls_after_layout, layout_calls);
+}
+
 test "grid layout resolves fixed and flexible tracks" {
     const allocator = std.testing.allocator;
 
@@ -1487,6 +1872,9 @@ pub const ConstraintLayout = struct {
     base: Layout,
     children: std.ArrayList(ConstraintChild),
     padding_insets: EdgeInsets,
+    cached_available_width: u16,
+    cached_available_height: u16,
+    cache_valid: bool,
 
     /// Initialize a new constraint layout
     pub fn init(allocator: std.mem.Allocator) !*ConstraintLayout {
@@ -1495,6 +1883,9 @@ pub const ConstraintLayout = struct {
             .base = Layout.init(allocator),
             .children = std.ArrayList(ConstraintChild).empty,
             .padding_insets = EdgeInsets.all(0),
+            .cached_available_width = 0,
+            .cached_available_height = 0,
+            .cache_valid = false,
         };
         return layout;
     }
@@ -1505,9 +1896,14 @@ pub const ConstraintLayout = struct {
         self.base.allocator.destroy(self);
     }
 
+    fn invalidateCache(self: *ConstraintLayout) void {
+        self.cache_valid = false;
+    }
+
     /// Set padding around the content area
     pub fn padding(self: *ConstraintLayout, padding_value: EdgeInsets) *ConstraintLayout {
         self.padding_insets = padding_value;
+        self.invalidateCache();
         return self;
     }
 
@@ -1517,6 +1913,7 @@ pub const ConstraintLayout = struct {
             .element = element,
             .spec = spec,
         });
+        self.invalidateCache();
     }
 
     /// Layout callback for LayoutElement
@@ -1545,9 +1942,7 @@ pub const ConstraintLayout = struct {
         else
             0;
 
-        for (self.children.items) |*child| {
-            self.layoutChild(child, available_width, available_height);
-        }
+        self.ensureLayout(available_width, available_height);
 
         return Size.init(width, height);
     }
@@ -1566,10 +1961,9 @@ pub const ConstraintLayout = struct {
         else
             0;
 
-        // Ensure layout data is up to date relative to this rect
-        for (self.children.items) |*child| {
-            self.layoutChild(child, available_width, available_height);
+        self.ensureLayout(available_width, available_height);
 
+        for (self.children.items) |*child| {
             const adjusted_rect = Rect{
                 .x = rect.x + child.resolved_rect.x,
                 .y = rect.y + child.resolved_rect.y,
@@ -1587,6 +1981,20 @@ pub const ConstraintLayout = struct {
             .renderFn = ConstraintLayout.renderFn,
             .ctx = @ptrCast(@alignCast(self)),
         };
+    }
+
+    fn ensureLayout(self: *ConstraintLayout, available_width: u16, available_height: u16) void {
+        if (self.cache_valid and self.cached_available_width == available_width and self.cached_available_height == available_height) {
+            return;
+        }
+
+        for (self.children.items) |*child| {
+            self.layoutChild(child, available_width, available_height);
+        }
+
+        self.cached_available_width = available_width;
+        self.cached_available_height = available_height;
+        self.cache_valid = true;
     }
 
     fn layoutChild(self: *ConstraintLayout, child: *ConstraintChild, available_width: u16, available_height: u16) void {
