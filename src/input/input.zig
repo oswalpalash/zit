@@ -1242,7 +1242,24 @@ pub const InputHandler = struct {
             return Event{ .resize = ResizeEvent.init(size.width, size.height) };
         }
 
-        if (builtin.os.tag == .macos) {
+        if (builtin.os.tag == .windows) {
+            const max_wait_ms: u64 = std.math.maxInt(std.os.windows.DWORD);
+            const wait_ms: std.os.windows.DWORD = @intCast(std.math.min(timeout_ms, max_wait_ms));
+            const wait_result = std.os.windows.kernel32.WaitForSingleObject(self.term.stdin_fd, wait_ms);
+
+            switch (wait_result) {
+                std.os.windows.WAIT_OBJECT_0 => {},
+                std.os.windows.WAIT_TIMEOUT => return null,
+                else => return null,
+            }
+
+            return self.readEvent() catch |err| {
+                if (err == error.WouldBlock) {
+                    return null;
+                }
+                return err;
+            };
+        } else if (builtin.os.tag == .macos) {
             // On macOS we need to be extra careful about polling
             // First check if data is available with a very short timeout
             var poll_fds = [_]std.posix.pollfd{

@@ -866,14 +866,14 @@ fn approximateAnsiFromRgb(r: u8, g: u8, b: u8) u8 {
     const normalized_b = @as(f32, @floatFromInt(b)) / @as(f32, @floatFromInt(max_val));
 
     const is_bright = max_val > 192;
-    const base = blk: {
-        if (normalized_r > 0.6 and normalized_g < 0.4 and normalized_b < 0.4) break :blk 4; // red
-        if (normalized_r < 0.4 and normalized_g > 0.6 and normalized_b < 0.4) break :blk 2; // green
-        if (normalized_r < 0.4 and normalized_g < 0.4 and normalized_b > 0.6) break :blk 1; // blue
-        if (normalized_r > 0.6 and normalized_g > 0.6 and normalized_b < 0.4) break :blk 6; // yellow
-        if (normalized_r > 0.6 and normalized_g < 0.4 and normalized_b > 0.6) break :blk 5; // magenta
-        if (normalized_r < 0.4 and normalized_g > 0.6 and normalized_b > 0.6) break :blk 3; // cyan
-        break :blk 7; // white/gray
+    const base: u8 = blk: {
+        if (normalized_r > 0.6 and normalized_g < 0.4 and normalized_b < 0.4) break :blk @as(u8, 4); // red
+        if (normalized_r < 0.4 and normalized_g > 0.6 and normalized_b < 0.4) break :blk @as(u8, 2); // green
+        if (normalized_r < 0.4 and normalized_g < 0.4 and normalized_b > 0.6) break :blk @as(u8, 1); // blue
+        if (normalized_r > 0.6 and normalized_g > 0.6 and normalized_b < 0.4) break :blk @as(u8, 6); // yellow
+        if (normalized_r > 0.6 and normalized_g < 0.4 and normalized_b > 0.6) break :blk @as(u8, 5); // magenta
+        if (normalized_r < 0.4 and normalized_g > 0.6 and normalized_b > 0.6) break :blk @as(u8, 3); // cyan
+        break :blk @as(u8, 7); // white/gray
     };
 
     return if (is_bright) base | 0x08 else base;
