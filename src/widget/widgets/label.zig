@@ -176,7 +176,7 @@ pub const Label = struct {
             max_width = @max(max_width, line.len);
         }
 
-        return layout_module.Size.init(@intCast(max_width), @intCast(lines.items.len));
+        return layout_module.Size.init(max_width, lines.items.len);
     }
 
     /// Can focus implementation for Label

@@ -60,7 +60,7 @@ pub const ArenaAllocator = struct {
         const alignment = @as(usize, 1) << @as(u6, @intFromEnum(ptr_align));
         const adjusted_addr = mem.alignForward(usize, start_addr, alignment);
         const adjusted_index = adjusted_addr - @intFromPtr(self.buffer.ptr);
-        const new_end_index = adjusted_index + len;
+        const new_end_index = std.math.add(usize, adjusted_index, len) catch return null;
 
         if (new_end_index <= self.buffer.len) {
             const result = self.buffer.ptr + adjusted_index;
@@ -94,7 +94,8 @@ pub const ArenaAllocator = struct {
         }
 
         // Calculate new end index
-        const new_end_index = (buf_start - arena_start) + new_len;
+        const start_offset = buf_start - arena_start;
+        const new_end_index = std.math.add(usize, start_offset, new_len) catch return false;
         if (new_end_index > self.buffer.len) {
             return false;
         }

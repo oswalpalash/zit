@@ -1,6 +1,35 @@
 const std = @import("std");
 const renderer_mod = @import("../render/render.zig");
 
+fn checkedDimension(value: anytype, comptime label: []const u8) u16 {
+    if (@TypeOf(value) == comptime_int or @TypeOf(value) == comptime_float) {
+        if (value < 0 or value > std.math.maxInt(u16)) {
+            const msg = std.fmt.comptimePrint("zit: {s} must fit within u16", .{label});
+            @compileError(msg);
+        }
+        return @intCast(value);
+    }
+
+    const casted = std.math.cast(u16, value) orelse std.debug.panic("zit: {s} must fit within u16 (got {any})", .{ label, value });
+    return casted;
+}
+
+fn validateMinMaxComptime(min_raw: anytype, max_raw: anytype, comptime name: []const u8) void {
+    const min_comptime = @TypeOf(min_raw) == comptime_int or @TypeOf(min_raw) == comptime_float;
+    const max_comptime = @TypeOf(max_raw) == comptime_int or @TypeOf(max_raw) == comptime_float;
+    if (min_comptime and max_comptime) {
+        if (max_raw < min_raw) {
+            const msg = std.fmt.comptimePrint("zit: {s} minimum must not exceed maximum", .{name});
+            @compileError(msg);
+        }
+    }
+}
+
+fn saturatingAdd(a: u16, b: u16) u16 {
+    const sum = std.math.add(u32, a, b) catch std.math.maxInt(u32);
+    return @intCast(@min(sum, std.math.maxInt(u16)));
+}
+
 /// Layout system module
 ///
 /// This module provides functionality for arranging UI elements:
@@ -20,19 +49,21 @@ pub const Rect = struct {
     height: u16,
 
     /// Create a new rectangle
-    pub fn init(x: u16, y: u16, width: u16, height: u16) Rect {
+    pub fn init(x: anytype, y: anytype, width: anytype, height: anytype) Rect {
         return Rect{
-            .x = x,
-            .y = y,
-            .width = width,
-            .height = height,
+            .x = checkedDimension(x, "rect.x"),
+            .y = checkedDimension(y, "rect.y"),
+            .width = checkedDimension(width, "rect.width"),
+            .height = checkedDimension(height, "rect.height"),
         };
     }
 
     /// Check if a point is inside the rectangle
     pub fn contains(self: Rect, x: u16, y: u16) bool {
-        return x >= self.x and x < self.x + self.width and
-            y >= self.y and y < self.y + self.height;
+        const max_x = std.math.add(u32, self.x, self.width) catch std.math.maxInt(u32);
+        const max_y = std.math.add(u32, self.y, self.height) catch std.math.maxInt(u32);
+        return x >= self.x and @as(u32, x) < max_x and
+            y >= self.y and @as(u32, y) < max_y;
     }
 
     /// Get the intersection of two rectangles
@@ -58,12 +89,14 @@ pub const Rect = struct {
     pub fn shrink(self: Rect, insets: EdgeInsets) Rect {
         const new_x = self.x + insets.left;
         const new_y = self.y + insets.top;
-        const new_width = if (self.width > insets.left + insets.right)
-            self.width - insets.left - insets.right
+        const combined_width = saturatingAdd(insets.left, insets.right);
+        const combined_height = saturatingAdd(insets.top, insets.bottom);
+        const new_width = if (self.width > combined_width)
+            self.width - combined_width
         else
             0;
-        const new_height = if (self.height > insets.top + insets.bottom)
-            self.height - insets.top - insets.bottom
+        const new_height = if (self.height > combined_height)
+            self.height - combined_height
         else
             0;
 
@@ -77,11 +110,16 @@ pub const Rect = struct {
 
     /// Expand the rectangle by the given insets
     pub fn expand(self: Rect, insets: EdgeInsets) Rect {
+        const combined_width = saturatingAdd(insets.left, insets.right);
+        const combined_height = saturatingAdd(insets.top, insets.bottom);
+        const expanded_width = saturatingAdd(self.width, combined_width);
+        const expanded_height = saturatingAdd(self.height, combined_height);
+
         return Rect{
             .x = if (self.x > insets.left) self.x - insets.left else 0,
             .y = if (self.y > insets.top) self.y - insets.top else 0,
-            .width = self.width + insets.left + insets.right,
-            .height = self.height + insets.top + insets.bottom,
+            .width = expanded_width,
+            .height = expanded_height,
         };
     }
 };
@@ -98,32 +136,35 @@ pub const EdgeInsets = struct {
     left: u16,
 
     /// Create new insets
-    pub fn init(top: u16, right: u16, bottom: u16, left: u16) EdgeInsets {
+    pub fn init(top: anytype, right: anytype, bottom: anytype, left: anytype) EdgeInsets {
         return EdgeInsets{
-            .top = top,
-            .right = right,
-            .bottom = bottom,
-            .left = left,
+            .top = checkedDimension(top, "insets.top"),
+            .right = checkedDimension(right, "insets.right"),
+            .bottom = checkedDimension(bottom, "insets.bottom"),
+            .left = checkedDimension(left, "insets.left"),
         };
     }
 
     /// Create uniform insets (same value for all sides)
-    pub fn all(value: u16) EdgeInsets {
+    pub fn all(value: anytype) EdgeInsets {
+        const converted = checkedDimension(value, "insets.all");
         return EdgeInsets{
-            .top = value,
-            .right = value,
-            .bottom = value,
-            .left = value,
+            .top = converted,
+            .right = converted,
+            .bottom = converted,
+            .left = converted,
         };
     }
 
     /// Create horizontal and vertical insets
-    pub fn symmetric(horizontal: u16, vertical: u16) EdgeInsets {
+    pub fn symmetric(horizontal: anytype, vertical: anytype) EdgeInsets {
+        const h = checkedDimension(horizontal, "insets.horizontal");
+        const v = checkedDimension(vertical, "insets.vertical");
         return EdgeInsets{
-            .top = vertical,
-            .right = horizontal,
-            .bottom = vertical,
-            .left = horizontal,
+            .top = v,
+            .right = h,
+            .bottom = v,
+            .left = h,
         };
     }
 };
@@ -166,7 +207,22 @@ pub const Constraints = struct {
     max_height: u16,
 
     /// Create new constraints
-    pub fn init(min_width: u16, max_width: u16, min_height: u16, max_height: u16) Constraints {
+    pub fn init(min_width_in: anytype, max_width_in: anytype, min_height_in: anytype, max_height_in: anytype) Constraints {
+        validateMinMaxComptime(min_width_in, max_width_in, "width constraints");
+        validateMinMaxComptime(min_height_in, max_height_in, "height constraints");
+
+        const min_width = checkedDimension(min_width_in, "constraints.min_width");
+        const max_width = checkedDimension(max_width_in, "constraints.max_width");
+        const min_height = checkedDimension(min_height_in, "constraints.min_height");
+        const max_height = checkedDimension(max_height_in, "constraints.max_height");
+
+        if (max_width < min_width) {
+            std.debug.panic("zit: max_width {d} smaller than min_width {d}", .{ max_width, min_width });
+        }
+        if (max_height < min_height) {
+            std.debug.panic("zit: max_height {d} smaller than min_height {d}", .{ max_height, min_height });
+        }
+
         return Constraints{
             .min_width = min_width,
             .max_width = max_width,
@@ -176,32 +232,38 @@ pub const Constraints = struct {
     }
 
     /// Create tight constraints (min = max)
-    pub fn tight(width: u16, height: u16) Constraints {
+    pub fn tight(width: anytype, height: anytype) Constraints {
+        const w = checkedDimension(width, "constraints.tight.width");
+        const h = checkedDimension(height, "constraints.tight.height");
         return Constraints{
-            .min_width = width,
-            .max_width = width,
-            .min_height = height,
-            .max_height = height,
+            .min_width = w,
+            .max_width = w,
+            .min_height = h,
+            .max_height = h,
         };
     }
 
     /// Create constraints with no maximum
-    pub fn loose(min_width: u16, min_height: u16) Constraints {
+    pub fn loose(min_width: anytype, min_height: anytype) Constraints {
+        const min_w = checkedDimension(min_width, "constraints.loose.min_width");
+        const min_h = checkedDimension(min_height, "constraints.loose.min_height");
         return Constraints{
-            .min_width = min_width,
+            .min_width = min_w,
             .max_width = std.math.maxInt(u16),
-            .min_height = min_height,
+            .min_height = min_h,
             .max_height = std.math.maxInt(u16),
         };
     }
 
     /// Create constraints that are bounded by the given size
-    pub fn bounded(max_width: u16, max_height: u16) Constraints {
+    pub fn bounded(max_width: anytype, max_height: anytype) Constraints {
+        const max_w = checkedDimension(max_width, "constraints.bounded.max_width");
+        const max_h = checkedDimension(max_height, "constraints.bounded.max_height");
         return Constraints{
             .min_width = 0,
-            .max_width = max_width,
+            .max_width = max_w,
             .min_height = 0,
-            .max_height = max_height,
+            .max_height = max_h,
         };
     }
 
@@ -236,10 +298,10 @@ pub const Size = struct {
     height: u16,
 
     /// Create a new size
-    pub fn init(width: u16, height: u16) Size {
+    pub fn init(width: anytype, height: anytype) Size {
         return Size{
-            .width = width,
-            .height = height,
+            .width = checkedDimension(width, "size.width"),
+            .height = checkedDimension(height, "size.height"),
         };
     }
 
@@ -485,9 +547,12 @@ pub const FlexLayout = struct {
 
         self.ensureCache(available_main, available_cross);
 
+        const padded_width = saturatingAdd(self.cache.content_size.width, saturatingAdd(self.padding_insets.left, self.padding_insets.right));
+        const padded_height = saturatingAdd(self.cache.content_size.height, saturatingAdd(self.padding_insets.top, self.padding_insets.bottom));
+
         return Size{
-            .width = self.cache.content_size.width + self.padding_insets.left + self.padding_insets.right,
-            .height = self.cache.content_size.height + self.padding_insets.top + self.padding_insets.bottom,
+            .width = padded_width,
+            .height = padded_height,
         };
     }
 
@@ -631,21 +696,23 @@ pub const FlexLayout = struct {
     }
 
     fn applyPadding(self: *FlexLayout, constraints: Constraints) Constraints {
+        const horizontal_padding = saturatingAdd(self.padding_insets.left, self.padding_insets.right);
+        const vertical_padding = saturatingAdd(self.padding_insets.top, self.padding_insets.bottom);
         return Constraints{
-            .min_width = if (constraints.min_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.min_width - self.padding_insets.left - self.padding_insets.right
+            .min_width = if (constraints.min_width > horizontal_padding)
+                constraints.min_width - horizontal_padding
             else
                 0,
-            .max_width = if (constraints.max_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.max_width - self.padding_insets.left - self.padding_insets.right
+            .max_width = if (constraints.max_width > horizontal_padding)
+                constraints.max_width - horizontal_padding
             else
                 0,
-            .min_height = if (constraints.min_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.min_height - self.padding_insets.top - self.padding_insets.bottom
+            .min_height = if (constraints.min_height > vertical_padding)
+                constraints.min_height - vertical_padding
             else
                 0,
-            .max_height = if (constraints.max_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.max_height - self.padding_insets.top - self.padding_insets.bottom
+            .max_height = if (constraints.max_height > vertical_padding)
+                constraints.max_height - vertical_padding
             else
                 0,
         };
@@ -846,14 +913,6 @@ pub const FlexLayout = struct {
         return if (value > margin) value - margin else 0;
     }
 
-    fn saturatingAdd(a: u16, b: u16) u16 {
-        const sum: u32 = @as(u32, a) + @as(u32, b);
-        if (sum > std.math.maxInt(u16)) {
-            return std.math.maxInt(u16);
-        }
-        return @intCast(sum);
-    }
-
     /// Create a layout element
     pub fn asElement(self: *FlexLayout) LayoutElement {
         return LayoutElement{
@@ -980,21 +1039,23 @@ pub const Padding = struct {
     /// Calculate the layout for this element
     pub fn calculateLayout(self: *Padding, constraints: Constraints) Size {
         // Apply padding to constraints
+        const horizontal_padding = saturatingAdd(self.padding_insets.left, self.padding_insets.right);
+        const vertical_padding = saturatingAdd(self.padding_insets.top, self.padding_insets.bottom);
         const padded_constraints = Constraints{
-            .min_width = if (constraints.min_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.min_width - self.padding_insets.left - self.padding_insets.right
+            .min_width = if (constraints.min_width > horizontal_padding)
+                constraints.min_width - horizontal_padding
             else
                 0,
-            .max_width = if (constraints.max_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.max_width - self.padding_insets.left - self.padding_insets.right
+            .max_width = if (constraints.max_width > horizontal_padding)
+                constraints.max_width - horizontal_padding
             else
                 0,
-            .min_height = if (constraints.min_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.min_height - self.padding_insets.top - self.padding_insets.bottom
+            .min_height = if (constraints.min_height > vertical_padding)
+                constraints.min_height - vertical_padding
             else
                 0,
-            .max_height = if (constraints.max_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.max_height - self.padding_insets.top - self.padding_insets.bottom
+            .max_height = if (constraints.max_height > vertical_padding)
+                constraints.max_height - vertical_padding
             else
                 0,
         };
@@ -1007,8 +1068,8 @@ pub const Padding = struct {
 
         // Return final size with padding
         return Size{
-            .width = child_size.width + self.padding_insets.left + self.padding_insets.right,
-            .height = child_size.height + self.padding_insets.top + self.padding_insets.bottom,
+            .width = saturatingAdd(child_size.width, horizontal_padding),
+            .height = saturatingAdd(child_size.height, vertical_padding),
         };
     }
 
@@ -1194,6 +1255,7 @@ pub const GridLayout = struct {
                 .valid = false,
             },
         };
+        errdefer layout.deinit();
 
         try layout.column_tracks.ensureTotalCapacity(layout.base.allocator, columns);
         try layout.row_tracks.ensureTotalCapacity(layout.base.allocator, rows);
@@ -1288,27 +1350,35 @@ pub const GridLayout = struct {
     /// Calculate the layout for this element
     pub fn calculateLayout(self: *GridLayout, constraints: Constraints) Size {
         // Apply padding to constraints
+        const horizontal_padding = saturatingAdd(self.padding_insets.left, self.padding_insets.right);
+        const vertical_padding = saturatingAdd(self.padding_insets.top, self.padding_insets.bottom);
         const padded_constraints = Constraints{
-            .min_width = if (constraints.min_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.min_width - self.padding_insets.left - self.padding_insets.right
+            .min_width = if (constraints.min_width > horizontal_padding)
+                constraints.min_width - horizontal_padding
             else
                 0,
-            .max_width = if (constraints.max_width > self.padding_insets.left + self.padding_insets.right)
-                constraints.max_width - self.padding_insets.left - self.padding_insets.right
+            .max_width = if (constraints.max_width > horizontal_padding)
+                constraints.max_width - horizontal_padding
             else
                 0,
-            .min_height = if (constraints.min_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.min_height - self.padding_insets.top - self.padding_insets.bottom
+            .min_height = if (constraints.min_height > vertical_padding)
+                constraints.min_height - vertical_padding
             else
                 0,
-            .max_height = if (constraints.max_height > self.padding_insets.top + self.padding_insets.bottom)
-                constraints.max_height - self.padding_insets.top - self.padding_insets.bottom
+            .max_height = if (constraints.max_height > vertical_padding)
+                constraints.max_height - vertical_padding
             else
                 0,
         };
 
-        const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
-        const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
+        const total_horizontal_gap: u16 = if (self.columns > 1)
+            @intCast(@min(@as(u32, self.columns - 1) * @as(u32, self.gap_size), @as(u32, std.math.maxInt(u16))))
+        else
+            0;
+        const total_vertical_gap: u16 = if (self.rows > 1)
+            @intCast(@min(@as(u32, self.rows - 1) * @as(u32, self.gap_size), @as(u32, std.math.maxInt(u16))))
+        else
+            0;
 
         const track_cache = self.ensureTrackCache(padded_constraints.max_width, padded_constraints.max_height, total_horizontal_gap, total_vertical_gap) catch {
             return Size.zero();
@@ -1330,8 +1400,8 @@ pub const GridLayout = struct {
             }
         }
 
-        const used_width = saturatingSum(column_sizes) + total_horizontal_gap + self.padding_insets.left + self.padding_insets.right;
-        const used_height = saturatingSum(row_sizes) + total_vertical_gap + self.padding_insets.top + self.padding_insets.bottom;
+        const used_width = saturatingAdd(saturatingAdd(saturatingSum(column_sizes), total_horizontal_gap), horizontal_padding);
+        const used_height = saturatingAdd(saturatingAdd(saturatingSum(row_sizes), total_vertical_gap), vertical_padding);
 
         return Size.init(used_width, used_height);
     }
@@ -1352,8 +1422,14 @@ pub const GridLayout = struct {
             return;
         }
 
-        const total_horizontal_gap: u16 = if (self.columns > 1) (self.columns - 1) * self.gap_size else 0;
-        const total_vertical_gap: u16 = if (self.rows > 1) (self.rows - 1) * self.gap_size else 0;
+        const total_horizontal_gap: u16 = if (self.columns > 1)
+            @intCast(@min(@as(u32, self.columns - 1) * @as(u32, self.gap_size), @as(u32, std.math.maxInt(u16))))
+        else
+            0;
+        const total_vertical_gap: u16 = if (self.rows > 1)
+            @intCast(@min(@as(u32, self.rows - 1) * @as(u32, self.gap_size), @as(u32, std.math.maxInt(u16))))
+        else
+            0;
 
         const track_cache = self.ensureTrackCache(padded_rect.width, padded_rect.height, total_horizontal_gap, total_vertical_gap) catch return;
         const column_sizes = track_cache.columns;
@@ -1378,9 +1454,11 @@ pub const GridLayout = struct {
                         cell.render(renderer, cell_rect);
                     }
                 }
-                x += column_sizes[col] + self.gap_size;
+                x = saturatingAdd(x, column_sizes[col]);
+                x = saturatingAdd(x, self.gap_size);
             }
-            y += row_sizes[row] + self.gap_size;
+            y = saturatingAdd(y, row_sizes[row]);
+            y = saturatingAdd(y, self.gap_size);
         }
     }
 
@@ -1961,6 +2039,7 @@ pub const ConstraintLayout = struct {
             .cached_available_height = 0,
             .cache_valid = false,
         };
+        errdefer layout.deinit();
         return layout;
     }
 
@@ -2007,12 +2086,15 @@ pub const ConstraintLayout = struct {
         const width = constraints.max_width;
         const height = constraints.max_height;
 
-        const available_width = if (width > self.padding_insets.left + self.padding_insets.right)
-            width - self.padding_insets.left - self.padding_insets.right
+        const horizontal_padding = saturatingAdd(self.padding_insets.left, self.padding_insets.right);
+        const vertical_padding = saturatingAdd(self.padding_insets.top, self.padding_insets.bottom);
+
+        const available_width = if (width > horizontal_padding)
+            width - horizontal_padding
         else
             0;
-        const available_height = if (height > self.padding_insets.top + self.padding_insets.bottom)
-            height - self.padding_insets.top - self.padding_insets.bottom
+        const available_height = if (height > vertical_padding)
+            height - vertical_padding
         else
             0;
 
@@ -2026,12 +2108,15 @@ pub const ConstraintLayout = struct {
         const width = rect.width;
         const height = rect.height;
 
-        const available_width = if (width > self.padding_insets.left + self.padding_insets.right)
-            width - self.padding_insets.left - self.padding_insets.right
+        const horizontal_padding = saturatingAdd(self.padding_insets.left, self.padding_insets.right);
+        const vertical_padding = saturatingAdd(self.padding_insets.top, self.padding_insets.bottom);
+
+        const available_width = if (width > horizontal_padding)
+            width - horizontal_padding
         else
             0;
-        const available_height = if (height > self.padding_insets.top + self.padding_insets.bottom)
-            height - self.padding_insets.top - self.padding_insets.bottom
+        const available_height = if (height > vertical_padding)
+            height - vertical_padding
         else
             0;
 
@@ -2039,8 +2124,8 @@ pub const ConstraintLayout = struct {
 
         for (self.children.items) |*child| {
             const adjusted_rect = Rect{
-                .x = rect.x + child.resolved_rect.x,
-                .y = rect.y + child.resolved_rect.y,
+                .x = saturatingAdd(rect.x, child.resolved_rect.x),
+                .y = saturatingAdd(rect.y, child.resolved_rect.y),
                 .width = child.resolved_rect.width,
                 .height = child.resolved_rect.height,
             };
@@ -2082,16 +2167,22 @@ pub const ConstraintLayout = struct {
 
         const target_width = blk: {
             if (spec.width) |fixed| break :blk fixed;
-            if (spec.left != null and spec.right != null and available_width > spec.left.? + spec.right.?) {
-                break :blk available_width - spec.left.? - spec.right.?;
+            if (spec.left != null and spec.right != null) {
+                const anchors = saturatingAdd(spec.left.?, spec.right.?);
+                if (available_width > anchors) {
+                    break :blk available_width - anchors;
+                }
             }
             break :blk max_width;
         };
 
         const target_height = blk: {
             if (spec.height) |fixed| break :blk fixed;
-            if (spec.top != null and spec.bottom != null and available_height > spec.top.? + spec.bottom.?) {
-                break :blk available_height - spec.top.? - spec.bottom.?;
+            if (spec.top != null and spec.bottom != null) {
+                const anchors = saturatingAdd(spec.top.?, spec.bottom.?);
+                if (available_height > anchors) {
+                    break :blk available_height - anchors;
+                }
             }
             break :blk max_height;
         };
@@ -2122,13 +2213,15 @@ pub const ConstraintLayout = struct {
 
         const x = blk: {
             if (spec.center_x) {
-                if (available_width > resolved_width) break :blk self.padding_insets.left + (available_width - resolved_width) / 2;
+                if (available_width > resolved_width) break :blk saturatingAdd(self.padding_insets.left, (available_width - resolved_width) / 2);
                 break :blk self.padding_insets.left;
             }
-            if (spec.left) |left_offset| break :blk self.padding_insets.left + left_offset;
+            if (spec.left) |left_offset| break :blk saturatingAdd(self.padding_insets.left, left_offset);
             if (spec.right) |right_offset| {
-                if (available_width > resolved_width + right_offset) {
-                    break :blk self.padding_insets.left + available_width - resolved_width - right_offset;
+                const required = saturatingAdd(resolved_width, right_offset);
+                if (available_width > required) {
+                    const offset = available_width - required;
+                    break :blk saturatingAdd(self.padding_insets.left, offset);
                 }
                 break :blk self.padding_insets.left;
             }
@@ -2137,13 +2230,15 @@ pub const ConstraintLayout = struct {
 
         const y = blk: {
             if (spec.center_y) {
-                if (available_height > resolved_height) break :blk self.padding_insets.top + (available_height - resolved_height) / 2;
+                if (available_height > resolved_height) break :blk saturatingAdd(self.padding_insets.top, (available_height - resolved_height) / 2);
                 break :blk self.padding_insets.top;
             }
-            if (spec.top) |top_offset| break :blk self.padding_insets.top + top_offset;
+            if (spec.top) |top_offset| break :blk saturatingAdd(self.padding_insets.top, top_offset);
             if (spec.bottom) |bottom_offset| {
-                if (available_height > resolved_height + bottom_offset) {
-                    break :blk self.padding_insets.top + available_height - resolved_height - bottom_offset;
+                const required = saturatingAdd(resolved_height, bottom_offset);
+                if (available_height > required) {
+                    const offset = available_height - required;
+                    break :blk saturatingAdd(self.padding_insets.top, offset);
                 }
                 break :blk self.padding_insets.top;
             }
@@ -2242,17 +2337,20 @@ pub const LayoutGuide = struct {
     /// Compute header/content/footer rectangles inside a container.
     pub fn headerContentFooter(self: LayoutGuide, rect: Rect, header_height: u16, footer_height: u16) Regions {
         const inner = self.inset(rect);
-        const total_gap: u16 = if (inner.height >= self.gap * 2) self.gap * 2 else 0;
+        const doubled_gap = std.math.mul(u32, @as(u32, self.gap), 2) catch std.math.maxInt(u32);
+        const gap_twice: u16 = @intCast(@min(doubled_gap, @as(u32, std.math.maxInt(u16))));
+        const total_gap: u16 = if (inner.height >= gap_twice) gap_twice else 0;
         const usable_height = if (inner.height > total_gap) inner.height - total_gap else inner.height;
 
         const capped_header = @min(header_height, usable_height);
         const capped_footer = @min(footer_height, usable_height - capped_header);
-        const remaining = if (usable_height > capped_header + capped_footer) usable_height - capped_header - capped_footer else 0;
+        const combined_hf = saturatingAdd(capped_header, capped_footer);
+        const remaining = if (usable_height > combined_hf) usable_height - combined_hf else 0;
 
         const header_rect = Rect.init(inner.x, inner.y, inner.width, capped_header);
-        const content_y = header_rect.y + header_rect.height + (if (header_rect.height > 0) self.gap else 0);
+        const content_y = saturatingAdd(header_rect.y, saturatingAdd(header_rect.height, if (header_rect.height > 0) self.gap else 0));
         const content_rect = Rect.init(inner.x, content_y, inner.width, remaining);
-        const footer_y = content_rect.y + content_rect.height + (if (capped_footer > 0) self.gap else 0);
+        const footer_y = saturatingAdd(content_rect.y, saturatingAdd(content_rect.height, if (capped_footer > 0) self.gap else 0));
         const footer_rect = Rect.init(inner.x, footer_y, inner.width, capped_footer);
 
         return .{ .header = header_rect, .content = content_rect, .footer = footer_rect };
@@ -2265,19 +2363,21 @@ pub const LayoutGuide = struct {
         const inner = self.inset(rect);
         var cursor_y = inner.y;
         var count: usize = 0;
+        const inner_bottom = saturatingAdd(inner.y, inner.height);
 
         for (heights, 0..) |h, idx| {
             if (idx >= out.len) break;
-            if (cursor_y >= inner.y + inner.height) break;
+            if (cursor_y >= inner_bottom) break;
             if (h == 0) continue;
 
-            const remaining_height = inner.y + inner.height - cursor_y;
+            const remaining_height = if (inner_bottom > cursor_y) inner_bottom - cursor_y else 0;
             const row_height = @min(h, remaining_height);
             out[count] = Rect.init(inner.x, cursor_y, inner.width, row_height);
             count += 1;
 
-            if (remaining_height <= row_height + self.gap) break;
-            cursor_y += row_height + self.gap;
+            const step = saturatingAdd(row_height, self.gap);
+            if (remaining_height <= step) break;
+            cursor_y = saturatingAdd(cursor_y, step);
         }
 
         return count;
