@@ -1331,3 +1331,32 @@ test "ansi helpers produce stable sequences" {
     const style = (Style{ .bold = true, .underline = true }).toAnsi();
     try std.testing.expectEqualStrings("1;4", style.slice());
 }
+
+test "capability detection degrades gracefully on allocation failure" {
+    var empty_buf: [0]u8 = .{};
+    var fallback_alloc = std.heap.FixedBufferAllocator.init(&empty_buf);
+    const caps = TerminalCapabilities.detectWithAllocator(fallback_alloc.allocator());
+    try std.testing.expect(!caps.rgb_colors);
+    try std.testing.expect(!caps.colors_256);
+    try std.testing.expect(caps.unicode);
+}
+
+test "drawSmartStr falls back when bidi sanitization cannot allocate" {
+    var backing: [256]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&backing);
+    var renderer = try Renderer.init(fba.allocator(), 1, 1);
+    defer renderer.deinit();
+
+    renderer.capabilities.bidi = false;
+    renderer.capabilities.unicode = true;
+
+    const pattern = "אבג";
+    var text: [192]u8 = undefined;
+    var idx: usize = 0;
+    while (idx + pattern.len <= text.len) : (idx += pattern.len) {
+        @memcpy(text[idx .. idx + pattern.len], pattern);
+    }
+
+    renderer.drawSmartStr(0, 0, text[0..], Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
+    try std.testing.expect(renderer.back.getCell(0, 0).char != ' ');
+}

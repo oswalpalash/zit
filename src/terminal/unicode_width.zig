@@ -276,12 +276,12 @@ pub fn measure(str: []const u8) Metrics {
             continue;
         }
 
-        const cp_width = wcwidth(cp);
+        const cp_width: u3 = wcwidth(cp);
         const emoji_cp = isEmoji(cp);
         if (pending_join and emoji_cp) {
             pending_join = false;
         } else {
-            width +%= cp_width;
+            width = addWidthSaturating(width, cp_width);
             pending_join = false;
         }
 
@@ -302,6 +302,12 @@ pub fn measure(str: []const u8) Metrics {
 pub fn needsWidthAccounting(str: []const u8) bool {
     const metrics = measure(str);
     return metrics.width != str.len or metrics.has_bidi or metrics.has_emoji;
+}
+
+fn addWidthSaturating(current: u16, inc: u3) u16 {
+    const widened: u32 = @as(u32, current) + inc;
+    if (widened > std.math.maxInt(u16)) return std.math.maxInt(u16);
+    return @intCast(widened);
 }
 
 test "wcwidth handles emoji and CJK" {
@@ -326,4 +332,17 @@ test "measure collapses zwj emoji sequences" {
 
 test "needsWidthAccounting flags emoji" {
     try std.testing.expect(needsWidthAccounting("Hi😀"));
+}
+
+test "measure clamps very long strings" {
+    const alloc = std.testing.allocator;
+    const long_len = 70000;
+    const buffer = try alloc.alloc(u8, long_len);
+    defer alloc.free(buffer);
+    @memset(buffer, 'a');
+
+    const metrics = measure(buffer);
+    try std.testing.expectEqual(std.math.maxInt(u16), metrics.width);
+    try std.testing.expect(!metrics.has_bidi);
+    try std.testing.expect(!metrics.has_emoji);
 }

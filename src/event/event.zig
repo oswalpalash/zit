@@ -1436,6 +1436,149 @@ test "stopPropagation halts remaining phases" {
     try std.testing.expect(ev.stop_propagation);
 }
 
+test "propagation tolerates deep widget trees" {
+    const alloc = std.testing.allocator;
+    var dispatcher = EventDispatcher.init(alloc);
+    defer dispatcher.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    const depth: usize = 128;
+    var nodes: [depth]widget.Widget = undefined;
+    for (&nodes, 0..) |*node, idx| {
+        node.* = widget.Widget.init(&dummy_vtable);
+        if (idx > 0) node.parent = &nodes[idx - 1];
+    }
+
+    var call_counter: usize = 0;
+    const Logger = struct {
+        pub var counter: *usize = undefined;
+        pub fn listener(ev: *Event) bool {
+            if (ev.current_target == null) return false;
+            counter.* += 1;
+            return false;
+        }
+    };
+
+    Logger.counter = &call_counter;
+    _ = try dispatcher.addEventListener(.key_press, Logger.listener, null);
+
+    var ev = Event.init(.key_press, &nodes[depth - 1], Event.EventData{
+        .key_press = KeyEventData{
+            .key = @as(u21, input.KeyCode.ENTER),
+            .modifiers = .{},
+            .raw = 0,
+        },
+    });
+
+    const propagation = @import("propagation.zig");
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+
+    try std.testing.expectEqual(@as(usize, depth * 2 - 1), call_counter);
+}
+
+test "event propagation fuzzes random widget trees" {
+    const alloc = std.testing.allocator;
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    var prng = std.Random.DefaultPrng.init(0xabad1dea);
+    const rand = prng.random();
+
+    for (0..16) |_| {
+        var dispatcher = EventDispatcher.init(alloc);
+        defer dispatcher.deinit();
+
+        var call_counter: usize = 0;
+        const Logger = struct {
+            pub var counter: *usize = undefined;
+            pub fn listener(ev: *Event) bool {
+                if (ev.current_target == null) return false;
+                counter.* += 1;
+                return false;
+            }
+        };
+        Logger.counter = &call_counter;
+        _ = try dispatcher.addEventListener(.key_press, Logger.listener, null);
+
+        const node_count = rand.intRangeAtMost(usize, 2, 32);
+        var nodes = try alloc.alloc(widget.Widget, node_count);
+        defer alloc.free(nodes);
+
+        for (nodes, 0..) |*node, idx| {
+            node.* = widget.Widget.init(&dummy_vtable);
+            if (idx > 0) {
+                const parent_idx = rand.intRangeAtMost(usize, 0, idx - 1);
+                node.parent = &nodes[parent_idx];
+            }
+        }
+
+        const target_idx = rand.intRangeAtMost(usize, 0, node_count - 1);
+        var ev = Event.init(.key_press, &nodes[target_idx], Event.EventData{
+            .key_press = KeyEventData{
+                .key = @as(u21, input.KeyCode.ENTER),
+                .modifiers = .{},
+                .raw = 0,
+            },
+        });
+
+        var depth: usize = 0;
+        var cursor: ?*widget.Widget = ev.target;
+        while (cursor) |ptr| {
+            depth += 1;
+            cursor = ptr.parent;
+        }
+
+        const propagation = @import("propagation.zig");
+        _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+
+        try std.testing.expectEqual(@as(usize, depth * 2 - 1), call_counter);
+    }
+}
+
 test "focus traversal respects registered order and focusability" {
     const alloc = std.testing.allocator;
     var queue = EventQueue.init(alloc);

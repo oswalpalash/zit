@@ -1657,3 +1657,41 @@ test "parse legacy mouse press" {
     try std.testing.expectEqual(@as(u16, 5), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 3), mouse_event.y);
 }
+
+test "fuzz decodeEventFromBytes handles noisy escape sequences" {
+    var prng = std.Random.DefaultPrng.init(0xfeed_beef);
+    const rand = prng.random();
+
+    for (0..200) |_| {
+        var buf: [32]u8 = undefined;
+        const len = rand.intRangeAtMost(usize, 0, buf.len);
+
+        for (buf[0..len], 0..) |*b, idx| {
+            _ = idx;
+            const choice = rand.intRangeAtMost(u8, 0, 6);
+            b.* = switch (choice) {
+                0 => '[',
+                1 => ';',
+                2 => '<',
+                3 => 0x1b,
+                4 => 'M',
+                5 => 'Z',
+                else => rand.intRangeAtMost(u8, 1, 126),
+            };
+        }
+
+        const event = try decodeEventFromBytes(buf[0..len]);
+        if (len == 0) {
+            try std.testing.expect(event == null);
+        } else {
+            try std.testing.expect(event != null);
+        }
+    }
+}
+
+test "invalid csi input is treated as unknown event" {
+    const bad = "\x1b[999;999;abc";
+    const parsed = try decodeEventFromBytes(bad);
+    try std.testing.expect(parsed != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
+}

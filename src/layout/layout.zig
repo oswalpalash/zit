@@ -1747,6 +1747,80 @@ test "flex layout reuses cached measurements for identical constraints" {
     try std.testing.expectEqual(calls_after_layout, layout_calls);
 }
 
+test "flex layout fuzzes arbitrary constraints and children" {
+    var prng = std.Random.DefaultPrng.init(0xdead_beef);
+    const rand = prng.random();
+
+    const Stub = struct {
+        const Self = @This();
+        preferred: Size,
+
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            return constraints.constrain(self.preferred.width, self.preferred.height);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement(self: *Self) LayoutElement {
+            return LayoutElement{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    for (0..64) |_| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var layout = try FlexLayout.init(alloc, if (rand.boolean()) .row else .column);
+        defer layout.deinit();
+        _ = layout
+            .gap(rand.intRangeAtMost(u16, 0, 3))
+            .padding(EdgeInsets.all(rand.intRangeAtMost(u16, 0, 2)));
+
+        var stubs = std.ArrayList(Stub).empty;
+        defer stubs.deinit(alloc);
+
+        const child_count = rand.intRangeAtMost(u8, 0, 8);
+        try stubs.ensureTotalCapacity(alloc, child_count);
+
+        for (0..child_count) |_| {
+            const preferred = Size.init(
+                rand.intRangeAtMost(u16, 0, 40),
+                rand.intRangeAtMost(u16, 0, 20),
+            );
+            try stubs.append(alloc, Stub{ .preferred = preferred });
+
+            var child = FlexChild.init(stubs.items[stubs.items.len - 1].asElement(), rand.intRangeAtMost(u16, 0, 3));
+            if (rand.boolean()) {
+                child = child.grow(rand.intRangeAtMost(u16, 1, 4));
+            }
+            if (rand.boolean()) {
+                child = child.shrink(rand.intRangeAtMost(u16, 1, 4));
+            }
+            try layout.addChild(child);
+        }
+
+        const min_w = rand.intRangeAtMost(u16, 0, 60);
+        const min_h = rand.intRangeAtMost(u16, 0, 30);
+        const max_w: u16 = @intCast(@min(@as(u32, min_w) + rand.intRangeAtMost(u16, 1, 120), std.math.maxInt(u16)));
+        const max_h: u16 = @intCast(@min(@as(u32, min_h) + rand.intRangeAtMost(u16, 1, 80), std.math.maxInt(u16)));
+        const constraints = Constraints.init(min_w, max_w, min_h, max_h);
+        const measured = layout.calculateLayout(constraints);
+
+        try std.testing.expect(measured.width <= max_w);
+        try std.testing.expect(measured.height <= max_h);
+        for (layout.children.items) |child| {
+            try std.testing.expect(child.cached_size.width <= max_w);
+            try std.testing.expect(child.cached_size.height <= max_h);
+        }
+    }
+}
+
 test "grid layout resolves fixed and flexible tracks" {
     const allocator = std.testing.allocator;
 
@@ -2189,6 +2263,43 @@ pub const ReflowManager = struct {
         }
     }
 };
+
+test "reflow manager handles rapid resize churn including zeros" {
+    var layout_calls: usize = 0;
+
+    const Stub = struct {
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const counter = @as(*usize, @ptrCast(@alignCast(ctx)));
+            counter.* += 1;
+            return Size.init(constraints.max_width, constraints.max_height);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+    };
+
+    var manager = ReflowManager.init();
+    const element = LayoutElement{
+        .layoutFn = Stub.layout,
+        .renderFn = Stub.render,
+        .ctx = &layout_calls,
+    };
+    manager.setRoot(element);
+
+    const changes = [_]struct { w: u16, h: u16 }{
+        .{ .w = 0, .h = 0 },
+        .{ .w = 80, .h = 24 },
+        .{ .w = 120, .h = 5 },
+        .{ .w = 20, .h = 50 },
+    };
+
+    for (changes) |change| {
+        const size = try manager.handleResize(change.w, change.h);
+        try std.testing.expectEqual(change.w, size.width);
+        try std.testing.expectEqual(change.h, size.height);
+    }
+
+    try std.testing.expectEqual(changes.len, layout_calls);
+}
 
 test "rect shrink and expand respect bounds" {
     const rect = Rect.init(2, 3, 10, 5);

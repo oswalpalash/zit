@@ -201,3 +201,14 @@ test "snapshot helper respects text styling choices" {
 
     try snap.expectEqual("Zit Rocks   \n");
 }
+
+test "renderWidget tolerates zero-sized targets" {
+    const alloc = std.testing.allocator;
+    var label_builder = widget.LabelBuilder.init(alloc);
+    var label = try label_builder.content("tiny").build();
+    defer label.deinit();
+
+    var snap = try renderWidget(alloc, &label.widget, layout.Size.init(0, 0));
+    defer snap.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 0), snap.text().len);
+}
