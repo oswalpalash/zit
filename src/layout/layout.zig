@@ -1764,10 +1764,10 @@ test "flex layout supports rtl rows" {
 
     var flex = try FlexLayout.init(allocator, .row);
     defer flex.deinit();
-    flex.layoutDirection(.rtl);
+    _ = flex.layoutDirection(.rtl);
 
-    try flex.addChild(FlexChild{ .element = left.asElement() });
-    try flex.addChild(FlexChild{ .element = right.asElement() });
+    try flex.addChild(FlexChild.init(left.asElement(), 0));
+    try flex.addChild(FlexChild.init(right.asElement(), 0));
 
     const constraints = Constraints.tight(8, 1);
     _ = flex.calculateLayout(constraints);
