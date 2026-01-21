@@ -258,7 +258,7 @@ fn menuLabel(action: MenuAction) []const u8 {
     };
 }
 
-fn handleMenuSelection(_: usize, item: widget.ContextMenu.MenuItem, ctx: ?*anyopaque) void {
+fn handleMenuSelection(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     const state = demo_state_ptr orelse return;
     _ = ctx;
     const action_ptr: ?*const MenuAction = if (item.data) |ptr|

@@ -35,8 +35,8 @@ pub const AutocompleteInput = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
             .input_field = field,
-            .suggestions = std.ArrayList([]u8).init(allocator),
-            .filtered = std.ArrayList(usize).init(allocator),
+            .suggestions = try std.ArrayList([]u8).initCapacity(allocator, 0),
+            .filtered = try std.ArrayList(usize).initCapacity(allocator, 0),
             .theme_value = theme_value,
         };
         self.input_field.widget.parent = &self.widget;
@@ -47,8 +47,8 @@ pub const AutocompleteInput = struct {
         for (self.suggestions.items) |s| {
             self.allocator.free(s);
         }
-        self.suggestions.deinit();
-        self.filtered.deinit();
+        self.suggestions.deinit(self.allocator);
+        self.filtered.deinit(self.allocator);
         self.input_field.deinit();
         self.allocator.destroy(self);
     }
@@ -61,7 +61,7 @@ pub const AutocompleteInput = struct {
 
         for (values) |v| {
             const copy = try self.allocator.dupe(u8, v);
-            try self.suggestions.append(copy);
+            try self.suggestions.append(self.allocator, copy);
         }
         try self.updateFilter();
     }
@@ -175,7 +175,7 @@ pub const AutocompleteInput = struct {
 
         for (self.suggestions.items, 0..) |s, idx| {
             if (self.matches(query, s)) {
-                try self.filtered.append(idx);
+                try self.filtered.append(self.allocator, idx);
             }
         }
 

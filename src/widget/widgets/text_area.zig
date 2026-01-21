@@ -47,8 +47,7 @@ pub const TextArea = struct {
         const capacity = @max(max_bytes, 1);
         const self = try allocator.create(TextArea);
 
-        var buffer = std.ArrayList(u8).init(allocator);
-        try buffer.ensureTotalCapacity(capacity);
+        const buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
 
         self.* = TextArea{
             .widget = base.Widget.init(&vtable),
@@ -78,7 +77,7 @@ pub const TextArea = struct {
         if (self.owns_clipboard) {
             self.clipboard_storage.deinit();
         }
-        self.buffer.deinit();
+        self.buffer.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 

@@ -38,7 +38,7 @@ pub const Chart = struct {
         self.* = Chart{
             .widget = base.Widget.init(&vtable),
             .chart_type = .line,
-            .series = std.ArrayList(Series).init(allocator),
+            .series = try std.ArrayList(Series).initCapacity(allocator, 0),
             .allocator = allocator,
             .theme_value = default_theme,
             .padding = 1,
@@ -50,9 +50,9 @@ pub const Chart = struct {
     pub fn deinit(self: *Chart) void {
         for (self.series.items) |*s| {
             self.allocator.free(s.label);
-            s.values.deinit();
+            s.values.deinit(self.allocator);
         }
-        self.series.deinit();
+        self.series.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -74,8 +74,8 @@ pub const Chart = struct {
 
     pub fn addSeries(self: *Chart, label: []const u8, values: []const f32, color: ?render.Color, fill: ?render.Color) !void {
         const series_label = try self.allocator.dupe(u8, label);
-        var copied_values = std.ArrayList(f32).init(self.allocator);
-        try copied_values.appendSlice(values);
+        var copied_values = try std.ArrayList(f32).initCapacity(self.allocator, values.len);
+        try copied_values.appendSlice(self.allocator, values);
 
         const palette_color = color orelse self.theme_value.color(.accent);
         const fill_color = fill orelse palette_color;
