@@ -147,7 +147,7 @@ pub const Chart = struct {
                 if (value <= 0) continue;
 
                 const proportional = if (value_range.max == 0) 0 else value / value_range.max;
-                const desired_height = @as(u16, @intCast(@round(proportional * @as(f32, @floatFromInt(inner.height)))));
+                const desired_height = @as(u16, @intFromFloat(@round(proportional * @as(f32, @floatFromInt(inner.height)))));
                 const h: u16 = @max(1, @min(desired_height, inner.height));
 
                 var remaining: u16 = h;
@@ -184,7 +184,7 @@ pub const Chart = struct {
                 const sample_idx = self.sampleIndexForColumn(x, inner.width, s.values.items.len);
                 const v = s.values.items[sample_idx];
                 const normalized = (v - value_range.min) / denom;
-                const y = inner.y + inner.height - 1 - @as(u16, @intCast(@round(normalized * axis_height)));
+                const y = inner.y + inner.height - 1 - @as(u16, @intFromFloat(@round(normalized * axis_height)));
                 const draw_x = inner.x + x;
 
                 if (fill) {

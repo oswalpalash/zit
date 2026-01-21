@@ -90,7 +90,7 @@ const DemoState = struct {
     drag_status: DragStatus = .{},
     theme_index: usize = 0,
     chart_type: widget.ChartType = .line,
-    image_mode: widget.ImageWidget.RenderMode = .background,
+    image_mode: widget.ImageRenderMode = .background,
     selected_metric: []const u8 = "latency p95",
 };
 
@@ -120,8 +120,8 @@ fn handleChartDrop(_: *widget.Widget, drag: event.DragEventData) void {
     const state = demo_state_ptr orelse return;
     if (tokenFromPayload(drag.payload)) |token| {
         if (token.action == .energize_chart) {
-            appendSample(&state.chart.series.items[0].values, 88, max_samples);
-            appendSample(&state.chart.series.items[1].values, 160, max_samples);
+            appendSample(&state.chart.series.items[0].values, state.chart.allocator, 88, max_samples);
+            appendSample(&state.chart.series.items[1].values, state.chart.allocator, 160, max_samples);
             cycleChartType(state);
         }
     }
@@ -245,9 +245,9 @@ fn paintGradient(image: *widget.ImageWidget, accent: render.Color, phase: f32) v
     }
 }
 
-fn appendSample(series: *std.ArrayList(f32), value: f32, max_samples: usize) void {
-    series.append(value) catch return;
-    if (series.items.len > max_samples) {
+fn appendSample(series: *std.ArrayList(f32), allocator: std.mem.Allocator, value: f32, limit: usize) void {
+    series.append(allocator, value) catch return;
+    if (series.items.len > limit) {
         _ = series.orderedRemove(0);
     }
 }
@@ -379,7 +379,7 @@ pub fn main() !void {
     var ctx_menu = try widget.ContextMenu.init(memory_manager.getWidgetPoolAllocator());
     defer ctx_menu.deinit();
 
-    const menu_actions = [_]MenuAction{
+    var menu_actions = [_]MenuAction{
         .theme_dark,
         .theme_light,
         .theme_contrast,
@@ -391,7 +391,7 @@ pub fn main() !void {
         .image_braille,
     };
     for (menu_actions, 0..) |act, i| {
-        try ctx_menu.addItem(menuLabel(act), true, &menu_actions[i]);
+        try ctx_menu.addItem(menuLabel(act), true, @ptrCast(&menu_actions[i]));
     }
     ctx_menu.setOnSelect(handleMenuSelection, null);
 
@@ -584,8 +584,8 @@ pub fn main() !void {
         phase += 0.08;
         const traffic = 42.0 + 18.0 * std.math.sin(phase);
         const latency = 110.0 + 20.0 * std.math.sin(phase * 0.7 + 1.2);
-        appendSample(&chart.series.items[0].values, traffic, max_samples);
-        appendSample(&chart.series.items[1].values, latency, max_samples);
+        appendSample(&chart.series.items[0].values, chart.allocator, traffic, max_samples);
+        appendSample(&chart.series.items[1].values, chart.allocator, latency, max_samples);
 
         if (try input_handler.pollEvent(32)) |ev| {
             switch (ev) {

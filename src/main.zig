@@ -9,6 +9,7 @@ pub const event = @import("event/event.zig");
 pub const memory = @import("memory/memory.zig");
 pub const quickstart = @import("quickstart.zig");
 pub const testing = @import("testing/testing.zig");
+pub const debug = @import("debug.zig");
 
 /// zit - A Text User Interface (TUI) library for Zig
 ///

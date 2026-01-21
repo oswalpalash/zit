@@ -231,29 +231,37 @@ pub const DragPayload = struct {
         return .{ .kind = .custom, .storage = .{ .custom = .{ .ptr = ptr, .destructor = destructor, .type_name = type_name } } };
     }
 
+    fn ValueBox(comptime T: type) type {
+        return struct {
+            allocator: std.mem.Allocator,
+            value: T,
+        };
+    }
+
     /// Allocate and copy an arbitrary value onto the heap for the duration of the drag.
     pub fn fromValue(allocator: std.mem.Allocator, value: anytype) !DragPayload {
         const T = @TypeOf(value);
-        const typed_ptr = try allocator.create(T);
-        typed_ptr.* = value;
+        const Box = ValueBox(T);
+        const box = try allocator.create(Box);
+        box.* = .{ .allocator = allocator, .value = value };
 
         return .{
             .kind = .custom,
             .storage = .{ .custom = .{
-                .ptr = typed_ptr,
-                .destructor = destroyValue(T, allocator),
+                .ptr = &box.value,
+                .destructor = destroyValue(Box),
                 .type_name = @typeName(T),
             } },
         };
     }
 
-    fn destroyValue(comptime T: type, allocator: std.mem.Allocator) *const fn (*anyopaque) void {
+    fn destroyValue(comptime BoxT: type) *const fn (*anyopaque) void {
         return struct {
-            const alloc = allocator;
-
             fn destroy(raw: *anyopaque) void {
-                const ptr = @as(*T, @ptrCast(@alignCast(raw)));
-                alloc.destroy(ptr);
+                const ValueType = @FieldType(BoxT, "value");
+                const value_ptr = @as(*ValueType, @ptrCast(@alignCast(raw)));
+                const box_ptr = @as(*BoxT, @fieldParentPtr("value", value_ptr));
+                box_ptr.allocator.destroy(box_ptr);
             }
         }.destroy;
     }
@@ -363,6 +371,19 @@ pub const EventListener = struct {
     id: u32,
 };
 
+pub const EventTraceFn = *const fn (event: *Event, phase: Event.PropagationPhase, node: ?*widget.Widget, handled: bool, ctx: ?*anyopaque) void;
+
+pub const DebugHooks = struct {
+    event_trace: ?EventTraceFn = null,
+    trace_ctx: ?*anyopaque = null,
+};
+
+inline fn traceEvent(hooks: DebugHooks, ev: *Event, phase: Event.PropagationPhase, node: ?*widget.Widget) void {
+    if (hooks.event_trace) |trace_fn| {
+        trace_fn(ev, phase, node, ev.handled, hooks.trace_ctx);
+    }
+}
+
 /// Event dispatcher for managing event listeners and dispatching events
 pub const EventDispatcher = struct {
     /// Event listeners
@@ -451,7 +472,7 @@ pub const EventDispatcher = struct {
     }
 
     /// Dispatch an event with both capturing and bubbling phases
-    pub fn dispatchEventWithPropagation(self: *EventDispatcher, event: *Event, widget_path: []*widget.Widget) bool {
+    pub fn dispatchEventWithPropagation(self: *EventDispatcher, event: *Event, widget_path: []*widget.Widget, hooks: DebugHooks) bool {
         event.setCurrentTarget(null);
         if (event.target == null and widget_path.len > 0) {
             event.target = widget_path[widget_path.len - 1];
@@ -470,6 +491,7 @@ pub const EventDispatcher = struct {
                     handled = true;
                 }
 
+                traceEvent(hooks, event, .capturing, node);
                 if (event.stop_propagation) {
                     return handled;
                 }
@@ -485,6 +507,7 @@ pub const EventDispatcher = struct {
                 handled = true;
             }
 
+            traceEvent(hooks, event, .target, original_target);
             if (event.stop_propagation) {
                 return handled;
             }
@@ -503,6 +526,7 @@ pub const EventDispatcher = struct {
                     handled = true;
                 }
 
+                traceEvent(hooks, event, .bubbling, node);
                 if (event.stop_propagation) {
                     break;
                 }
@@ -523,6 +547,8 @@ pub const EventQueue = struct {
     dispatcher: EventDispatcher,
     /// Allocator for event queue operations
     allocator: std.mem.Allocator,
+    /// Optional debug hooks
+    debug_hooks: DebugHooks = .{},
 
     /// Initialize a new event queue
     pub fn init(allocator: std.mem.Allocator) EventQueue {
@@ -567,6 +593,8 @@ pub const EventQueue = struct {
         while (self.popFront()) |event_val| {
             var event = event_val;
             _ = self.dispatcher.dispatchEvent(&event);
+            event.setPhase(.target);
+            traceEvent(self.debug_hooks, &event, .target, event.target);
 
             // Clean up custom event data if needed
             if (event.type == .custom) {
@@ -582,6 +610,11 @@ pub const EventQueue = struct {
     pub fn processEventsWithPropagation(self: *EventQueue, allocator: std.mem.Allocator) !void {
         const propagation = @import("propagation.zig");
         try propagation.processEventsWithPropagation(self, allocator);
+    }
+
+    /// Attach debug hooks to observe event flow.
+    pub fn setDebugHooks(self: *EventQueue, hooks: DebugHooks) void {
+        self.debug_hooks = hooks;
     }
 
     /// Add an event listener
@@ -1370,7 +1403,7 @@ test "propagation captures target then bubbles with current target set" {
     });
 
     const propagation = @import("propagation.zig");
-    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
     try std.testing.expectEqual(@as(usize, 5), order.items.len);
     try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
@@ -1450,7 +1483,7 @@ test "stopPropagation halts remaining phases" {
     });
 
     const propagation = @import("propagation.zig");
-    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
     try std.testing.expectEqual(@as(usize, 2), order.items.len);
     try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
@@ -1516,7 +1549,7 @@ test "propagation tolerates deep widget trees" {
     });
 
     const propagation = @import("propagation.zig");
-    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+    _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
     try std.testing.expectEqual(@as(usize, depth * 2 - 1), call_counter);
 }
@@ -1595,7 +1628,7 @@ test "event propagation fuzzes random widget trees" {
         }
 
         const propagation = @import("propagation.zig");
-        _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc);
+        _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
         try std.testing.expectEqual(@as(usize, depth * 2 - 1), call_counter);
     }
@@ -1845,6 +1878,11 @@ pub const Application = struct {
     /// Remove an event listener by ID
     pub fn removeEventListener(self: *Application, id: u32) bool {
         return self.event_queue.removeEventListener(id);
+    }
+
+    /// Route debug hooks (event tracing, etc.) into the event queue.
+    pub fn setDebugHooks(self: *Application, hooks: DebugHooks) void {
+        self.event_queue.setDebugHooks(hooks);
     }
 
     /// Request focus for a widget

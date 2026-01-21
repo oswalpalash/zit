@@ -19,7 +19,10 @@ pub fn withRenderer(
     draw: *const fn (*render.Renderer, FrameOptions) anyerror!void,
 ) !void {
     var renderer = render.Renderer.init(allocator, options.width, options.height) catch |err| {
-        std.log.err("zit.quickstart: failed to start renderer: {s}", .{@errorName(err)});
+        std.log.err(
+            "zit.quickstart: renderer init failed ({s}) for {d}x{d} frame. Try reducing FrameOptions dimensions or check terminal capabilities.",
+            .{ @errorName(err), options.width, options.height },
+        );
         return err;
     };
     defer renderer.deinit();
