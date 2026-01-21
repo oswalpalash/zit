@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const memory = @import("../../memory/memory.zig");
+const animation = @import("../animation.zig");
 
 /// TableCell structure
 pub const TableCell = struct {
@@ -12,6 +13,13 @@ pub const TableCell = struct {
     /// Custom foreground color (optional)
     fg: ?render.Color = null,
     /// Custom background color (optional)
+    bg: ?render.Color = null,
+};
+
+/// Lightweight view returned by virtual row providers.
+pub const TableCellView = struct {
+    text: []const u8,
+    fg: ?render.Color = null,
     bg: ?render.Color = null,
 };
 
@@ -25,6 +33,13 @@ pub const TableColumn = struct {
     resizable: bool = true,
 };
 
+/// Delegate for supplying table rows without storing them in the widget.
+pub const RowProvider = struct {
+    ctx: ?*anyopaque = null,
+    row_count: *const fn (?*anyopaque) usize,
+    cell_at: *const fn (usize, usize, ?*anyopaque) TableCellView,
+};
+
 /// Table widget for displaying tabular data
 pub const Table = struct {
     /// Base widget
@@ -33,6 +48,8 @@ pub const Table = struct {
     columns: std.ArrayList(TableColumn),
     /// Table rows (ArrayLists of TableCells)
     rows: std.ArrayList(std.ArrayList(TableCell)),
+    /// Virtual row provider for huge datasets
+    row_provider: ?RowProvider = null,
     /// Selected row index
     selected_row: ?usize = null,
     /// First visible row index
@@ -77,6 +94,18 @@ pub const Table = struct {
     search_timeout_ms: u64 = 900,
     /// Clock source (primarily overridden in tests)
     clock: *const fn () i64 = std.time.milliTimestamp,
+    /// Optional animator for smooth scrolling
+    animator: ?*animation.Animator = null,
+    /// Scroll easing driver
+    scroll_driver: animation.ValueDriver = .{},
+    /// Scroll animation duration
+    scroll_duration_ms: u64 = 140,
+    /// Momentum multiplier for wheel deltas
+    momentum_multiplier: f32 = 3,
+    /// Limit how many rows are sampled for preferred size
+    virtual_sample_limit: usize = 256,
+    /// Limit for typeahead search when using providers
+    typeahead_scan_limit: usize = 1024,
 
     /// Virtual method table for Table
     pub const vtable = base.Widget.VTable{
@@ -141,6 +170,7 @@ pub const Table = struct {
 
     /// Add a row to the table
     pub fn addRow(self: *Table, cells: []const []const u8) !void {
+        if (self.row_provider != null) return error.VirtualRowsActive;
         var new_row = std.ArrayList(TableCell).empty;
         errdefer self.freeRow(&new_row);
         try new_row.ensureTotalCapacityPrecise(self.allocator, self.columns.items.len);
@@ -172,6 +202,7 @@ pub const Table = struct {
 
     /// Set a cell value
     pub fn setCell(self: *Table, row: usize, col: usize, text: []const u8, fg: ?render.Color, bg: ?render.Color) !void {
+        if (self.row_provider != null) return error.VirtualRowsActive;
         if (row >= self.rows.items.len or col >= self.columns.items.len) {
             return error.IndexOutOfBounds;
         }
@@ -224,6 +255,7 @@ pub const Table = struct {
 
     /// Remove a row from the table
     pub fn removeRow(self: *Table, row: usize) void {
+        if (self.row_provider != null) return;
         if (row >= self.rows.items.len) {
             return;
         }
@@ -247,6 +279,12 @@ pub const Table = struct {
 
     /// Clear all rows from the table
     pub fn clearRows(self: *Table) void {
+        if (self.row_provider != null) {
+            self.selected_row = null;
+            self.first_visible_row = 0;
+            self.resetTypeahead();
+            return;
+        }
         // Free all row cell text
         for (self.rows.items) |*row| {
             if (self.string_intern == null) {
@@ -277,7 +315,8 @@ pub const Table = struct {
 
     /// Set the selected row
     pub fn setSelectedRow(self: *Table, row: ?usize) void {
-        if (row != null and row.? >= self.rows.items.len) {
+        const count = self.rowCount();
+        if (row != null and row.? >= count) {
             return;
         }
 
@@ -299,10 +338,12 @@ pub const Table = struct {
     fn ensureRowVisible(self: *Table, row: usize) void {
         const visible_rows = self.getVisibleRowCount();
 
+        if (visible_rows == 0) return;
+
         if (row < self.first_visible_row) {
-            self.first_visible_row = row;
+            self.scrollTo(@floatFromInt(row));
         } else if (row >= self.first_visible_row + visible_rows) {
-            self.first_visible_row = row - visible_rows + 1;
+            self.scrollTo(@floatFromInt(row - visible_rows + 1));
         }
     }
 
@@ -371,6 +412,87 @@ pub const Table = struct {
         self.clock = clock;
     }
 
+    /// Attach a shared animator to enable smooth scrolling.
+    pub fn attachAnimator(self: *Table, animator: *animation.Animator) void {
+        self.animator = animator;
+        self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
+    }
+
+    /// Switch to virtual row mode using an external provider.
+    pub fn useRowProvider(self: *Table, provider: RowProvider) void {
+        self.clearRows();
+        self.row_provider = provider;
+        self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
+    }
+
+    /// Return to owned row storage.
+    pub fn clearRowProvider(self: *Table) void {
+        self.row_provider = null;
+        self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
+    }
+
+    fn rowCount(self: *Table) usize {
+        if (self.row_provider) |provider| {
+            return provider.row_count(provider.ctx);
+        }
+        return self.rows.items.len;
+    }
+
+    fn cellView(self: *Table, row: usize, col: usize) TableCellView {
+        if (self.row_provider) |provider| {
+            return provider.cell_at(row, col, provider.ctx);
+        }
+        const cell = self.rows.items[row].items[col];
+        return TableCellView{
+            .text = cell.text,
+            .fg = cell.fg,
+            .bg = cell.bg,
+        };
+    }
+
+    fn clampScroll(self: *Table) void {
+        const visible_rows = self.getVisibleRowCount();
+        const max_offset = if (visible_rows == 0 or self.rowCount() <= visible_rows) 0 else self.rowCount() - visible_rows;
+        const clamped = std.math.clamp(self.scroll_driver.current, 0, @as(f32, @floatFromInt(max_offset)));
+        self.scroll_driver.current = clamped;
+        self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+    }
+
+    fn scrollTo(self: *Table, target: f32) void {
+        const visible_rows = self.getVisibleRowCount();
+        const max_offset = if (visible_rows == 0 or self.rowCount() <= visible_rows) 0 else self.rowCount() - visible_rows;
+        const clamped = std.math.clamp(target, 0, @as(f32, @floatFromInt(max_offset)));
+        if (self.animator) |anim| {
+            const onChange = struct {
+                fn apply(value: f32, ctx: ?*anyopaque) void {
+                    const table = @as(*Table, @ptrCast(@alignCast(ctx.?)));
+                    table.scroll_driver.current = value;
+                    table.first_visible_row = @as(usize, @intFromFloat(std.math.floor(value)));
+                }
+            }.apply;
+
+            _ = self.scroll_driver.animate(
+                anim,
+                self.scroll_driver.current,
+                clamped,
+                self.scroll_duration_ms,
+                animation.Easing.easeInOutQuad,
+                onChange,
+                @ptrCast(self),
+            ) catch {
+                self.scroll_driver.snap(clamped);
+                self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+            };
+        } else {
+            self.scroll_driver.snap(clamped);
+            self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+        }
+    }
+
+    fn scrollBy(self: *Table, delta: f32) void {
+        self.scrollTo(self.scroll_driver.current + delta * self.momentum_multiplier);
+    }
+
     /// Draw implementation for Table
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
@@ -383,6 +505,15 @@ pub const Table = struct {
 
         // Fill table background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+
+        self.clampScroll();
+        const total_rows = self.rowCount();
+        if (self.first_visible_row + self.getVisibleRowCount() > total_rows and total_rows > 0) {
+            const visible_rows = self.getVisibleRowCount();
+            const new_first = if (total_rows > visible_rows) total_rows - visible_rows else 0;
+            self.scroll_driver.snap(@floatFromInt(new_first));
+            self.first_visible_row = new_first;
+        }
 
         var y = rect.y;
         var x = rect.x;
@@ -438,10 +569,9 @@ pub const Table = struct {
 
         // Draw visible rows
         const visible_rows = self.getVisibleRowCount();
-        const last_visible_row = @min(self.first_visible_row + visible_rows, self.rows.items.len);
+        const last_visible_row = @min(self.first_visible_row + visible_rows, total_rows);
 
         for (self.first_visible_row..last_visible_row) |row_idx| {
-            const row = self.rows.items[row_idx];
             const is_selected = self.selected_row != null and row_idx == self.selected_row.?;
 
             x = rect.x;
@@ -463,18 +593,33 @@ pub const Table = struct {
                     break;
                 }
 
-                if (col_idx < row.items.len) {
-                    const cell = row.items[col_idx];
+                var cell_view = TableCellView{
+                    .text = "",
+                    .fg = null,
+                    .bg = null,
+                };
 
+                if (self.row_provider) |_| {
+                    cell_view = self.cellView(row_idx, col_idx);
+                } else if (row_idx < self.rows.items.len and col_idx < self.rows.items[row_idx].items.len) {
+                    const cell = self.rows.items[row_idx].items[col_idx];
+                    cell_view = TableCellView{
+                        .text = cell.text,
+                        .fg = cell.fg,
+                        .bg = cell.bg,
+                    };
+                }
+
+                if (cell_view.text.len > 0 or cell_view.fg != null or cell_view.bg != null) {
                     // Choose cell colors, using row colors as default
-                    const cell_fg = if (cell.fg != null) cell.fg.? else row_fg;
-                    const cell_bg = if (cell.bg != null) cell.bg.? else row_bg;
+                    const cell_fg = cell_view.fg orelse row_fg;
+                    const cell_bg = cell_view.bg orelse row_bg;
 
                     // Draw cell background
                     renderer.fillRect(x, y, column.width, 1, ' ', cell_fg, cell_bg, render.Style{});
 
                     // Draw cell text
-                    for (cell.text, 0..) |char, i| {
+                    for (cell_view.text, 0..) |char, i| {
                         if (i >= @as(usize, @intCast(column.width - 1))) {
                             break;
                         }
@@ -511,8 +656,9 @@ pub const Table = struct {
     /// Event handling implementation for Table
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
+        const total_rows = self.rowCount();
 
-        if (!self.widget.visible or !self.widget.enabled or self.rows.items.len == 0) {
+        if (!self.widget.visible or !self.widget.enabled) {
             return false;
         }
 
@@ -526,13 +672,13 @@ pub const Table = struct {
 
             // Check if mouse is within table row bounds
             if (mouse_event.y >= rect.y + @as(u16, @intCast(header_offset)) and mouse_event.y < rect.y + rect.height and
-                mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width)
+                mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width and total_rows > 0)
             {
 
                 // Convert y position to row index
                 const row_idx = self.first_visible_row + @as(usize, @intCast(mouse_event.y - rect.y)) - @as(usize, @intCast(header_offset));
 
-                if (row_idx < self.rows.items.len) {
+                if (row_idx < total_rows) {
                     // Select row on click
                     if (mouse_event.action == .press and mouse_event.button == 1) {
                         self.setSelectedRow(row_idx);
@@ -548,17 +694,13 @@ pub const Table = struct {
                 rect.contains(mouse_event.x, mouse_event.y))
             {
                 // kept for backward compatibility with terminals sending button codes
-                if (self.first_visible_row > 0) {
-                    self.first_visible_row -= 1;
-                    return true;
-                }
+                self.scrollBy(-1);
+                return true;
             } else if (mouse_event.action == .press and mouse_event.button == 5 and
                 rect.contains(mouse_event.x, mouse_event.y))
             {
-                if (self.first_visible_row + self.getVisibleRowCount() < self.rows.items.len) {
-                    self.first_visible_row += 1;
-                    return true;
-                }
+                self.scrollBy(1);
+                return true;
             } else if ((mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) and rect.contains(mouse_event.x, mouse_event.y)) {
                 const scroll_step: i16 = if (mouse_event.scroll_delta != 0)
                     mouse_event.scroll_delta
@@ -566,29 +708,13 @@ pub const Table = struct {
                     -1
                 else
                     1;
-                const step = @as(usize, @intCast(@abs(scroll_step)));
-
-                if (scroll_step < 0) {
-                    const decrease = @min(self.first_visible_row, step);
-                    if (decrease > 0) {
-                        self.first_visible_row -= decrease;
-                        return true;
-                    }
-                } else {
-                    const visible_count = self.getVisibleRowCount();
-                    const available_rows = if (self.rows.items.len > visible_count) self.rows.items.len - visible_count else 0;
-                    if (self.first_visible_row < available_rows) {
-                        const remaining = available_rows - self.first_visible_row;
-                        const increase = @min(remaining, step);
-                        self.first_visible_row += increase;
-                        return increase > 0;
-                    }
-                }
+                self.scrollBy(@as(f32, @floatFromInt(scroll_step)));
+                return true;
             }
         }
 
         // Handle key events
-        if (event == .key and self.widget.focused) {
+        if (event == .key and self.widget.focused and total_rows > 0) {
             const key_event = event.key;
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
@@ -601,7 +727,7 @@ pub const Table = struct {
                     .cursor_down => {
                         if (self.selected_row == null) {
                             self.setSelectedRow(0);
-                        } else if (self.selected_row.? < self.rows.items.len - 1) {
+                        } else if (self.selected_row.? < total_rows - 1) {
                             self.setSelectedRow(self.selected_row.? + 1);
                         }
                         self.resetTypeahead();
@@ -622,7 +748,7 @@ pub const Table = struct {
                         if (self.selected_row == null) {
                             self.setSelectedRow(0);
                         } else {
-                            const new_row = @min(self.selected_row.? + visible_rows, self.rows.items.len - 1);
+                            const new_row = @min(self.selected_row.? + visible_rows, total_rows - 1);
                             self.setSelectedRow(new_row);
                         }
                         self.resetTypeahead();
@@ -648,7 +774,7 @@ pub const Table = struct {
                         return true;
                     },
                     .line_end => {
-                        self.setSelectedRow(self.rows.items.len - 1);
+                        self.setSelectedRow(total_rows - 1);
                         self.resetTypeahead();
                         return true;
                     },
@@ -670,7 +796,8 @@ pub const Table = struct {
     }
 
     fn handleTypeaheadKey(self: *Table, byte: u8) bool {
-        if (self.rows.items.len == 0) {
+        const total_rows = self.rowCount();
+        if (total_rows == 0) {
             return false;
         }
 
@@ -696,9 +823,10 @@ pub const Table = struct {
 
         const start = self.selected_row orelse 0;
         var i: usize = 0;
-        while (i < self.rows.items.len) : (i += 1) {
-            const idx = (start + i) % self.rows.items.len;
-            if (rowStartsWith(self.rows.items[idx], needle)) {
+        const scan_limit = @min(total_rows, self.typeahead_scan_limit);
+        while (i < scan_limit) : (i += 1) {
+            const idx = (start + i) % total_rows;
+            if (self.rowStartsWith(idx, needle)) {
                 self.setSelectedRow(idx);
                 return true;
             }
@@ -707,10 +835,11 @@ pub const Table = struct {
         return false;
     }
 
-    fn rowStartsWith(row: std.ArrayList(TableCell), needle: []const u8) bool {
+    fn rowStartsWith(self: *Table, row_idx: usize, needle: []const u8) bool {
         if (needle.len == 0) return false;
 
-        for (row.items) |cell| {
+        for (self.columns.items, 0..) |_, col_idx| {
+            const cell = self.cellView(row_idx, col_idx);
             if (cell.text.len == 0) continue;
             if (startsWithIgnoreCase(cell.text, needle)) return true;
         }
@@ -736,6 +865,7 @@ pub const Table = struct {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
         self.widget.rect = rect;
 
+        self.clampScroll();
         // Ensure selected row is still visible after layout
         if (self.selected_row != null) {
             self.ensureRowVisible(self.selected_row.?);
@@ -755,8 +885,8 @@ pub const Table = struct {
 
         // Preferred height depends on number of rows plus header
         const header_height: u16 = if (self.show_headers) 1 else 0;
-        const rows_height = @min(20, @as(u16, @intCast(self.rows.items.len)));
-        const height = header_height + rows_height;
+        const sample_rows = @min(@as(usize, 20), @min(self.virtual_sample_limit, self.rowCount()));
+        const height = header_height + @as(u16, @intCast(sample_rows));
 
         return layout_module.Size.init(width, height);
     }
@@ -764,7 +894,7 @@ pub const Table = struct {
     /// Can focus implementation for Table
     fn canFocusFn(widget_ptr: *anyopaque) bool {
         const self = @as(*Table, @ptrCast(@alignCast(widget_ptr)));
-        return self.widget.enabled and self.rows.items.len > 0;
+        return self.widget.enabled and self.rowCount() > 0;
     }
 
     fn ownText(self: *Table, text: []const u8) ![]const u8 {
