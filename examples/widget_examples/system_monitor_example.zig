@@ -21,6 +21,14 @@ fn setStatus(status: *StatusLine, comptime fmt: []const u8, args: anytype) void 
     status.text = std.fmt.bufPrint(&status.buffer, fmt, args) catch status.text;
 }
 
+fn enterAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049h");
+}
+
+fn exitAlternateScreen() !void {
+    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+}
+
 fn jitter(random: std.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
     const delta = (random.float(f32) - 0.5) * spread;
     return std.math.clamp(value + delta, min, max);
@@ -52,15 +60,18 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
-    try input_handler.enableMouse();
+
+    try enterAlternateScreen();
+    defer exitAlternateScreen() catch {};
 
     try term.enableRawMode();
+    defer term.disableRawMode() catch {};
+
     try term.hideCursor();
-    defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
-        term.disableRawMode() catch {};
-    }
+    defer term.showCursor() catch {};
+
+    try input_handler.enableMouse();
+    defer input_handler.disableMouse() catch {};
 
     var cpu = try widget.Gauge.init(memory_manager.getWidgetPoolAllocator());
     defer cpu.deinit();
