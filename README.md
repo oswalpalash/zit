@@ -285,6 +285,14 @@ try app.registerAccessibleNode(.{
 - Realistic screens: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Rendering benchmark: `zig build bench` runs `examples/benchmarks/render_bench.zig` to gauge draw throughput.
 
+### Demo previews
+
+![System monitor dashboard](assets/system_monitor_example.svg)
+![File manager navigation](assets/file_manager_example.svg)
+![Widget showcase](assets/showcase_demo.svg)
+
+To refresh these assets with real terminal frames, run `python scripts/make_screenshots.py` (requires a PTY/terminal). For a recorder-free refresh that works in sandboxed environments, use the built-in mock layouts with `python scripts/make_screenshots.py --mock`.
+
 ## Best Practices
 
 1. Use the `MemoryManager` as the primary interface for memory management
