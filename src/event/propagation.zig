@@ -80,6 +80,9 @@ pub fn dispatchWithPropagation(dispatcher: *event.EventDispatcher, event_item: *
 pub fn processEventsWithPropagation(queue: *event.EventQueue, allocator: std.mem.Allocator, scratch: *std.ArrayListUnmanaged(*widget.Widget)) !void {
     while (queue.popFront()) |event_val| {
         var event_item = event_val;
+        if (queue.preprocess(&event_item)) {
+            continue;
+        }
 
         _ = try dispatchWithPropagationCached(&queue.dispatcher, &event_item, allocator, scratch, queue.debug_hooks);
 
