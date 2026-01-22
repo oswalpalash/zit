@@ -1568,3 +1568,22 @@ test "table row provider sampling caps preferred height" {
     const size = try Table.getPreferredSizeFn(@ptrCast(@alignCast(&table.widget)));
     try std.testing.expectEqual(@as(u16, 4), size.height);
 }
+
+test "table selection clamps after row removal" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 4, true);
+    try table.addColumn("B", 4, true);
+
+    try table.addRow(&.{ "one", "1" });
+    try table.addRow(&.{ "two", "2" });
+    try table.addRow(&.{ "three", "3" });
+
+    table.setSelectedRow(2);
+    table.removeRow(2);
+
+    try std.testing.expectEqual(@as(usize, 2), table.rows.items.len);
+    try std.testing.expectEqual(@as(usize, 1), table.selected_row.?);
+}

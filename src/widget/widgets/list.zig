@@ -974,3 +974,21 @@ test "list virtual provider samples preferred size within limit" {
     try std.testing.expectEqual(@as(usize, 2), provider_ctx.calls);
     try std.testing.expectEqual(@as(usize, 1), provider_ctx.max_index);
 }
+
+test "list keeps selected item visible after layout" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("one");
+    try list.addItem("two");
+    try list.addItem("three");
+    try list.addItem("four");
+    try list.addItem("five");
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+    list.setSelectedIndex(4);
+
+    try std.testing.expectEqual(@as(usize, 4), list.selected_index);
+    try std.testing.expectEqual(@as(usize, 3), list.first_visible_index);
+}

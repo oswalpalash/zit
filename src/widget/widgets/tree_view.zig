@@ -343,3 +343,14 @@ test "tree view lazily rebuilds visible cache" {
     tree.visible_dirty = true;
     try std.testing.expectEqual(@as(usize, 3), tree.visibleCount());
 }
+
+test "tree view preferred size defaults when empty" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), tree.visibleCount());
+    const size = try tree.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 12), size.width);
+    try std.testing.expectEqual(@as(u16, 3), size.height);
+}

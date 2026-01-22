@@ -869,3 +869,21 @@ test "tab view tab bar keyboard navigation updates tabs" {
     try std.testing.expectEqualStrings("two", tab_view.tabs.items[0].title);
     try std.testing.expectEqualStrings("three", tab_view.tabs.items[1].title);
 }
+
+test "tab view clamps active tab index" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+
+    tab_view.setActiveTab(9);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
+}

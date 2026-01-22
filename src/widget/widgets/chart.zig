@@ -584,3 +584,18 @@ test "chart draws scatter points with legend and labels" {
     try std.testing.expect(markers > 0);
     try std.testing.expect(found_label);
 }
+
+test "chart fills background when empty" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+
+    try chart.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+    try chart.widget.draw(&renderer);
+
+    const cell = renderer.back.getCell(0, 0).*;
+    try std.testing.expect(std.meta.eql(cell.bg, chart.theme_value.color(.surface)));
+}
