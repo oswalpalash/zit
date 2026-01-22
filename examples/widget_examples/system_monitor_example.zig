@@ -93,7 +93,6 @@ fn pickAccentForeground(accent: render.Color, palette: theme.Palette) render.Col
     return best;
 }
 
-
 fn jitter(random: std.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
     const delta = (random.float(f32) - 0.5) * spread;
     return std.math.clamp(value + delta, min, max);
