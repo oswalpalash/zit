@@ -12,7 +12,8 @@ pub const ColorPicker = struct {
     swatch_width: u16 = 6,
     swatch_height: u16 = 3,
     selected_index: usize = 0,
-    on_change: ?*const fn (render.Color, usize, ?*anyopaque) void = null,
+    on_change: ?*const fn (render.Color, usize) void = null,
+    on_change_with_ctx: ?*const fn (render.Color, usize, ?*anyopaque) void = null,
     on_change_ctx: ?*anyopaque = null,
     allocator: std.mem.Allocator,
 
@@ -53,16 +54,24 @@ pub const ColorPicker = struct {
         if (columns > 0) self.columns = columns;
     }
 
-    pub fn setOnChange(self: *ColorPicker, callback: *const fn (render.Color, usize, ?*anyopaque) void, ctx: ?*anyopaque) void {
+    pub fn setOnChange(self: *ColorPicker, callback: *const fn (render.Color, usize) void) void {
         self.on_change = callback;
+        self.on_change_with_ctx = null;
+        self.on_change_ctx = null;
+    }
+
+    pub fn setOnChangeWithContext(self: *ColorPicker, callback: *const fn (render.Color, usize, ?*anyopaque) void, ctx: ?*anyopaque) void {
+        self.on_change_with_ctx = callback;
         self.on_change_ctx = ctx;
+        self.on_change = null;
     }
 
     pub fn selectIndex(self: *ColorPicker, index: usize) void {
         if (index >= self.palette.items.len) return;
         if (self.selected_index != index) {
             self.selected_index = index;
-            if (self.on_change) |cb| cb(self.palette.items[index], index, self.on_change_ctx);
+            if (self.on_change) |cb| cb(self.palette.items[index], index);
+            if (self.on_change_with_ctx) |cb| cb(self.palette.items[index], index, self.on_change_ctx);
         }
     }
 
@@ -137,7 +146,8 @@ pub const ColorPicker = struct {
                     input.KeyCode.UP => idx -= cols_step,
                     input.KeyCode.DOWN => idx += cols_step,
                     input.KeyCode.ENTER, input.KeyCode.SPACE => {
-                        if (self.on_change) |cb| cb(self.palette.items[self.selected_index], self.selected_index, self.on_change_ctx);
+                        if (self.on_change) |cb| cb(self.palette.items[self.selected_index], self.selected_index);
+                        if (self.on_change_with_ctx) |cb| cb(self.palette.items[self.selected_index], self.selected_index, self.on_change_ctx);
                         return true;
                     },
                     else => return false,
@@ -204,7 +214,7 @@ test "color picker handles mouse and keyboard selection" {
             }
         }
     };
-    picker.setOnChange(Callbacks.onChange, &change_called);
+    picker.setOnChangeWithContext(Callbacks.onChange, &change_called);
 
     const mouse_event = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, picker.widget.rect.x + picker.swatch_width + 1, picker.widget.rect.y + 1, 1, 0) };
     try std.testing.expect(try picker.widget.handleEvent(mouse_event));
