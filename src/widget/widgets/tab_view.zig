@@ -641,7 +641,7 @@ test "tab view lazy loads content on first activation" {
         var loaded = false;
         fn build(allocator: std.mem.Allocator) anyerror!*base.Widget {
             @This().loaded = true;
-            const label = try @import("label.zig").Label.init(allocator);
+            const label = try @import("label.zig").Label.init(allocator, "lazy");
             return &label.widget;
         }
     };

@@ -187,13 +187,11 @@ test "split pane lays out children" {
     var pane = try SplitPane.init(alloc);
     defer pane.deinit();
 
-    var left = try @import("label.zig").Label.init(alloc);
+    var left = try @import("label.zig").Label.init(alloc, "left");
     defer left.deinit();
-    try left.setText("left");
 
-    var right = try @import("label.zig").Label.init(alloc);
+    var right = try @import("label.zig").Label.init(alloc, "right");
     defer right.deinit();
-    try right.setText("right");
 
     pane.setFirst(&left.widget);
     pane.setSecond(&right.widget);

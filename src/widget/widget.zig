@@ -126,9 +126,7 @@ pub fn button(allocator: std.mem.Allocator, text: []const u8) !*Button {
 
 /// Create a new label with the given text
 pub fn createLabel(allocator: std.mem.Allocator, text: []const u8) !*Label {
-    var lbl = try Label.init(allocator);
-    try lbl.setText(text);
-    return lbl;
+    return Label.init(allocator, text);
 }
 
 /// Create a new label using the fluent builder API
