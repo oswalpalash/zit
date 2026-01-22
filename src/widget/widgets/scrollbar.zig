@@ -291,3 +291,49 @@ pub const Scrollbar = struct {
         return self.widget.enabled;
     }
 };
+
+var test_scrollbar_calls: usize = 0;
+var test_scrollbar_value: f32 = 0;
+
+test "scrollbar init/deinit" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    try std.testing.expectEqual(ScrollOrientation.vertical, bar.orientation);
+}
+
+test "scrollbar updates value on scroll event" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+    bar.widget.rect = layout_module.Rect.init(0, 0, 1, 10);
+
+    test_scrollbar_calls = 0;
+    test_scrollbar_value = 0;
+    const callback = struct {
+        fn call(value: f32) void {
+            test_scrollbar_calls += 1;
+            test_scrollbar_value = value;
+        }
+    }.call;
+    bar.setOnValueChanged(callback);
+
+    const scroll_event = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 0, 0, 0, 1) };
+    try std.testing.expect(try bar.widget.handleEvent(scroll_event));
+    try std.testing.expect(bar.value > 0);
+    try std.testing.expectEqual(@as(usize, 1), test_scrollbar_calls);
+    try std.testing.expect(test_scrollbar_value > 0);
+}
+
+test "scrollbar clamps out-of-range values" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .horizontal);
+    defer bar.deinit();
+
+    bar.setValue(2.5);
+    try std.testing.expectEqual(@as(f32, 1), bar.value);
+
+    bar.setValue(-1.0);
+    try std.testing.expectEqual(@as(f32, 0), bar.value);
+}
