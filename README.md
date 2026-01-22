@@ -192,7 +192,7 @@ pub fn main() !void {
 - Widget tours: `zig build button-example`, `zig build table-example`, `zig build file-browser-example`, `zig build system-monitor-example`, `zig build form-wizard-example`, `zig build notifications-example`.
 - Realistic snapshots: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
 - Benchmarks: `zig build bench` (render throughput).
-- Documentation: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
+- Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
