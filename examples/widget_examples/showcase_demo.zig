@@ -10,7 +10,6 @@ const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
 
-
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
 const MenuAction = enum {
