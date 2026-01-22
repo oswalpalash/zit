@@ -1102,6 +1102,21 @@ pub const Renderer = struct {
         return adjusted;
     }
 
+    fn checkedPoint(self: *Renderer, x: u16, y: u16) ?void {
+        if (x >= self.back.width or y >= self.back.height) return null;
+    }
+
+    fn checkedRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) ?struct { width: u16, height: u16 } {
+        if (width == 0 or height == 0) return null;
+        self.checkedPoint(x, y) orelse return null;
+
+        const clamped_width = @min(width, self.back.width - x);
+        const clamped_height = @min(height, self.back.height - y);
+        if (clamped_width == 0 or clamped_height == 0) return null;
+
+        return .{ .width = clamped_width, .height = clamped_height };
+    }
+
     fn drawGrapheme(self: *Renderer, x: u16, y: u16, grapheme: text_metrics.Grapheme, fg: Color, bg: Color, style: Style) void {
         if (x >= self.back.width or y >= self.back.height) {
             std.debug.assert(false);
@@ -1151,11 +1166,13 @@ pub const Renderer = struct {
 
     /// Draw a character at the specified position with capability fallbacks
     pub fn drawChar(self: *Renderer, x: u16, y: u16, char: u21, fg: Color, bg: Color, style: Style) void {
+        self.checkedPoint(x, y) orelse return;
         self.drawGrapheme(x, y, text_metrics.graphemeFromCodepoint(char), fg, bg, style);
     }
 
     /// Draw a string at the specified position using the renderer's text direction.
     pub fn drawStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
+        self.checkedPoint(x, y) orelse return;
         self.drawTextDir(x, y, str, self.text_direction, fg, bg, style);
     }
 
@@ -1166,7 +1183,7 @@ pub const Renderer = struct {
 
     /// Draw text with an explicit direction override.
     pub fn drawTextDir(self: *Renderer, x: u16, y: u16, str: []const u8, direction: TextDirection, fg: Color, bg: Color, style: Style) void {
-        if (y >= self.back.height or x >= self.back.width) return;
+        self.checkedPoint(x, y) orelse return;
         self.prepareGraphemes(str, direction) orelse {
             self.drawFallbackBytes(x, y, str, fg, bg, style);
             return;
@@ -1299,28 +1316,21 @@ pub const Renderer = struct {
 
     /// Fill a rectangular area
     pub fn fillRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16, fill_char: u21, fg: Color, bg: Color, style: Style) void {
-        if (width == 0 or height == 0) return;
-        if (x >= self.back.width or y >= self.back.height) return;
-        const clamped_width = @min(width, self.back.width - x);
-        const clamped_height = @min(height, self.back.height - y);
-        if (clamped_width == 0 or clamped_height == 0) return;
+        const checked = self.checkedRect(x, y, width, height) orelse return;
         const cell = Cell.init(fill_char, fg, bg, style);
-        self.back.fillRect(x, y, clamped_width, clamped_height, cell);
-        self.markDirtyRect(x, y, clamped_width, clamped_height);
+        self.back.fillRect(x, y, checked.width, checked.height, cell);
+        self.markDirtyRect(x, y, checked.width, checked.height);
     }
 
     /// Fill a rectangular area with a linear gradient background
     pub fn fillGradient(self: *Renderer, x: u16, y: u16, width: u16, height: u16, stops: []const GradientStop, direction: GradientDirection, style: Style) void {
-        if (width == 0 or height == 0 or stops.len == 0) return;
-        if (x >= self.back.width or y >= self.back.height) return;
-        const clamped_width = @min(width, self.back.width - x);
-        const clamped_height = @min(height, self.back.height - y);
-        if (clamped_width == 0 or clamped_height == 0) return;
+        if (stops.len == 0) return;
+        const checked = self.checkedRect(x, y, width, height) orelse return;
 
         const sorted = copyAndSortStops(self.allocator, stops) catch return;
         defer self.allocator.free(sorted);
 
-        const axis_len: u16 = if (direction == .horizontal) clamped_width else clamped_height;
+        const axis_len: u16 = if (direction == .horizontal) checked.width else checked.height;
         if (axis_len == 0) return;
 
         var idx: u16 = 0;
@@ -1332,14 +1342,14 @@ pub const Renderer = struct {
 
             if (direction == .horizontal) {
                 var row: u16 = 0;
-                while (row < clamped_height) : (row += 1) {
+                while (row < checked.height) : (row += 1) {
                     const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, idx)) catch break);
                     const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, row)) catch break);
                     self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
                 }
             } else {
                 var col: u16 = 0;
-                while (col < clamped_width) : (col += 1) {
+                while (col < checked.width) : (col += 1) {
                     const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, col)) catch break);
                     const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, idx)) catch break);
                     self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
@@ -1575,6 +1585,61 @@ test "renderer handles double width glyphs" {
     const trail = renderer.back.getCell(1, 0).continuation;
     try std.testing.expectEqual(@as(u21, '界'), lead);
     try std.testing.expect(trail);
+}
+
+test "renderer bounds checks skip off-screen writes" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    const fg = Color.named(NamedColor.white);
+    const bg = Color.named(NamedColor.black);
+
+    renderer.drawChar(2, 0, 'A', fg, bg, Style{});
+    renderer.drawStr(0, 2, "B", fg, bg, Style{});
+    renderer.fillRect(2, 0, 1, 1, 'C', fg, bg, Style{});
+
+    const stops = [_]GradientStop{
+        .{ .position = 0.0, .color = Color.rgb(0, 0, 0) },
+        .{ .position = 1.0, .color = Color.rgb(255, 255, 255) },
+    };
+    renderer.fillGradient(2, 0, 1, 1, &stops, GradientDirection.horizontal, Style{});
+
+    for (0..2) |y| {
+        for (0..2) |x| {
+            try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(@intCast(x), @intCast(y)).codepoint());
+        }
+    }
+}
+
+test "renderer draws strings at edge without overflow" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+
+    const fg = Color.named(NamedColor.white);
+    const bg = Color.named(NamedColor.black);
+
+    renderer.drawStr(1, 0, "HI", fg, bg, Style{});
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'H'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer clamps fillRect to bounds" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    const fg = Color.named(NamedColor.white);
+    const bg = Color.named(NamedColor.black);
+
+    renderer.fillRect(1, 0, 3, 2, 'X', fg, bg, Style{});
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'X'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, 'X'), renderer.back.getCell(1, 1).codepoint());
 }
 
 test "renderer reverses rtl text when requested" {
