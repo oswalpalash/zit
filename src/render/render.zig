@@ -1041,7 +1041,8 @@ pub const Renderer = struct {
             self.output_batch.ensureTotalCapacity(self.allocator, @intCast(desired_bytes)) catch {};
         }
         self.style_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
-        self.grapheme_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
+        const grapheme_cap: usize = @max(@as(usize, self.back.width), 64);
+        self.grapheme_scratch.ensureTotalCapacity(self.allocator, grapheme_cap) catch {};
     }
 
     /// Configure an optional scratch allocator for per-frame allocations.
@@ -1254,6 +1255,7 @@ pub const Renderer = struct {
 
     fn prepareGraphemes(self: *Renderer, text: []const u8, direction: TextDirection) ?void {
         self.grapheme_scratch.clearRetainingCapacity();
+        if (text.len > self.grapheme_scratch.capacity) return null;
         if (!self.capabilities.bidi or direction == .rtl) {
             _ = text_metrics.collectVisualOrder(text, direction, &self.grapheme_scratch, self.allocator) catch return null;
             return;
