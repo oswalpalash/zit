@@ -208,3 +208,56 @@ pub const Button = struct {
         return self.widget.enabled;
     }
 };
+
+var test_button_presses: usize = 0;
+
+test "button init/deinit" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "OK");
+    defer button.deinit();
+
+    try std.testing.expectEqualStrings("OK", button.button_text);
+}
+
+test "button triggers callback on press" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Go");
+    defer button.deinit();
+
+    test_button_presses = 0;
+    const callback = struct {
+        fn call() void {
+            test_button_presses += 1;
+        }
+    }.call;
+    button.setOnPress(callback);
+    button.widget.rect = layout_module.Rect.init(0, 0, 6, 3);
+
+    const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) };
+    try std.testing.expect(try button.widget.handleEvent(click_event));
+    try std.testing.expectEqual(@as(usize, 1), test_button_presses);
+
+    button.widget.focused = true;
+    const key_event = input.Event{ .key = input.KeyEvent.init(' ', input.KeyModifiers{}) };
+    try std.testing.expect(try button.widget.handleEvent(key_event));
+    try std.testing.expectEqual(@as(usize, 2), test_button_presses);
+}
+
+test "button ignores presses when bounds are zero" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "");
+    defer button.deinit();
+
+    test_button_presses = 0;
+    const callback = struct {
+        fn call() void {
+            test_button_presses += 1;
+        }
+    }.call;
+    button.setOnPress(callback);
+    button.widget.rect = layout_module.Rect.init(0, 0, 0, 0);
+
+    const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
+    try std.testing.expect(!try button.widget.handleEvent(click_event));
+    try std.testing.expectEqual(@as(usize, 0), test_button_presses);
+}
