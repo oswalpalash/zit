@@ -25,10 +25,10 @@ pub fn main() !void {
 
     var table = try zit.widget.Table.init(allocator);
     defer table.deinit();
-    try table.addColumn("Name", 28, true);
-    try table.addColumn("Type", 10, true);
-    try table.addColumn("Size", 8, true);
-    try table.addColumn("Modified", 20, true);
+    try table.addColumn("Name", 24, true);
+    try table.addColumn("Type", 8, true);
+    try table.addColumn("Size", 7, true);
+    try table.addColumn("Modified", 18, true);
     const rows = [_][4][]const u8{
         .{ "src", "dir", "-", "2024-04-02 10:12" },
         .{ "examples", "dir", "-", "2024-04-01 08:31" },
@@ -38,6 +38,7 @@ pub fn main() !void {
     };
     for (rows) |row| try table.addRow(&row);
     table.selected_row = 2;
+    table.setSelectedColors(zit.render.Color.named(.bright_white), zit.render.Color.named(.blue));
     table.border = .double;
     try table.widget.layout(zit.layout.Rect.init(1, 3, 78, 15));
     try table.widget.draw(&mock.renderer);
