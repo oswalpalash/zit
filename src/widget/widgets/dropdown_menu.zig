@@ -42,8 +42,8 @@ pub const DropdownMenu = struct {
     disabled_fg: render.Color = render.Color{ .named_color = render.NamedColor.bright_black },
     /// Disabled background color
     disabled_bg: render.Color = render.Color{ .named_color = render.NamedColor.default },
-    /// On selection changed callback
-    on_selection_changed: ?*const fn (usize) void = null,
+    /// On selection callback
+    on_select: ?*const fn (usize) void = null,
     /// Allocator for dropdown menu operations
     allocator: std.mem.Allocator,
 
@@ -136,8 +136,8 @@ pub const DropdownMenu = struct {
         self.selected_index = @min(index, self.items.items.len - 1);
 
         // Call the selection changed callback
-        if (old_index != self.selected_index and self.on_selection_changed != null) {
-            self.on_selection_changed.?(self.selected_index);
+        if (old_index != self.selected_index and self.on_select != null) {
+            self.on_select.?(self.selected_index);
         }
     }
 
@@ -185,9 +185,9 @@ pub const DropdownMenu = struct {
         self.selected_bg = selected_bg;
     }
 
-    /// Set the on-selection-changed callback
-    pub fn setOnSelectionChanged(self: *DropdownMenu, callback: *const fn (usize) void) void {
-        self.on_selection_changed = callback;
+    /// Set the on-select callback
+    pub fn setOnSelect(self: *DropdownMenu, callback: *const fn (usize) void) void {
+        self.on_select = callback;
     }
 
     /// Draw implementation for DropdownMenu
@@ -466,7 +466,7 @@ test "dropdown menu selects item on click" {
             test_dropdown_selection = index;
         }
     }.call;
-    menu.setOnSelectionChanged(callback);
+    menu.setOnSelect(callback);
 
     const open_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
     try std.testing.expect(try menu.widget.handleEvent(open_event));
