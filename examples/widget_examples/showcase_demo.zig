@@ -10,13 +10,6 @@ const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
 
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
 
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
@@ -360,8 +353,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -372,7 +365,7 @@ pub fn main() !void {
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
 
-    var app = event.Application.init(memory_manager.getArenaAllocator());
+    var app = event.Application.initWithMemoryManager(&memory_manager);
     defer app.deinit();
 
     var root = try widget.Container.init(memory_manager.getWidgetPoolAllocator());
@@ -429,6 +422,7 @@ pub fn main() !void {
     try root.addChild(&ctx_menu.widget);
     try root.addChild(&image.widget);
     app.setRoot(root);
+    try app.enableAccessibility();
 
     var state = DemoState{
         .chart = chart,
@@ -454,6 +448,8 @@ pub fn main() !void {
         theme.Theme.highContrast(),
     };
     try applyTheme(themes[state.theme_index], chart, autocomplete, ctx_menu);
+    app.setStyleTheme(themes[state.theme_index]);
+    var last_theme_index = state.theme_index;
 
     try chart.addSeries("Throughput", &[_]f32{ 42, 48, 45, 51, 57, 64 }, null, null);
     try chart.addSeries("Latency", &[_]f32{ 120, 110, 130, 125, 135, 128 }, null, null);
@@ -467,7 +463,11 @@ pub fn main() !void {
     var running = true;
     while (running) {
         const current_theme = themes[state.theme_index];
-        try applyTheme(current_theme, chart, autocomplete, ctx_menu);
+        if (state.theme_index != last_theme_index) {
+            try applyTheme(current_theme, chart, autocomplete, ctx_menu);
+            app.setStyleTheme(current_theme);
+            last_theme_index = state.theme_index;
+        }
         ctx_menu.widget.setFocus(ctx_menu.open);
 
         const bg = current_theme.color(.background);

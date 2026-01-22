@@ -5,13 +5,15 @@ const zit = @import("zit");
 const render = zit.render;
 const layout = zit.layout;
 const memory = zit.memory;
+const theme = zit.widget.theme;
 
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
+var demo_status_label: ?*zit.widget.Label = null;
+var demo_status_buf: [96]u8 = undefined;
 
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
+fn updateStatus(comptime fmt: []const u8, args: anytype) void {
+    const label = demo_status_label orelse return;
+    const text = std.fmt.bufPrint(&demo_status_buf, fmt, args) catch return;
+    label.setText(text) catch {};
 }
 
 pub fn main() !void {
@@ -34,8 +36,8 @@ pub fn main() !void {
     // Initialize input handler with memory manager
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     // Enable raw mode
     try term.enableRawMode();
@@ -49,28 +51,34 @@ pub fn main() !void {
     }
 
     // Create widgets using the widget pool allocator
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const border = ui_theme.color(.border);
+
     var title = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Zit TUI Library");
     defer title.deinit();
     title.setAlignment(.center);
-    title.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    title.setTheme(ui_theme);
     title.setStyle(zit.render.Style.init(true, false, true));
 
     var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Click Me!");
     defer button.deinit();
-    button.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_green });
+    button.setTheme(ui_theme);
     button.setBorder(.rounded);
     button.setOnClick(onButtonPress);
 
     var checkbox = try zit.widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "Enable Feature");
     defer checkbox.deinit();
-    checkbox.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
+    checkbox.setTheme(ui_theme);
     checkbox.setOnChange(onCheckboxChange);
 
     var progress_bar = try zit.widget.ProgressBar.init(memory_manager.getWidgetPoolAllocator());
     defer progress_bar.deinit();
     progress_bar.setValue(30);
     progress_bar.setShowPercentage(true);
-    progress_bar.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_black }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    progress_bar.setTheme(ui_theme);
     progress_bar.setBorder(.single);
 
     var list = try zit.widget.List.init(memory_manager.getWidgetPoolAllocator());
@@ -80,13 +88,15 @@ pub fn main() !void {
     try list.addItem("Option 3");
     list.setSelectedIndex(0);
     list.setOnSelect(onListSelect);
-    list.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
+    list.setTheme(ui_theme);
     list.setBorder(.single);
 
     var status = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Press 'q' to quit");
     defer status.deinit();
     status.setAlignment(.center);
-    status.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    status.setTheme(ui_theme);
+    status.setColor(muted, bg);
+    demo_status_label = status;
 
     // Variables for dynamic updates
     var progress_value: u8 = 0;
@@ -105,10 +115,10 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, width, height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.blue }, render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', text, bg, render.Style{});
 
         // Draw border
-        renderer.drawBox(0, 0, width, height, render.BorderStyle.single, render.Color{ .named_color = render.NamedColor.bright_white }, render.Color{ .named_color = render.NamedColor.blue }, render.Style{});
+        renderer.drawBox(0, 0, width, height, render.BorderStyle.single, border, bg, render.Style{});
 
         // Create the window title
         const title_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, 2, 20, 1);
@@ -195,15 +205,15 @@ pub fn main() !void {
 
 // Button press handler
 fn onButtonPress() void {
-    std.debug.print("Button clicked!\n", .{});
+    updateStatus("Button clicked", .{});
 }
 
 // Checkbox change handler
 fn onCheckboxChange(checked: bool) void {
-    std.debug.print("Checkbox changed: {}\n", .{checked});
+    updateStatus("Checkbox: {s}", .{if (checked) "enabled" else "disabled"});
 }
 
 // List select handler
 fn onListSelect(index: usize, item: []const u8) void {
-    std.debug.print("List item selected: {}, {s}\n", .{ index, item });
+    updateStatus("Selected {d}: {s}", .{ index, item });
 }

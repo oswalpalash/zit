@@ -93,13 +93,6 @@ fn pickAccentForeground(accent: render.Color, palette: theme.Palette) render.Col
     return best;
 }
 
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
 
 fn jitter(random: std.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
     const delta = (random.float(f32) - 0.5) * spread;
@@ -134,8 +127,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(allocator, &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};

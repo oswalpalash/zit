@@ -62,13 +62,6 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     }
 }
 
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -86,8 +79,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -97,6 +90,12 @@ pub fn main() !void {
 
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
+
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const surface = ui_theme.color(.surface);
 
     var tree = try widget.TreeView.init(memory_manager.getWidgetPoolAllocator());
     defer tree.deinit();
@@ -112,17 +111,13 @@ pub fn main() !void {
     tree.nodes.items[scripts].expanded = true;
     tree.nodes.items[third_party].expanded = true;
     tree.nodes.items[notes].expanded = true;
-    try tree.setTheme(theme.Theme.dark());
+    try tree.setTheme(ui_theme);
     tree.widget.setFocus(true);
 
     var list = try widget.List.init(memory_manager.getWidgetPoolAllocator());
     defer list.deinit();
+    list.setTheme(ui_theme);
     list.border = .single;
-    list.fg = render.Color.named(render.NamedColor.bright_white);
-    list.bg = render.Color.named(render.NamedColor.black);
-    list.focused_bg = render.Color.named(render.NamedColor.blue);
-    list.focused_fg = render.Color.named(render.NamedColor.white);
-    list.selected_bg = render.Color.named(render.NamedColor.cyan);
     try loadFiles(list, "apps");
 
     var split = try widget.SplitPane.init(memory_manager.getWidgetPoolAllocator());
@@ -151,10 +146,10 @@ pub fn main() !void {
     var running = true;
     while (running) {
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', text, bg, render.Style{});
 
         const header = "File manager: arrows navigate, Tab switches focus, m/right-click opens menu";
-        renderer.drawSmartStr(1, 0, header, render.Color.named(render.NamedColor.bright_black), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.drawSmartStr(1, 0, header, muted, bg, render.Style{});
 
         if (renderer.back.height > 2 and renderer.back.width > 2) {
             const inner = layout.Rect.init(1, 1, renderer.back.width - 2, renderer.back.height - 2);
@@ -175,8 +170,8 @@ pub fn main() !void {
         // Status bar at the bottom for quick feedback.
         if (renderer.back.height > 0) {
             const status_y: u16 = renderer.back.height - 1;
-            renderer.fillRect(0, status_y, renderer.back.width, 1, ' ', render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{});
-            renderer.drawSmartStr(1, status_y, status.text, render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{});
+            renderer.fillRect(0, status_y, renderer.back.width, 1, ' ', text, surface, render.Style{});
+            renderer.drawSmartStr(1, status_y, status.text, text, surface, render.Style{});
         }
 
         try renderer.render();

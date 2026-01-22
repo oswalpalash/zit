@@ -5,14 +5,7 @@ const zit = @import("zit");
 const render = zit.render;
 const layout = zit.layout;
 const memory = zit.memory;
-
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
+const theme = zit.widget.theme;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -30,8 +23,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -42,10 +35,15 @@ pub fn main() !void {
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
 
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+
     var label = try zit.widget.Label.init(memory_manager.getWidgetPoolAllocator(), "Hello, Zit!");
     defer label.deinit();
     label.setAlignment(.center);
-    label.setColor(render.Color.named(render.NamedColor.bright_white), render.Color.named(render.NamedColor.blue));
+    label.setTheme(ui_theme);
     label.setStyle(render.Style.init(true, false, true));
 
     var running = true;
@@ -54,9 +52,9 @@ pub fn main() !void {
         const width = renderer.back.width;
         const height = renderer.back.height;
 
-        renderer.fillRect(0, 0, width, height, ' ', render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.blue), render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', text, bg, render.Style{});
         if (height > 2) {
-            renderer.drawSmartStr(1, 1, "Hello world: press q to quit", render.Color.named(render.NamedColor.bright_black), render.Color.named(render.NamedColor.blue), render.Style{});
+            renderer.drawSmartStr(1, 1, "Hello world: press q to quit", muted, bg, render.Style{});
         }
 
         const label_width: u16 = if (width > 20) 20 else width;

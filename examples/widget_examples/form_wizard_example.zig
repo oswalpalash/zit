@@ -7,14 +7,7 @@ const layout = zit.layout;
 const widget = zit.widget;
 const memory = zit.memory;
 const form = widget.form;
-
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
+const theme = zit.widget.theme;
 
 const Action = enum { none, next, back, submit };
 var pending_action: Action = .none;
@@ -110,8 +103,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -122,6 +115,12 @@ pub fn main() !void {
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
 
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const border = ui_theme.color(.border);
+
     // Step indicator across the top.
     var stepper = try widget.WizardStepper.init(memory_manager.getWidgetPoolAllocator(), &[_][]const u8{ "Account", "Preferences" });
     defer stepper.deinit();
@@ -129,23 +128,28 @@ pub fn main() !void {
     // Step 1 fields.
     var name = try widget.InputField.init(memory_manager.getWidgetPoolAllocator(), 48);
     defer name.deinit();
+    name.setTheme(ui_theme);
     name.placeholder = "Your full name";
     name.widget.setFocus(true);
 
     var email = try widget.InputField.init(memory_manager.getWidgetPoolAllocator(), 64);
     defer email.deinit();
+    email.setTheme(ui_theme);
     email.placeholder = "you@example.com";
 
     var agree = try widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "I agree to the terms");
     defer agree.deinit();
+    agree.setTheme(ui_theme);
 
     var next_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Next →");
     defer next_button.deinit();
+    next_button.setTheme(ui_theme);
     next_button.setOnClick(requestNext);
 
     // Step 2 fields.
     var newsletter = try widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "Send me the weekly digest");
     defer newsletter.deinit();
+    newsletter.setTheme(ui_theme);
     newsletter.checked = true;
 
     var updates = try widget.ToggleSwitch.init(memory_manager.getWidgetPoolAllocator(), "Product updates");
@@ -157,10 +161,12 @@ pub fn main() !void {
 
     var back_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "← Back");
     defer back_button.deinit();
+    back_button.setTheme(ui_theme);
     back_button.setOnClick(requestBack);
 
     var submit_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Submit");
     defer submit_button.deinit();
+    submit_button.setTheme(ui_theme);
     submit_button.setOnClick(requestSubmit);
     submit_button.setBorder(.double);
 
@@ -180,10 +186,10 @@ pub fn main() !void {
         stepper.setStep(step);
 
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', text, bg, render.Style{});
 
-        renderer.drawSmartStr(1, 0, "Form wizard: Tab/Shift+Tab to move, Enter to advance, q quits", render.Color.named(render.NamedColor.bright_black), render.Color.named(render.NamedColor.black), render.Style{});
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, render.Color.named(render.NamedColor.bright_blue), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.drawSmartStr(1, 0, "Form wizard: Tab/Shift+Tab to move, Enter to advance, q quits", muted, bg, render.Style{});
+        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, border, bg, render.Style{});
 
         if (renderer.back.width > 8 and renderer.back.height > 6) {
             const form_rect = layout.Rect.init(2, 2, renderer.back.width - 4, renderer.back.height - 4);
@@ -195,19 +201,19 @@ pub fn main() !void {
             const field_width: u16 = if (form_rect.width > 6) form_rect.width - 4 else form_rect.width;
 
             if (step == 0) {
-                renderer.drawStr(form_rect.x + 1, cursor_y, "Name", render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{ .bold = true });
+                renderer.drawStr(form_rect.x + 1, cursor_y, "Name", text, bg, render.Style{ .bold = true });
                 cursor_y += 1;
                 try name.widget.layout(layout.Rect.init(form_rect.x + 1, cursor_y, field_width, 3));
                 try name.widget.draw(&renderer);
                 cursor_y += 4;
 
-                renderer.drawStr(form_rect.x + 1, cursor_y, "Email", render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{ .bold = true });
+                renderer.drawStr(form_rect.x + 1, cursor_y, "Email", text, bg, render.Style{ .bold = true });
                 cursor_y += 1;
                 try email.widget.layout(layout.Rect.init(form_rect.x + 1, cursor_y, field_width, 3));
                 try email.widget.draw(&renderer);
                 cursor_y += 4;
 
-                renderer.drawStr(form_rect.x + 1, cursor_y, "Legal", render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{ .bold = true });
+                renderer.drawStr(form_rect.x + 1, cursor_y, "Legal", text, bg, render.Style{ .bold = true });
                 cursor_y += 1;
                 try agree.widget.layout(layout.Rect.init(form_rect.x + 2, cursor_y, field_width, 1));
                 try agree.widget.draw(&renderer);
@@ -216,7 +222,7 @@ pub fn main() !void {
                 try next_button.widget.layout(layout.Rect.init(form_rect.x + form_rect.width - 14, cursor_y, 12, 3));
                 try next_button.widget.draw(&renderer);
             } else {
-                renderer.drawStr(form_rect.x + 1, cursor_y, "Notifications", render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{ .bold = true });
+                renderer.drawStr(form_rect.x + 1, cursor_y, "Notifications", text, bg, render.Style{ .bold = true });
                 cursor_y += 1;
                 try newsletter.widget.layout(layout.Rect.init(form_rect.x + 2, cursor_y, field_width, 1));
                 try newsletter.widget.draw(&renderer);
@@ -226,7 +232,7 @@ pub fn main() !void {
                 try updates.widget.draw(&renderer);
                 cursor_y += 3;
 
-                renderer.drawStr(form_rect.x + 1, cursor_y, "Theme", render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{ .bold = true });
+                renderer.drawStr(form_rect.x + 1, cursor_y, "Theme", text, bg, render.Style{ .bold = true });
                 cursor_y += 1;
                 try theme_choice.widget.layout(layout.Rect.init(form_rect.x + 2, cursor_y, field_width, 3));
                 try theme_choice.widget.draw(&renderer);

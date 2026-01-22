@@ -27,6 +27,8 @@ pub fn main() !void {
 
     // Initialize input handler
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    try input_handler.enableMouse();
+    defer input_handler.disableMouse() catch {};
 
     // Clear screen
     try term.clear();
