@@ -1060,6 +1060,11 @@ pub const Renderer = struct {
         self.viewport = viewport.*;
     }
 
+    /// Fetch the active viewport, if any.
+    pub fn getViewport(self: *Renderer) ?Viewport {
+        return self.viewport;
+    }
+
     /// Clear any active viewport.
     pub fn clearViewport(self: *Renderer) void {
         self.viewport = null;
@@ -1149,41 +1154,101 @@ pub const Renderer = struct {
         return adjusted;
     }
 
-    fn checkedPoint(self: *Renderer, x: u16, y: u16) ?void {
+    fn mapPoint(self: *Renderer, x: u16, y: u16) ?struct { x: u16, y: u16 } {
+        var mapped_x: i32 = @intCast(x);
+        var mapped_y: i32 = @intCast(y);
+
+        if (self.viewport) |vp| {
+            mapped_x -= vp.offset_x;
+            mapped_y -= vp.offset_y;
+            if (mapped_x < 0 or mapped_y < 0) return null;
+
+            const resolved_x: u16 = @intCast(mapped_x);
+            const resolved_y: u16 = @intCast(mapped_y);
+            if (vp.width == 0 or vp.height == 0) return null;
+            const vp_max_x = saturatingAddU16(vp.x, vp.width);
+            const vp_max_y = saturatingAddU16(vp.y, vp.height);
+            if (resolved_x < vp.x or resolved_x >= vp_max_x) return null;
+            if (resolved_y < vp.y or resolved_y >= vp_max_y) return null;
+
+            if (resolved_x >= self.back.width or resolved_y >= self.back.height) return null;
+            return .{ .x = resolved_x, .y = resolved_y };
+        }
+
         if (x >= self.back.width or y >= self.back.height) return null;
+        return .{ .x = x, .y = y };
     }
 
-    fn checkedRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) ?struct { width: u16, height: u16 } {
+    fn checkedRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16) ?struct { x: u16, y: u16, width: u16, height: u16 } {
         if (width == 0 or height == 0) return null;
-        self.checkedPoint(x, y) orelse return null;
 
-        const clamped_width = @min(width, self.back.width - x);
-        const clamped_height = @min(height, self.back.height - y);
-        if (clamped_width == 0 or clamped_height == 0) return null;
+        var rect_x: i32 = @intCast(x);
+        var rect_y: i32 = @intCast(y);
+        var rect_w: i32 = @intCast(width);
+        var rect_h: i32 = @intCast(height);
 
-        return .{ .width = clamped_width, .height = clamped_height };
+        if (self.viewport) |vp| {
+            rect_x -= vp.offset_x;
+            rect_y -= vp.offset_y;
+
+            const vp_x: i32 = @intCast(vp.x);
+            const vp_y: i32 = @intCast(vp.y);
+            const vp_max_x: i32 = vp_x + @as(i32, @intCast(vp.width));
+            const vp_max_y: i32 = vp_y + @as(i32, @intCast(vp.height));
+            const rect_max_x = rect_x + rect_w;
+            const rect_max_y = rect_y + rect_h;
+            const clipped_x = @max(rect_x, vp_x);
+            const clipped_y = @max(rect_y, vp_y);
+            const clipped_max_x = @min(rect_max_x, vp_max_x);
+            const clipped_max_y = @min(rect_max_y, vp_max_y);
+            if (clipped_max_x <= clipped_x or clipped_max_y <= clipped_y) return null;
+            rect_x = clipped_x;
+            rect_y = clipped_y;
+            rect_w = clipped_max_x - clipped_x;
+            rect_h = clipped_max_y - clipped_y;
+        }
+
+        const buf_max_x: i32 = @intCast(self.back.width);
+        const buf_max_y: i32 = @intCast(self.back.height);
+        const rect_max_x = rect_x + rect_w;
+        const rect_max_y = rect_y + rect_h;
+        const clipped_x = @max(rect_x, 0);
+        const clipped_y = @max(rect_y, 0);
+        const clipped_max_x = @min(rect_max_x, buf_max_x);
+        const clipped_max_y = @min(rect_max_y, buf_max_y);
+        if (clipped_max_x <= clipped_x or clipped_max_y <= clipped_y) return null;
+
+        return .{
+            .x = @intCast(clipped_x),
+            .y = @intCast(clipped_y),
+            .width = @intCast(clipped_max_x - clipped_x),
+            .height = @intCast(clipped_max_y - clipped_y),
+        };
     }
 
     fn drawGrapheme(self: *Renderer, x: u16, y: u16, grapheme: text_metrics.Grapheme, fg: Color, bg: Color, style: Style) void {
-        if (x >= self.back.width or y >= self.back.height) {
-            std.debug.assert(false);
-            return;
-        }
+        const mapped = self.mapPoint(x, y) orelse return;
+        const resolved_x = mapped.x;
+        const resolved_y = mapped.y;
 
         const renderable = self.renderableGrapheme(grapheme);
         const width: u16 = @intCast(@min(@as(u16, renderable.width), @as(u16, 2)));
         if (width == 0) return;
-        if (std.math.add(u32, @as(u32, x), @as(u32, width) - 1) catch std.math.maxInt(u32) >= self.back.width) return;
+        const max_x = if (self.viewport) |vp|
+            @min(self.back.width, saturatingAddU16(vp.x, vp.width))
+        else
+            self.back.width;
+        if (std.math.add(u32, @as(u32, resolved_x), @as(u32, width) - 1) catch std.math.maxInt(u32) >= max_x) return;
 
         const cell = Cell.initGrapheme(renderable, fg, bg, style);
-        self.back.setCell(x, y, cell);
-        self.markDirtyRect(x, y, width, 1);
+        self.back.setCell(resolved_x, resolved_y, cell);
+        self.markDirtyRect(resolved_x, resolved_y, width, 1);
 
-        if (width > 1 and x + 1 < self.back.width) {
+        if (width > 1 and resolved_x + 1 < self.back.width and resolved_x + 1 < max_x) {
             var cont = cell;
             cont.continuation = true;
             cont.glyph.width = 0;
-            self.back.setCell(x + 1, y, cont);
+            self.back.setCell(resolved_x + 1, resolved_y, cont);
         }
     }
 
@@ -1203,9 +1268,10 @@ pub const Renderer = struct {
     fn drawFallbackBytes(self: *Renderer, x: u16, y: u16, text: []const u8, fg: Color, bg: Color, style: Style) void {
         var utf8_it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
         var cursor: u16 = 0;
+        const use_bounds = self.viewport == null;
         while (utf8_it.nextCodepoint()) |cp| {
             const target_x = std.math.add(u32, @as(u32, x), @as(u32, cursor)) catch break;
-            if (target_x >= self.back.width) break;
+            if (use_bounds and target_x >= self.back.width) break;
             self.drawGrapheme(@intCast(target_x), y, text_metrics.graphemeFromCodepoint(cp), fg, bg, style);
             cursor += 1;
         }
@@ -1213,13 +1279,11 @@ pub const Renderer = struct {
 
     /// Draw a character at the specified position with capability fallbacks
     pub fn drawChar(self: *Renderer, x: u16, y: u16, char: u21, fg: Color, bg: Color, style: Style) void {
-        self.checkedPoint(x, y) orelse return;
         self.drawGrapheme(x, y, text_metrics.graphemeFromCodepoint(char), fg, bg, style);
     }
 
     /// Draw a string at the specified position using the renderer's text direction.
     pub fn drawStr(self: *Renderer, x: u16, y: u16, str: []const u8, fg: Color, bg: Color, style: Style) void {
-        self.checkedPoint(x, y) orelse return;
         self.drawTextDir(x, y, str, self.text_direction, fg, bg, style);
     }
 
@@ -1230,18 +1294,20 @@ pub const Renderer = struct {
 
     /// Draw text with an explicit direction override.
     pub fn drawTextDir(self: *Renderer, x: u16, y: u16, str: []const u8, direction: TextDirection, fg: Color, bg: Color, style: Style) void {
-        self.checkedPoint(x, y) orelse return;
         self.prepareGraphemes(str, direction) orelse {
             self.drawFallbackBytes(x, y, str, fg, bg, style);
             return;
         };
 
         var cursor: u32 = x;
+        const use_bounds = self.viewport == null;
         for (self.grapheme_scratch.items) |g| {
             const width: u16 = @intCast(@min(@as(u16, g.width), @as(u16, 2)));
-            if (cursor >= self.back.width) break;
             if (width == 0) continue;
-            if (cursor + width > self.back.width) break;
+            if (use_bounds) {
+                if (cursor >= self.back.width) break;
+                if (cursor + width > self.back.width) break;
+            }
             self.drawGrapheme(@intCast(cursor), y, g, fg, bg, style);
             cursor += width;
         }
@@ -1365,8 +1431,8 @@ pub const Renderer = struct {
     pub fn fillRect(self: *Renderer, x: u16, y: u16, width: u16, height: u16, fill_char: u21, fg: Color, bg: Color, style: Style) void {
         const checked = self.checkedRect(x, y, width, height) orelse return;
         const cell = Cell.init(fill_char, fg, bg, style);
-        self.back.fillRect(x, y, checked.width, checked.height, cell);
-        self.markDirtyRect(x, y, checked.width, checked.height);
+        self.back.fillRect(checked.x, checked.y, checked.width, checked.height, cell);
+        self.markDirtyRect(checked.x, checked.y, checked.width, checked.height);
     }
 
     /// Fill a rectangular area with a linear gradient background
@@ -1378,32 +1444,44 @@ pub const Renderer = struct {
         const sorted = copyAndSortStops(scratch, stops) catch return;
         defer scratch.free(sorted);
 
-        const axis_len: u16 = if (direction == .horizontal) checked.width else checked.height;
+        const axis_len: u16 = if (direction == .horizontal) width else height;
         if (axis_len == 0) return;
+
+        const denom: u16 = if (axis_len <= 1) 1 else axis_len - 1;
+        const base_fg = Color.named(NamedColor.default);
+        const offset_x: i32 = if (self.viewport) |vp| vp.offset_x else 0;
+        const offset_y: i32 = if (self.viewport) |vp| vp.offset_y else 0;
 
         var idx: u16 = 0;
         while (idx < axis_len) : (idx += 1) {
-            const denom: u16 = if (axis_len <= 1) 1 else axis_len - 1;
             const t = @as(f32, @floatFromInt(idx)) / @as(f32, @floatFromInt(denom));
             const rgb = sampleGradientColor(sorted, t);
             const bg = Color.rgb(rgb.r, rgb.g, rgb.b);
 
             if (direction == .horizontal) {
+                const logical_x: i32 = @as(i32, @intCast(x)) + @as(i32, idx);
+                const mapped_x: i32 = logical_x - offset_x;
+                if (mapped_x < @as(i32, checked.x) or mapped_x >= @as(i32, checked.x) + @as(i32, checked.width)) continue;
                 var row: u16 = 0;
                 while (row < checked.height) : (row += 1) {
-                    const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, idx)) catch break);
-                    const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, row)) catch break);
-                    self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
+                    const target_x: u16 = @intCast(mapped_x);
+                    const target_y: u16 = @intCast(@as(i32, checked.y) + @as(i32, row));
+                    self.back.setCell(target_x, target_y, Cell.init(' ', base_fg, bg, style));
                 }
             } else {
+                const logical_y: i32 = @as(i32, @intCast(y)) + @as(i32, idx);
+                const mapped_y: i32 = logical_y - offset_y;
+                if (mapped_y < @as(i32, checked.y) or mapped_y >= @as(i32, checked.y) + @as(i32, checked.height)) continue;
                 var col: u16 = 0;
                 while (col < checked.width) : (col += 1) {
-                    const target_x: u16 = @intCast(std.math.add(u32, @as(u32, x), @as(u32, col)) catch break);
-                    const target_y: u16 = @intCast(std.math.add(u32, @as(u32, y), @as(u32, idx)) catch break);
-                    self.drawChar(target_x, target_y, ' ', Color.named(NamedColor.default), bg, style);
+                    const target_x: u16 = @intCast(@as(i32, checked.x) + @as(i32, col));
+                    const target_y: u16 = @intCast(mapped_y);
+                    self.back.setCell(target_x, target_y, Cell.init(' ', base_fg, bg, style));
                 }
             }
         }
+
+        self.markDirtyRect(checked.x, checked.y, checked.width, checked.height);
     }
 
     /// Set cursor position

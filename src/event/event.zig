@@ -523,6 +523,9 @@ pub const EventDispatcher = struct {
                 if (listener.listener(event)) {
                     handled = true;
                     event.handled = true;
+                    if (event.current_target) |target| {
+                        target.markDirty();
+                    }
                 }
 
                 // Stop if the event was handled or propagation was stopped
@@ -956,6 +959,10 @@ pub const FocusManager = struct {
         // Set new focus
         const previous = self.focused_widget;
         self.focused_widget = target_widget;
+        if (previous) |prev| {
+            prev.setFocus(false);
+        }
+        target_widget.setFocus(true);
 
         // Add to focus history
         try self.focus_history.append(self.allocator, target_widget);
