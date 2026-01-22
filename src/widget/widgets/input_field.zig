@@ -782,3 +782,40 @@ test "input field can surface real-time validation results" {
     const second_state = field.validationState().?;
     try std.testing.expect(second_state.*.isValid());
 }
+
+test "input field expands capacity for longer masks" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 4);
+    defer field.deinit();
+
+    try std.testing.expectEqual(@as(usize, 4), field.max_length);
+    try field.setMaskPattern("####-####-####");
+    try std.testing.expectEqual(@as(usize, 14), field.max_length);
+    try std.testing.expectEqual(field.max_length, field.text.len);
+
+    field.setText("123456789012");
+    try std.testing.expectEqualStrings("1234-5678-9012", field.getText());
+}
+
+test "input field clamps cursor beyond bounds during edits" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 8);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    field.setText("abc");
+    field.cursor = 99;
+
+    _ = try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, input.KeyModifiers{}) });
+    try std.testing.expectEqual(@as(usize, 2), field.cursor);
+
+    field.cursor = 99;
+    _ = try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DELETE, input.KeyModifiers{}) });
+    try std.testing.expectEqual(@as(usize, 3), field.cursor);
+    try std.testing.expectEqualStrings("abc", field.getText());
+
+    field.cursor = 99;
+    _ = try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, input.KeyModifiers{}) });
+    try std.testing.expectEqual(@as(usize, 2), field.cursor);
+    try std.testing.expectEqualStrings("ab", field.getText());
+}
