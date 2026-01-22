@@ -12,19 +12,32 @@ pub fn main() !void {
     var mock = try zit.testing.MockTerminal.init(allocator, 80, 24);
     defer mock.deinit();
 
-    // CPU and memory gauges.
-    var cpu = try zit.widget.Gauge.init(allocator);
+    // CPU and memory bars.
+    var cpu = try zit.widget.ProgressBar.init(allocator);
     defer cpu.deinit();
     cpu.setValue(72);
-    try cpu.widget.layout(zit.layout.Rect.init(1, 1, 30, 3));
+    cpu.setColors(
+        zit.render.Color.named(.bright_white),
+        zit.render.Color.named(.black),
+        zit.render.Color.named(.bright_red),
+        zit.render.Color.named(.black),
+    );
+    try cpu.widget.layout(zit.layout.Rect.init(6, 1, 32, 1));
     try cpu.widget.draw(&mock.renderer);
+    mock.renderer.drawStr(1, 1, "CPU", zit.render.Color.named(.bright_white), zit.render.Color.named(.default), zit.render.Style{});
 
-    var mem = try zit.widget.Gauge.init(allocator);
+    var mem = try zit.widget.ProgressBar.init(allocator);
     defer mem.deinit();
     mem.setValue(48);
-    mem.fill = zit.render.Color.named(.magenta);
-    try mem.widget.layout(zit.layout.Rect.init(35, 1, 30, 3));
+    mem.setColors(
+        zit.render.Color.named(.bright_white),
+        zit.render.Color.named(.black),
+        zit.render.Color.named(.bright_cyan),
+        zit.render.Color.named(.black),
+    );
+    try mem.widget.layout(zit.layout.Rect.init(6, 2, 32, 1));
     try mem.widget.draw(&mock.renderer);
+    mock.renderer.drawStr(1, 2, "MEM", zit.render.Color.named(.bright_white), zit.render.Color.named(.default), zit.render.Style{});
 
     // Process table.
     var table = try zit.widget.Table.init(allocator);
@@ -42,13 +55,31 @@ pub fn main() !void {
         .{ "331", "root", "01.2", "00.8", "sshd: keepalive" },
         .{ "72", "palash", "00.3", "00.5", "htop-clone" },
     };
-    for (rows) |row| {
+    for (rows, 0..) |row, idx| {
         try table.addRow(&row);
+        const cpu_value = std.fmt.parseFloat(f32, row[2]) catch 0;
+        if (cpu_value >= 20.0) {
+            try table.setCell(idx, 2, row[2], zit.render.Color.named(.bright_red), null);
+        }
     }
     table.show_grid = false;
-    table.border = .rounded;
+    table.setShowHeaders(true);
+    table.setBorder(.none);
     table.selected_row = 0;
-    try table.widget.layout(zit.layout.Rect.init(1, 5, 78, 15));
+
+    const table_frame = zit.layout.Rect.init(1, 4, 78, 16);
+    mock.renderer.drawBox(
+        table_frame.x,
+        table_frame.y,
+        table_frame.width,
+        table_frame.height,
+        .rounded,
+        zit.render.Color.named(.bright_black),
+        zit.render.Color.named(.black),
+        zit.render.Style{},
+    );
+
+    try table.widget.layout(zit.layout.Rect.init(2, 5, 76, 14));
     try table.widget.draw(&mock.renderer);
 
     var status = try zit.widget.StatusBar.init(allocator);

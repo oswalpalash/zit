@@ -12,19 +12,30 @@ pub fn main() !void {
     var mock = try zit.testing.MockTerminal.init(allocator, 80, 20);
     defer mock.deinit();
 
-    // Paint editor background and a few lines of sample text.
+    // Paint editor background and syntax-highlighted text.
     mock.renderer.fillRect(0, 0, 80, 16, ' ', zit.render.Color.named(.bright_white), zit.render.Color.named(.black), zit.render.Style{});
-    const lines = [_][]const u8{
-        "fn main() !void {",
-        "    var app = try zit.quickstart.renderText(\"Hello\", .{});",
-        "    _ = app;",
-        "}",
-        "",
-        "// Press : to open the palette",
-    };
-    for (lines, 0..) |line, idx| {
-        mock.renderer.drawStr(2, @intCast(idx + 1), line, zit.render.Color.named(.bright_white), zit.render.Color.named(.black), zit.render.Style{});
-    }
+    var highlighter = try zit.widget.SyntaxHighlighter.init(allocator);
+    defer highlighter.deinit();
+    highlighter.border = .none;
+    highlighter.setLanguage(.zig);
+    highlighter.setColors(
+        zit.render.Color.named(.bright_white),
+        zit.render.Color.named(.black),
+        zit.render.Color.named(.bright_cyan),
+        zit.render.Color.named(.bright_yellow),
+        zit.render.Color.named(.bright_black),
+        zit.render.Color.named(.magenta),
+    );
+    try highlighter.setCode(
+        \\fn main() !void {
+        \\    var app = try zit.quickstart.renderText("Hello", .{});
+        \\    _ = app;
+        \\}
+        \\
+        \\// Press : to open the palette
+    );
+    try highlighter.widget.layout(zit.layout.Rect.init(2, 1, 76, 14));
+    try highlighter.widget.draw(&mock.renderer);
 
     var palette = try zit.widget.CommandPalette.init(allocator, &[_][]const u8{
         "Save file",
@@ -36,7 +47,18 @@ pub fn main() !void {
     defer palette.deinit();
     palette.setQuery(":");
     palette.selected = 3;
-    try palette.widget.layout(zit.layout.Rect.init(10, 6, 60, 8));
+    const palette_rect = zit.layout.Rect.init(10, 7, 60, 8);
+    mock.renderer.fillRect(
+        palette_rect.x,
+        palette_rect.y,
+        palette_rect.width,
+        palette_rect.height,
+        ' ',
+        zit.render.Color.named(.bright_white),
+        zit.render.Color.named(.black),
+        zit.render.Style{},
+    );
+    try palette.widget.layout(palette_rect);
     try palette.widget.draw(&mock.renderer);
 
     var status = try zit.widget.StatusBar.init(allocator);
