@@ -2379,6 +2379,88 @@ pub const Application = struct {
     }
 };
 
+test "fromInputEvent converts key events with modifiers" {
+    const mods = input.KeyModifiers.init(true, false, true);
+    const input_event = input.Event{ .key = input.KeyEvent.init('k', mods) };
+    const event = fromInputEvent(input_event, null);
+
+    try std.testing.expectEqual(EventType.key_press, event.type);
+    try std.testing.expect(event.target == null);
+    try std.testing.expectEqual(@as(u21, 'k'), event.data.key_press.key);
+    try std.testing.expectEqual(mods, event.data.key_press.modifiers);
+    try std.testing.expectEqual(@as(u32, 0), event.data.key_press.raw);
+}
+
+test "fromInputEvent converts mouse press/release/move" {
+    const press_input = input.Event{ .mouse = input.MouseEvent.init(.press, 10, 20, 1, 0) };
+    const press_event = fromInputEvent(press_input, null);
+    try std.testing.expectEqual(EventType.mouse_press, press_event.type);
+    try std.testing.expectEqual(@as(u16, 10), press_event.data.mouse_press.x);
+    try std.testing.expectEqual(@as(u16, 20), press_event.data.mouse_press.y);
+    try std.testing.expectEqual(@as(u8, 1), press_event.data.mouse_press.button);
+    try std.testing.expectEqual(@as(u8, 1), press_event.data.mouse_press.clicks);
+    try std.testing.expectEqual(input.KeyModifiers{}, press_event.data.mouse_press.modifiers);
+
+    const release_input = input.Event{ .mouse = input.MouseEvent.init(.release, 11, 21, 2, 0) };
+    const release_event = fromInputEvent(release_input, null);
+    try std.testing.expectEqual(EventType.mouse_release, release_event.type);
+    try std.testing.expectEqual(@as(u16, 11), release_event.data.mouse_release.x);
+    try std.testing.expectEqual(@as(u16, 21), release_event.data.mouse_release.y);
+    try std.testing.expectEqual(@as(u8, 2), release_event.data.mouse_release.button);
+    try std.testing.expectEqual(@as(u8, 1), release_event.data.mouse_release.clicks);
+    try std.testing.expectEqual(input.KeyModifiers{}, release_event.data.mouse_release.modifiers);
+
+    const move_input = input.Event{ .mouse = input.MouseEvent.init(.move, 12, 22, 3, 0) };
+    const move_event = fromInputEvent(move_input, null);
+    try std.testing.expectEqual(EventType.mouse_move, move_event.type);
+    try std.testing.expectEqual(@as(u16, 12), move_event.data.mouse_move.x);
+    try std.testing.expectEqual(@as(u16, 22), move_event.data.mouse_move.y);
+    try std.testing.expectEqual(@as(u8, 3), move_event.data.mouse_move.button);
+    try std.testing.expectEqual(@as(u8, 0), move_event.data.mouse_move.clicks);
+    try std.testing.expectEqual(input.KeyModifiers{}, move_event.data.mouse_move.modifiers);
+}
+
+test "fromInputEvent converts mouse wheel scroll events" {
+    const up_input = input.Event{ .mouse = input.MouseEvent.init(.scroll_up, 5, 6, 0, -200) };
+    const up_event = fromInputEvent(up_input, null);
+    try std.testing.expectEqual(EventType.mouse_wheel, up_event.type);
+    try std.testing.expectEqual(@as(u16, 5), up_event.data.mouse_wheel.x);
+    try std.testing.expectEqual(@as(u16, 6), up_event.data.mouse_wheel.y);
+    try std.testing.expectEqual(@as(i8, 0), up_event.data.mouse_wheel.dx);
+    try std.testing.expectEqual(@as(i8, -127), up_event.data.mouse_wheel.dy);
+    try std.testing.expectEqual(input.KeyModifiers{}, up_event.data.mouse_wheel.modifiers);
+
+    const down_input = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 7, 8, 0, 200) };
+    const down_event = fromInputEvent(down_input, null);
+    try std.testing.expectEqual(EventType.mouse_wheel, down_event.type);
+    try std.testing.expectEqual(@as(u16, 7), down_event.data.mouse_wheel.x);
+    try std.testing.expectEqual(@as(u16, 8), down_event.data.mouse_wheel.y);
+    try std.testing.expectEqual(@as(i8, 0), down_event.data.mouse_wheel.dx);
+    try std.testing.expectEqual(@as(i8, 127), down_event.data.mouse_wheel.dy);
+    try std.testing.expectEqual(input.KeyModifiers{}, down_event.data.mouse_wheel.modifiers);
+}
+
+test "fromInputEvent converts resize events" {
+    const input_event = input.Event{ .resize = input.ResizeEvent.init(80, 24) };
+    const event = fromInputEvent(input_event, null);
+
+    try std.testing.expectEqual(EventType.resize, event.type);
+    try std.testing.expectEqual(@as(u16, 80), event.data.resize.width);
+    try std.testing.expectEqual(@as(u16, 24), event.data.resize.height);
+}
+
+test "fromInputEvent converts unknown events to custom" {
+    const input_event = input.Event{ .unknown = {} };
+    const event = fromInputEvent(input_event, null);
+
+    try std.testing.expectEqual(EventType.custom, event.type);
+    try std.testing.expectEqual(@as(u32, 0), event.data.custom.id);
+    try std.testing.expect(event.data.custom.data == null);
+    try std.testing.expect(event.data.custom.destructor == null);
+    try std.testing.expectEqualStrings("input.unknown", event.data.custom.type_name.?);
+    try std.testing.expect(event.data.custom.filter_fn == null);
+}
+
 test "background tasks emit completion events" {
     const alloc = std.testing.allocator;
     var app = Application.init(alloc);
