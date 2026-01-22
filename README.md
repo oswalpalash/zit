@@ -189,10 +189,41 @@ pub fn main() !void {
 ```
 
 ## Examples, Docs, and Benchmarks
-- Widget tours: `zig build button-example`, `zig build table-example`, `zig build file-browser-example`, `zig build system-monitor-example`, `zig build form-wizard-example`, `zig build notifications-example`.
-- Realistic snapshots: `zig build htop-clone`, `zig build file-manager`, `zig build text-editor`, `zig build dashboard-demo`.
-- Benchmarks: `zig build bench` (render throughput).
-- Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
+Run everything from the repo root (each command builds and launches the example):
+
+Quick starts
+- `zig build hello-world` (`examples/hello_world.zig`): five-line alternate-screen loop with raw-mode input and a centered label.
+- `zig build demo` (`examples/demo.zig`): interactive sampler with buttons, checkbox, progress bar, list navigation, and animated status updates.
+
+System checks
+- `zig build terminal-test` (`examples/terminal_test.zig`): verify terminal capabilities, resize handling, and cursor control.
+- `zig build input-test` (`examples/input_test.zig`): stream key and mouse events to the screen to confirm input wiring.
+- `zig build render-test` (`examples/render_test.zig`): exercise color, style, and box drawing primitives.
+- `zig build layout-test` (`examples/layout_test.zig`): lay out widgets and layout primitives to validate sizing math.
+- `zig build widget-test` (`examples/widget_test.zig`): composite widget smoke test that renders a basic UI frame.
+
+Widget gallery
+- `zig build button-example` (`examples/widget_examples/button_example.zig`): focused button interactions and styling tweaks.
+- `zig build dashboard-example` (`examples/widget_examples/dashboard_example.zig`): compact dashboard with gauges, charts, and status blocks.
+- `zig build notifications-example` (`examples/widget_examples/notifications_example.zig`): toast and notification manager behavior.
+- `zig build table-example` (`examples/widget_examples/table_example.zig`): sortable/searchable table with keyboard navigation.
+- `zig build file-browser-example` (`examples/widget_examples/file_browser_example.zig`): file browser widget with typeahead navigation.
+- `zig build file-manager-example` (`examples/widget_examples/file_manager_example.zig`): split-pane file manager (tree + list) interactions.
+- `zig build form-wizard-example` (`examples/widget_examples/form_wizard_example.zig`): multi-step form with validation feedback.
+- `zig build system-monitor-example` (`examples/widget_examples/system_monitor_example.zig`): live metrics dashboard with charts and gauges.
+- `zig build widget-showcase` (`examples/widget_examples/showcase_demo.zig`): everything-in-one showcase to explore most widgets in one place.
+
+Real-world snapshots
+- `zig build htop-clone` (`examples/realworld/htop_clone.zig`): htop-inspired dashboard rendering.
+- `zig build file-manager` (`examples/realworld/file_manager.zig`): single-shot render of a file manager layout.
+- `zig build text-editor` (`examples/realworld/text_editor.zig`): text editor frame with status bars and gutters.
+- `zig build dashboard-demo` (`examples/realworld/dashboard_demo.zig`): compact monitoring dashboard composed of core widgets.
+
+Benchmarks
+- `zig build render-bench` (`examples/benchmarks/render_bench.zig`): micro-benchmark for renderer throughput.
+- `zig build bench` (`examples/benchmarks/bench_suite.zig`): suite covering layout, widgets, and input decoding costs.
+
+Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.

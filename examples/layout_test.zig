@@ -17,12 +17,8 @@ pub fn main() !void {
     var term = try zit.terminal.init(memory_manager.getArenaAllocator());
     defer term.deinit() catch {};
 
-    // Get terminal size
-    const width = term.width;
-    const height = term.height;
-
     // Initialize renderer with memory manager
-    var renderer = try zit.render.Renderer.init(memory_manager.getArenaAllocator(), width, height);
+    var renderer = try zit.render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
     defer renderer.deinit();
 
     // Enable raw mode
@@ -48,6 +44,8 @@ pub fn main() !void {
         const title = "Zit Layout Test";
         // Safely calculate centered position
         const title_len = @as(u16, @intCast(title.len));
+        const width = renderer.back.width;
+        const height = renderer.back.height;
         const title_x = if (width > title_len)
             (width - title_len) / 2
         else
@@ -63,7 +61,7 @@ pub fn main() !void {
 
         // Layout and render the example
         const layout_height = if (height > 3) height - 3 else 0;
-        const layout_rect = zit.layout.Rect.init(0, 1, layout_height / 3, width / 2);
+        const layout_rect = zit.layout.Rect.init(0, 1, width, layout_height);
         layout_example.render(&renderer, layout_rect);
 
         // Render to screen

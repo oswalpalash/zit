@@ -2,6 +2,18 @@
 
 const std = @import("std");
 const zit = @import("zit");
+const theme = zit.widget.theme;
+
+const TableNotice = struct {
+    buffer: [120]u8 = undefined,
+    text: []const u8 = "Last selection: none",
+};
+
+var table_notice = TableNotice{};
+
+fn onRowSelect(idx: usize) void {
+    table_notice.text = std.fmt.bufPrint(&table_notice.buffer, "Last selection: row {d}", .{idx}) catch table_notice.text;
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -22,14 +34,12 @@ pub fn main() !void {
     table.widget.focused = true;
     table.setShowHeaders(true);
     table.setBorder(.single);
-    table.setHeaderColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.bright_white },
-    );
-    table.setSelectedColors(
-        zit.render.Color{ .named_color = zit.render.NamedColor.black },
-        zit.render.Color{ .named_color = zit.render.NamedColor.cyan },
-    );
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const surface = ui_theme.color(.surface);
+    table.setTheme(ui_theme);
 
     try table.addColumn("Service", 18, true);
     try table.addColumn("Status", 10, true);
@@ -42,12 +52,7 @@ pub fn main() !void {
     try table.addRow(&.{ "Search", "Healthy", "Evan" });
     table.setSelectedRow(0);
 
-    const onSelectCtx = struct {
-        fn logSelection(idx: usize) void {
-            std.debug.print("Selected row {d}\n", .{idx});
-        }
-    };
-    table.setOnRowSelect(onSelectCtx.logSelection);
+    table.setOnRowSelect(onRowSelect);
 
     try term.enableRawMode();
     try term.hideCursor();
@@ -61,29 +66,32 @@ pub fn main() !void {
     while (running) {
         renderer.back.clear();
 
-        // Fill the background and show a one-line hint.
-        renderer.fillRect(0, 0, term.width, term.height, ' ', zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Style{});
-        const hint = "Table demo: type to jump rows, arrows/page navigate, Enter selects, q quits";
-        const hint_slice = hint[0..@min(hint.len, @as(usize, term.width))];
-        renderer.drawStr(0, 0, hint_slice, zit.render.Color{ .named_color = zit.render.NamedColor.bright_black }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Style{});
+        const width = renderer.back.width;
+        const height = renderer.back.height;
 
-        const table_height: u16 = if (term.height > 2) term.height - 2 else term.height;
+        // Fill the background and show a one-line hint.
+        renderer.fillRect(0, 0, width, height, ' ', text, bg, zit.render.Style{});
+        const hint = "Table demo: type to jump rows, arrows/page navigate, Enter selects, q quits";
+        const hint_slice = hint[0..@min(hint.len, @as(usize, width))];
+        renderer.drawStr(0, 0, hint_slice, muted, bg, zit.render.Style{});
+
+        const table_height: u16 = if (height > 2) height - 2 else height;
         if (table_height > 0) {
-            try table.widget.layout(zit.layout.Rect.init(0, 1, term.width, table_height));
+            try table.widget.layout(zit.layout.Rect.init(0, 1, width, table_height));
             try table.widget.draw(&renderer);
         }
 
         // Status line with current selection.
-        if (term.height > 0 and term.width > 0) {
-            const status_y: u16 = term.height - 1;
+        if (height > 0 and width > 0) {
+            const status_y: u16 = height - 1;
             var status_buf: [160]u8 = undefined;
             const selected = if (table.selected_row) |idx|
                 table.rows.items[idx].items[0].text
             else
                 "None";
-            const status = std.fmt.bufPrint(&status_buf, "Selected: {s}", .{selected}) catch "Selected: ?";
-            const status_slice = status[0..@min(status.len, @as(usize, term.width - 1))];
-            renderer.drawStr(1, status_y, status_slice, zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Style{});
+            const status = std.fmt.bufPrint(&status_buf, "Selected: {s} | {s}", .{ selected, table_notice.text }) catch "Selected: ?";
+            const status_slice = status[0..@min(status.len, @as(usize, width - 1))];
+            renderer.drawStr(1, status_y, status_slice, text, surface, zit.render.Style{});
         }
 
         try renderer.render();
@@ -99,8 +107,6 @@ pub fn main() !void {
                     }
                 },
                 .resize => |resize| {
-                    term.width = resize.width;
-                    term.height = resize.height;
                     try renderer.resize(resize.width, resize.height);
                 },
                 else => {

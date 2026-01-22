@@ -85,9 +85,13 @@ pub fn main() !void {
     var dark_mode = true;
 
     while (running) {
+        const current_theme = if (dark_mode) theme.Theme.dark() else theme.Theme.light();
+        const bg = current_theme.color(.background);
+        const text = current_theme.color(.text);
+        const border = current_theme.color(.border);
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', text, bg, render.Style{});
+        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, border, bg, render.Style{});
 
         const usable_height: u16 = if (renderer.back.height > 3) renderer.back.height - 2 else renderer.back.height;
         const usable_width: u16 = if (renderer.back.width > 2) renderer.back.width - 2 else renderer.back.width;

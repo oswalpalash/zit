@@ -6,14 +6,7 @@ const render = zit.render;
 const layout = zit.layout;
 const widget = zit.widget;
 const memory = zit.memory;
-
-fn enterAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049h");
-}
-
-fn exitAlternateScreen() !void {
-    try std.fs.File.stdout().writeAll("\x1b[?1049l");
-}
+const theme = zit.widget.theme;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -31,8 +24,8 @@ pub fn main() !void {
 
     var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
 
-    try enterAlternateScreen();
-    defer exitAlternateScreen() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -43,18 +36,32 @@ pub fn main() !void {
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
 
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const surface = ui_theme.color(.surface);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const border = ui_theme.color(.border);
+    const accent = ui_theme.color(.accent);
+
     var menu = try widget.MenuBar.init(memory_manager.getWidgetPoolAllocator());
     defer menu.deinit();
     try menu.addItem("File", null);
     try menu.addItem("Help", null);
+    menu.fg = text;
+    menu.bg = surface;
+    menu.active_fg = bg;
+    menu.active_bg = accent;
 
     var toasts = try widget.ToastManager.init(memory_manager.getWidgetPoolAllocator());
     defer toasts.deinit();
+    toasts.fg = text;
     try toasts.push("Saved", .success, 48);
     try toasts.push("Syncing…", .info, 96);
 
     var popup = try widget.Popup.init(memory_manager.getWidgetPoolAllocator(), "Press q to quit");
     defer popup.deinit();
+    popup.setColors(text, accent);
 
     var canvas = try widget.Canvas.init(memory_manager.getWidgetPoolAllocator(), 20, 6);
     defer canvas.deinit();
@@ -74,8 +81,8 @@ pub fn main() !void {
         const width = renderer.back.width;
         const height = renderer.back.height;
 
-        renderer.fillRect(0, 0, width, height, ' ', render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
-        renderer.drawBox(0, 0, width, height, render.BorderStyle.single, render.Color.named(render.NamedColor.cyan), render.Color.named(render.NamedColor.black), render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', text, bg, render.Style{});
+        renderer.drawBox(0, 0, width, height, render.BorderStyle.single, border, bg, render.Style{});
 
         try menu.widget.layout(layout.Rect.init(0, 0, width, 1));
         try menu.widget.draw(&renderer);
@@ -103,7 +110,7 @@ pub fn main() !void {
         }
 
         if (height > 0) {
-            renderer.drawSmartStr(2, height - 1, "Notifications demo: n = new toast, q = quit", render.Color.named(render.NamedColor.bright_black), render.Color.named(render.NamedColor.black), render.Style{});
+            renderer.drawSmartStr(2, height - 1, "Notifications demo: n = new toast, q = quit", muted, bg, render.Style{});
         }
 
         try renderer.render();

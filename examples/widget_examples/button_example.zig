@@ -11,8 +11,17 @@ const layout = zit.layout;
 const memory = zit.memory;
 const widget = zit.widget;
 const term = zit.terminal;
+const theme = zit.widget.theme;
 
 var counter_state: u32 = 0;
+var button_status_label: ?*Label = null;
+var button_status_buf: [96]u8 = undefined;
+
+fn setStatus(comptime fmt: []const u8, args: anytype) void {
+    const label = button_status_label orelse return;
+    const text = std.fmt.bufPrint(&button_status_buf, fmt, args) catch return;
+    label.setText(text) catch {};
+}
 
 const LayoutWidget = struct {
     widget: widget.Widget,
@@ -79,10 +88,12 @@ pub fn main() !void {
     // Create a root container using widget pool allocator
     var root = try Container.init(memory_manager.getWidgetPoolAllocator());
     defer root.deinit();
-    root.setColors(
-        render.Color{ .named_color = render.NamedColor.black },
-        render.Color{ .named_color = render.NamedColor.white },
-    );
+    const ui_theme = theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const fg = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const accent = ui_theme.color(.accent);
+    root.setTheme(ui_theme);
     root.setBorder(.single);
 
     // Create a renderer with memory manager
@@ -92,10 +103,8 @@ pub fn main() !void {
     // Create a title label using widget pool allocator
     const title = try Label.init(memory_manager.getWidgetPoolAllocator(), "Zit Button Widget Demo");
     defer title.deinit();
-    title.setColor(
-        render.Color{ .named_color = render.NamedColor.yellow },
-        render.Color{ .named_color = render.NamedColor.black },
-    );
+    title.setTheme(ui_theme);
+    title.setStyle(render.Style{ .bold = true });
     try root.addChild(@as(*zit.widget.Widget, @ptrCast(title)));
 
     // Create a flex layout for buttons
@@ -109,18 +118,17 @@ pub fn main() !void {
     // Section 1: Basic Buttons
     const basic_label = try Label.init(memory_manager.getWidgetPoolAllocator(), "Basic Buttons");
     defer basic_label.deinit();
-    basic_label.setColor(
-        render.Color{ .named_color = render.NamedColor.cyan },
-        render.Color{ .named_color = render.NamedColor.black },
-    );
+    basic_label.setTheme(ui_theme);
+    basic_label.setColor(accent, bg);
     try flex_layout.addChild(layout.FlexChild.init(basic_label.widget.asLayoutElement(), 0));
 
     // Standard button
     const standard_button = try Button.init(memory_manager.getWidgetPoolAllocator(), "Standard Button");
     defer standard_button.deinit();
+    standard_button.setTheme(ui_theme);
     standard_button.setOnClick(struct {
         fn callback() void {
-            std.debug.print("Standard button pressed\n", .{});
+            setStatus("Standard button pressed", .{});
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(standard_button.widget.asLayoutElement(), 0));
@@ -134,10 +142,8 @@ pub fn main() !void {
     // Section 2: Styled Buttons
     const styled_label = try Label.init(memory_manager.getWidgetPoolAllocator(), "Styled Buttons");
     defer styled_label.deinit();
-    styled_label.setColor(
-        render.Color{ .named_color = render.NamedColor.cyan },
-        render.Color{ .named_color = render.NamedColor.black },
-    );
+    styled_label.setTheme(ui_theme);
+    styled_label.setColor(accent, bg);
     try flex_layout.addChild(layout.FlexChild.init(styled_label.widget.asLayoutElement(), 0));
 
     // Colored button
@@ -151,7 +157,7 @@ pub fn main() !void {
     );
     colored_button.setOnClick(struct {
         fn callback() void {
-            std.debug.print("Colored button pressed\n", .{});
+            setStatus("Colored button pressed", .{});
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(colored_button.widget.asLayoutElement(), 0));
@@ -167,7 +173,7 @@ pub fn main() !void {
     );
     highlight_button.setOnClick(struct {
         fn callback() void {
-            std.debug.print("Highlight button pressed\n", .{});
+            setStatus("Highlight button pressed", .{});
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(highlight_button.widget.asLayoutElement(), 0));
@@ -175,10 +181,8 @@ pub fn main() !void {
     // Section 3: Interactive Buttons
     const interactive_label = try Label.init(memory_manager.getWidgetPoolAllocator(), "Interactive Buttons");
     defer interactive_label.deinit();
-    interactive_label.setColor(
-        render.Color{ .named_color = render.NamedColor.cyan },
-        render.Color{ .named_color = render.NamedColor.black },
-    );
+    interactive_label.setTheme(ui_theme);
+    interactive_label.setColor(accent, bg);
     try flex_layout.addChild(layout.FlexChild.init(interactive_label.widget.asLayoutElement(), 0));
 
     // Counter button
@@ -194,6 +198,7 @@ pub fn main() !void {
             counter_state += 1;
             const text = std.fmt.bufPrint(&counter_data.label_buf, "Counter: {}", .{counter_state}) catch return;
             counter_data.button.setText(text) catch {};
+            setStatus("Counter updated to {d}", .{counter_state});
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(counter_button.widget.asLayoutElement(), 0));
@@ -212,9 +217,18 @@ pub fn main() !void {
             toggle_data.state = !toggle_data.state;
             const text = std.fmt.bufPrint(&toggle_data.label_buf, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch return;
             toggle_data.button.setText(text) catch {};
+            setStatus("Toggle switched {s}", .{if (toggle_data.state) "On" else "Off"});
         }
     }.callback);
     try flex_layout.addChild(layout.FlexChild.init(toggle_button.widget.asLayoutElement(), 0));
+
+    const status_label = try Label.init(memory_manager.getWidgetPoolAllocator(), "Press buttons to see actions");
+    defer status_label.deinit();
+    status_label.setTheme(ui_theme);
+    status_label.setColor(muted, bg);
+    status_label.setAlignment(.center);
+    button_status_label = status_label;
+    try flex_layout.addChild(layout.FlexChild.init(status_label.widget.asLayoutElement(), 0));
 
     // Create a layout widget for the flex layout
     var layout_widget = LayoutWidget.init(flex_layout.asElement());
@@ -244,7 +258,7 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, width, height, ' ', render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.black }, render.Style{});
+        renderer.fillRect(0, 0, width, height, ' ', fg, bg, render.Style{});
 
         // Layout and render the root container
         try root.widget.layout(layout.Rect.init(0, 0, width, height));

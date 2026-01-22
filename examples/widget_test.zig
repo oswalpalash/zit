@@ -4,6 +4,15 @@ const std = @import("std");
 const zit = @import("zit");
 const widget_theme = zit.widget.theme;
 
+var widget_status_label: ?*zit.widget.Label = null;
+var widget_status_buf: [96]u8 = undefined;
+
+fn updateStatus(comptime fmt: []const u8, args: anytype) void {
+    const label = widget_status_label orelse return;
+    const text = std.fmt.bufPrint(&widget_status_buf, fmt, args) catch return;
+    label.setText(text) catch {};
+}
+
 pub fn main() !void {
     // Initialize allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -14,12 +23,8 @@ pub fn main() !void {
     var term = try zit.terminal.init(allocator);
     defer term.deinit() catch {};
 
-    // Get terminal size
-    const width = term.width;
-    const height = term.height;
-
     // Initialize renderer
-    var renderer = try zit.render.Renderer.init(allocator, width, height);
+    var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
 
     // Enable raw mode
@@ -30,12 +35,18 @@ pub fn main() !void {
     var input_handler = zit.input.InputHandler.init(allocator, &term);
     // Enable mouse tracking
     try input_handler.enableMouse();
+    defer input_handler.disableMouse() catch {};
 
     // Create a title label
     var title = try zit.widget.Label.init(allocator, "Widget Test - Press 'q' to quit, Tab to navigate");
     defer title.deinit();
     title.setAlignment(.center);
-    title.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    const ui_theme = widget_theme.Theme.dark();
+    const bg = ui_theme.color(.background);
+    const text = ui_theme.color(.text);
+    const muted = ui_theme.color(.muted);
+    const border = ui_theme.color(.border);
+    title.setTheme(ui_theme);
     title.setStyle(zit.render.Style.init(true, false, false));
 
     // Create a progress bar
@@ -43,7 +54,7 @@ pub fn main() !void {
     defer progress_bar.deinit();
     progress_bar.setValue(30);
     progress_bar.setShowPercentage(true);
-    progress_bar.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_black }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_black });
+    progress_bar.setTheme(ui_theme);
     progress_bar.setBorder(.single);
 
     // Create a dropdown menu
@@ -54,7 +65,7 @@ pub fn main() !void {
     try dropdown.addItem("Option 3", true, null);
     try dropdown.addItem("Long option that will be truncated", true, null);
     dropdown.setSelectedIndex(0);
-    dropdown.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
+    dropdown.setTheme(ui_theme);
 
     // Create a table
     var table = try zit.widget.Table.init(allocator);
@@ -64,7 +75,7 @@ pub fn main() !void {
     try table.addRow(&.{ "3", "Item with very long name", "300" });
     try table.addRow(&.{ "4", "Item 4", "400" });
     table.setSelectedRow(0);
-    table.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    table.setTheme(ui_theme);
     table.setBorder(.single);
 
     // Create a list
@@ -75,19 +86,21 @@ pub fn main() !void {
     try list.addItem("List Item 3 (longer item)");
     try list.addItem("List Item 4");
     list.setSelectedIndex(0);
-    list.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.cyan });
+    list.setTheme(ui_theme);
     list.setBorder(.single);
 
     // Create a status label
     var status = try zit.widget.Label.init(allocator, "Tab between widgets, Enter to interact");
     defer status.deinit();
     status.setAlignment(.center);
-    status.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    status.setTheme(ui_theme);
+    status.setColor(muted, bg);
+    widget_status_label = status;
 
     // Create a button to show modal dialog
     var modal_button = try zit.widget.Button.init(allocator, "Show Modal");
     defer modal_button.deinit();
-    modal_button.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_green });
+    modal_button.setTheme(ui_theme);
     modal_button.setBorder(.rounded);
 
     // Create a modal dialog
@@ -96,12 +109,13 @@ pub fn main() !void {
     modal.width = 40;
     modal.height = 10;
     try modal.setTitle("Modal Dialog");
+    modal.setTheme(ui_theme);
 
     // Create content for the modal
     var modal_content = try zit.widget.Label.init(allocator, "This is a modal dialog.\nPress Escape to close.");
     defer modal_content.deinit();
     modal_content.setAlignment(.center);
-    modal_content.setColor(zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue });
+    modal_content.setTheme(ui_theme);
     modal.setContent(&modal_content.widget);
 
     // Set modal button callback
@@ -180,10 +194,12 @@ pub fn main() !void {
         renderer.back.clear();
 
         // Fill the background
-        renderer.fillRect(0, 0, width, height, ' ', zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
+        const width = renderer.back.width;
+        const height = renderer.back.height;
+        renderer.fillRect(0, 0, width, height, ' ', text, bg, zit.render.Style{});
 
         // Draw border
-        renderer.drawBox(0, 0, width, height, zit.render.BorderStyle.single, zit.render.Color{ .named_color = zit.render.NamedColor.bright_white }, zit.render.Color{ .named_color = zit.render.NamedColor.blue }, zit.render.Style{});
+        renderer.drawBox(0, 0, width, height, zit.render.BorderStyle.single, border, bg, zit.render.Style{});
 
         // Draw the title
         const title_rect = zit.layout.Rect.init(1, 1, width - 2, 1);
@@ -342,15 +358,15 @@ fn showModal() void {
 
 // Dropdown selection handler
 fn onDropdownSelect(index: usize, text: []const u8) void {
-    std.debug.print("Selected option {d}: {s}\n", .{ index, text });
+    updateStatus("Dropdown {d}: {s}", .{ index, text });
 }
 
 // Table selection handler
 fn onTableSelect(index: usize) void {
-    std.debug.print("Selected table row: {d}\n", .{index});
+    updateStatus("Table row {d} selected", .{index});
 }
 
 // List selection handler
 fn onListSelect(index: usize, text: []const u8) void {
-    std.debug.print("Selected list item {d}: {s}\n", .{ index, text });
+    updateStatus("List {d}: {s}", .{ index, text });
 }

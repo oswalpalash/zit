@@ -26,6 +26,7 @@ pub fn main() !void {
 
     // Enable raw mode
     try term.enableRawMode();
+    defer term.disableRawMode() catch {};
     try writer.writeAll("Raw mode enabled. Press 'q' to quit.\n\n");
 
     // Demonstrate cursor movement and colors
