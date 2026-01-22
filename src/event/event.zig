@@ -137,6 +137,61 @@ pub const Event = struct {
     }
 };
 
+pub fn fromInputEvent(ie: input.Event, target: ?*widget.Widget) Event {
+    return switch (ie) {
+        .key => |key_event| Event.init(.key_press, target, .{ .key_press = .{
+            .key = key_event.key,
+            .modifiers = key_event.modifiers,
+            .raw = 0,
+        } }),
+        .mouse => |mouse_event| switch (mouse_event.action) {
+            .press => Event.init(.mouse_press, target, .{ .mouse_press = .{
+                .x = mouse_event.x,
+                .y = mouse_event.y,
+                .button = mouse_event.button,
+                .clicks = 1,
+                .modifiers = .{},
+            } }),
+            .release => Event.init(.mouse_release, target, .{ .mouse_release = .{
+                .x = mouse_event.x,
+                .y = mouse_event.y,
+                .button = mouse_event.button,
+                .clicks = 1,
+                .modifiers = .{},
+            } }),
+            .move => Event.init(.mouse_move, target, .{ .mouse_move = .{
+                .x = mouse_event.x,
+                .y = mouse_event.y,
+                .button = mouse_event.button,
+                .clicks = 0,
+                .modifiers = .{},
+            } }),
+            .scroll_up, .scroll_down => {
+                const clamped = std.math.clamp(mouse_event.scroll_delta, @as(i16, -127), @as(i16, 127));
+                const dy: i8 = @intCast(clamped);
+                return Event.init(.mouse_wheel, target, .{ .mouse_wheel = .{
+                    .x = mouse_event.x,
+                    .y = mouse_event.y,
+                    .dx = 0,
+                    .dy = dy,
+                    .modifiers = .{},
+                } });
+            },
+        },
+        .resize => |resize_event| Event.init(.resize, target, .{ .resize = .{
+            .width = resize_event.width,
+            .height = resize_event.height,
+        } }),
+        .unknown => Event.init(.custom, target, .{ .custom = .{
+            .id = 0,
+            .data = null,
+            .destructor = null,
+            .type_name = "input.unknown",
+            .filter_fn = null,
+        } }),
+    };
+}
+
 /// Key event data
 pub const KeyEventData = struct {
     /// Key code (unicode scalar or special key identifier)
