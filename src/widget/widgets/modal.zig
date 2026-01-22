@@ -76,6 +76,11 @@ pub const Modal = struct {
 
     /// Set the modal content
     pub fn setContent(self: *Modal, content: *Widget) void {
+        if (self.content) |current| {
+            if (current.parent == &self.widget) {
+                current.parent = null;
+            }
+        }
         self.content = content;
         content.parent = &self.widget;
     }
@@ -301,4 +306,22 @@ test "modal clamps to available bounds when empty" {
     try modal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
     try std.testing.expectEqual(@as(u16, 8), modal.widget.rect.width);
     try std.testing.expectEqual(@as(u16, 4), modal.widget.rect.height);
+}
+
+test "modal maintains parent linkage for content" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    var first = try @import("block.zig").Block.init(alloc);
+    defer first.deinit();
+    var second = try @import("block.zig").Block.init(alloc);
+    defer second.deinit();
+
+    modal.setContent(&first.widget);
+    try std.testing.expectEqual(&modal.widget, first.widget.parent.?);
+
+    modal.setContent(&second.widget);
+    try std.testing.expect(first.widget.parent == null);
+    try std.testing.expectEqual(&modal.widget, second.widget.parent.?);
 }

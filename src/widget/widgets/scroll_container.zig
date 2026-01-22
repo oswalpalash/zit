@@ -101,6 +101,11 @@ pub const ScrollContainer = struct {
 
     /// Set the content widget
     pub fn setContent(self: *ScrollContainer, content: *base.Widget) void {
+        if (self.content) |current| {
+            if (current.parent == &self.widget) {
+                current.parent = null;
+            }
+        }
         self.content = content;
         content.parent = &self.widget;
         self.updateContentSize();
@@ -608,6 +613,26 @@ test "scroll container init/deinit" {
 
     try std.testing.expect(container.h_scrollbar != null);
     try std.testing.expect(container.v_scrollbar != null);
+    try std.testing.expectEqual(&container.widget, container.h_scrollbar.?.widget.parent.?);
+    try std.testing.expectEqual(&container.widget, container.v_scrollbar.?.widget.parent.?);
+}
+
+test "scroll container maintains parent linkage for content" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    var first = try @import("block.zig").Block.init(alloc);
+    defer first.deinit();
+    var second = try @import("block.zig").Block.init(alloc);
+    defer second.deinit();
+
+    container.setContent(&first.widget);
+    try std.testing.expectEqual(&container.widget, first.widget.parent.?);
+
+    container.setContent(&second.widget);
+    try std.testing.expect(first.widget.parent == null);
+    try std.testing.expectEqual(&container.widget, second.widget.parent.?);
 }
 
 test "scroll container scrolls content with mouse wheel" {

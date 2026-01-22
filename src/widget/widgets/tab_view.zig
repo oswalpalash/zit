@@ -361,7 +361,13 @@ pub const TabView = struct {
     pub fn removeTab(self: *TabView, index: usize) void {
         if (index >= self.tabs.items.len) return;
         const old_active = self.active_tab;
-        self.allocator.free(self.tabs.items[index].title);
+        const removed = self.tabs.items[index];
+        if (removed.content) |content| {
+            if (content.parent == &self.widget) {
+                content.parent = null;
+            }
+        }
+        self.allocator.free(removed.title);
         _ = self.tabs.orderedRemove(index);
 
         if (self.tabs.items.len == 0) {
@@ -732,6 +738,24 @@ test "tab view links tab content to parent on add and load" {
     }
     tab_view.tabs.items[1].content = null;
     Lazy.built = null;
+}
+
+test "tab view clears parent when removing tabs" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+    tab_view.removeTab(0);
+
+    try std.testing.expect(a.widget.parent == null);
+    try std.testing.expectEqual(&tab_view.widget, b.widget.parent.?);
 }
 
 test "tab view tab bar keyboard navigation updates tabs" {
