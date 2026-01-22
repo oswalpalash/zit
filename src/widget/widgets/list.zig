@@ -857,3 +857,94 @@ test "list clears selection and ignores events when empty" {
     const handled = try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
 }
+
+test "list drag reorder updates item order and selection" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.setReorderable(true);
+    try list.addItem("a");
+    try list.addItem("b");
+    try list.addItem("c");
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 4, 3));
+
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) });
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 0, 2, 1, 0) });
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 0, 2, 1, 0) });
+
+    try std.testing.expectEqualStrings("b", list.items.items[0]);
+    try std.testing.expectEqualStrings("a", list.items.items[1]);
+    try std.testing.expectEqualStrings("c", list.items.items[2]);
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+    try std.testing.expect(!list.dragging);
+    try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
+}
+
+test "list accepts cross-list drops and moves items" {
+    const alloc = std.testing.allocator;
+    var source = try List.init(alloc);
+    defer source.deinit();
+    var target = try List.init(alloc);
+    defer target.deinit();
+
+    source.setReorderable(true);
+    try source.addItem("alpha");
+    try source.addItem("beta");
+    try target.addItem("one");
+
+    try source.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+    try target.widget.layout(layout_module.Rect.init(0, 4, 8, 4));
+
+    _ = try source.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) });
+    _ = try target.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 0, 4, 1, 0) });
+    _ = try source.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 0, 10, 1, 0) });
+
+    try std.testing.expectEqual(@as(usize, 1), source.items.items.len);
+    try std.testing.expectEqualStrings("beta", source.items.items[0]);
+    try std.testing.expectEqual(@as(usize, 2), target.items.items.len);
+    try std.testing.expectEqualStrings("alpha", target.items.items[0]);
+    try std.testing.expectEqualStrings("one", target.items.items[1]);
+    try std.testing.expect(!source.dragging);
+}
+
+test "list virtual provider samples preferred size within limit" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    const Provider = struct {
+        items: []const []const u8,
+        calls: usize = 0,
+        max_index: usize = 0,
+
+        fn count(ctx: ?*anyopaque) usize {
+            const self = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return self.items.len;
+        }
+
+        fn itemAt(index: usize, ctx: ?*anyopaque) []const u8 {
+            const self = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            self.calls += 1;
+            self.max_index = @max(self.max_index, index);
+            return self.items[index];
+        }
+    };
+
+    var provider_ctx = Provider{
+        .items = &.{ "tiny", "longerword12", "mid", "extraextraextra" },
+    };
+
+    list.virtual_sample_limit = 2;
+    list.useItemProvider(.{
+        .ctx = &provider_ctx,
+        .count = Provider.count,
+        .item_at = Provider.itemAt,
+    });
+
+    const size = try List.getPreferredSizeFn(@ptrCast(@alignCast(&list.widget)));
+    try std.testing.expectEqual(@as(u16, 12), size.width);
+    try std.testing.expectEqual(@as(usize, 2), provider_ctx.calls);
+    try std.testing.expectEqual(@as(usize, 1), provider_ctx.max_index);
+}
