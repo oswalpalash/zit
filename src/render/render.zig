@@ -1125,6 +1125,15 @@ pub const Renderer = struct {
         try self.output_batch.appendSlice(self.allocator, cursor_seq);
     }
 
+    fn ensureCursorAt(self: *Renderer, x: u16, y: u16, out_x: *?u16, out_y: *?u16) !void {
+        if (out_x.* != null and out_y.* != null and out_x.*.? == x and out_y.*.? == y) {
+            return;
+        }
+        try self.appendCursorMove(x, y);
+        out_x.* = x;
+        out_y.* = y;
+    }
+
     fn renderableGrapheme(self: *Renderer, g: text_metrics.Grapheme) text_metrics.Grapheme {
         if (!self.capabilities.unicode or (!self.capabilities.emoji and g.has_emoji)) {
             const fallback_cp = self.capabilities.bestChar(g.firstCodepoint());
@@ -1435,6 +1444,8 @@ pub const Renderer = struct {
         var current_fg: ?Color = null;
         var current_bg: ?Color = null;
         var current_style = Style{};
+        var out_x: ?u16 = null;
+        var out_y: ?u16 = null;
         // Hide cursor during rendering to prevent flicker
         try self.output_batch.appendSlice(self.allocator, "\x1b[?25l");
 
@@ -1445,67 +1456,90 @@ pub const Renderer = struct {
                 const dirty_start_x: u16 = row.min_x;
                 const dirty_end_x: u16 = row.max_x + 1;
                 const y: u16 = @intCast(y_idx);
-                for (dirty_start_x..dirty_end_x) |x| {
-                    const back_cell = self.back.getCell(@as(u16, @intCast(x)), y);
-                    const front_cell = self.front.getCell(@as(u16, @intCast(x)), y);
+                var x: u16 = dirty_start_x;
+                while (x < dirty_end_x) {
+                    const back_cell = self.back.getCell(x, y);
+                    const front_cell = self.front.getCell(x, y);
 
                     // Skip if cell hasn't changed
-                    if (front_cell.eql(back_cell.*)) continue;
-
-                    if (back_cell.continuation) continue;
-
-                    // Position cursor
-                    try self.appendCursorMove(@intCast(x), @intCast(y));
-
-                    // Update styles if needed
-                    var need_style_update = false;
-
-                    const adjusted_fg = self.capabilities.bestColor(back_cell.fg);
-                    const adjusted_bg = self.capabilities.bestColor(back_cell.bg);
-                    const adjusted_style = self.capabilities.bestStyle(back_cell.style);
-
-                    if (current_fg == null or !std.meta.eql(current_fg.?, adjusted_fg)) {
-                        current_fg = adjusted_fg;
-                        need_style_update = true;
+                    if (front_cell.eql(back_cell.*) or back_cell.continuation) {
+                        x += 1;
+                        continue;
                     }
 
-                    if (current_bg == null or !std.meta.eql(current_bg.?, adjusted_bg)) {
-                        current_bg = adjusted_bg;
-                        need_style_update = true;
+                    try self.ensureCursorAt(x, y, &out_x, &out_y);
+                    var run_x: u16 = x;
+
+                    while (run_x < dirty_end_x) {
+                        const run_back = self.back.getCell(run_x, y);
+                        const run_front = self.front.getCell(run_x, y);
+
+                        if (!run_back.continuation and run_front.eql(run_back.*)) break;
+                        if (run_back.continuation) {
+                            run_x += 1;
+                            continue;
+                        }
+
+                        // Update styles if needed
+                        var need_style_update = false;
+
+                        const adjusted_fg = self.capabilities.bestColor(run_back.fg);
+                        const adjusted_bg = self.capabilities.bestColor(run_back.bg);
+                        const adjusted_style = self.capabilities.bestStyle(run_back.style);
+
+                        if (current_fg == null or !std.meta.eql(current_fg.?, adjusted_fg)) {
+                            current_fg = adjusted_fg;
+                            need_style_update = true;
+                        }
+
+                        if (current_bg == null or !std.meta.eql(current_bg.?, adjusted_bg)) {
+                            current_bg = adjusted_bg;
+                            need_style_update = true;
+                        }
+
+                        if (!std.meta.eql(current_style, adjusted_style)) {
+                            current_style = adjusted_style;
+                            need_style_update = true;
+                        }
+
+                        if (need_style_update) {
+                            self.style_scratch.clearRetainingCapacity();
+
+                            try self.style_scratch.appendSlice(self.allocator, "\x1b[");
+                            const style_code = adjusted_style.toAnsi();
+                            try self.style_scratch.appendSlice(self.allocator, style_code.slice());
+
+                            try self.style_scratch.appendSlice(self.allocator, ";");
+                            const fg_code = adjusted_fg.toFg();
+                            try self.style_scratch.appendSlice(self.allocator, fg_code.slice());
+
+                            try self.style_scratch.appendSlice(self.allocator, ";");
+                            const bg_code = adjusted_bg.toBg();
+                            try self.style_scratch.appendSlice(self.allocator, bg_code.slice());
+
+                            try self.style_scratch.appendSlice(self.allocator, "m");
+
+                            try self.output_batch.appendSlice(self.allocator, self.style_scratch.items);
+                        }
+
+                        const glyph_bytes = run_back.glyph.slice();
+                        if (glyph_bytes.len > 0) {
+                            try self.output_batch.appendSlice(self.allocator, glyph_bytes);
+                            if (out_x != null) {
+                                const advance: u16 = if (run_back.glyph.width == 0) 1 else @as(u16, run_back.glyph.width);
+                                out_x = @min(self.back.width, run_x + advance);
+                                out_y = y;
+                            }
+                        }
+
+                        if (self.output_batch.items.len > 4096) {
+                            try self.flushOutput(writer);
+                        }
+
+                        run_x += 1;
                     }
 
-                    if (!std.meta.eql(current_style, adjusted_style)) {
-                        current_style = adjusted_style;
-                        need_style_update = true;
-                    }
-
-                    if (need_style_update) {
-                        self.style_scratch.clearRetainingCapacity();
-
-                        try self.style_scratch.appendSlice(self.allocator, "\x1b[");
-                        const style_code = adjusted_style.toAnsi();
-                        try self.style_scratch.appendSlice(self.allocator, style_code.slice());
-
-                        try self.style_scratch.appendSlice(self.allocator, ";");
-                        const fg_code = adjusted_fg.toFg();
-                        try self.style_scratch.appendSlice(self.allocator, fg_code.slice());
-
-                        try self.style_scratch.appendSlice(self.allocator, ";");
-                        const bg_code = adjusted_bg.toBg();
-                        try self.style_scratch.appendSlice(self.allocator, bg_code.slice());
-
-                        try self.style_scratch.appendSlice(self.allocator, "m");
-
-                        try self.output_batch.appendSlice(self.allocator, self.style_scratch.items);
-                    }
-
-                    const glyph_bytes = back_cell.glyph.slice();
-                    if (glyph_bytes.len == 0) continue;
-                    try self.output_batch.appendSlice(self.allocator, glyph_bytes);
-
-                    if (self.output_batch.items.len > 4096) {
-                        try self.flushOutput(writer);
-                    }
+                    x = run_x;
                 }
             }
         }
