@@ -698,3 +698,73 @@ test "tab view closes tabs only when marked closable" {
     TabView.onTabClosed(0, tab_view);
     try std.testing.expectEqual(before - 1, tab_view.tabs.items.len);
 }
+
+test "tab view links tab content to parent on add and load" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var eager = try @import("block.zig").Block.init(alloc);
+    defer eager.deinit();
+
+    try tab_view.addTab("eager", &eager.widget);
+    try std.testing.expect(eager.widget.parent != null);
+    try std.testing.expectEqual(&tab_view.widget, eager.widget.parent.?);
+
+    const Lazy = struct {
+        var built: ?*@import("block.zig").Block = null;
+
+        fn build(allocator: std.mem.Allocator) anyerror!*base.Widget {
+            const block = try @import("block.zig").Block.init(allocator);
+            built = block;
+            return &block.widget;
+        }
+    };
+
+    try tab_view.addLazyTab("lazy", Lazy.build, false);
+    tab_view.setActiveTab(1);
+    const content = tab_view.getActiveContent().?;
+    try std.testing.expect(content.parent != null);
+    try std.testing.expectEqual(&tab_view.widget, content.parent.?);
+
+    if (Lazy.built) |block| {
+        block.deinit();
+    }
+    tab_view.tabs.items[1].content = null;
+    Lazy.built = null;
+}
+
+test "tab view tab bar keyboard navigation updates tabs" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+    var c = try @import("block.zig").Block.init(alloc);
+    defer c.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+    try tab_view.addTab("three", &c.widget);
+
+    tab_view.setAllowClosing(true);
+    tab_view.setReorderable(true);
+    tab_view.tab_bar.widget.focused = true;
+
+    _ = try tab_view.tab_bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, input.KeyModifiers{}) });
+    try std.testing.expectEqual(@as(usize, 1), tab_view.getActiveTab());
+
+    _ = try tab_view.tab_bar.widget.handleEvent(.{ .key = input.KeyEvent.init('1', input.KeyModifiers{}) });
+    try std.testing.expectEqual(@as(usize, 0), tab_view.getActiveTab());
+
+    _ = try tab_view.tab_bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, input.KeyModifiers{ .ctrl = true, .shift = true }) });
+    try std.testing.expectEqualStrings("two", tab_view.tabs.items[0].title);
+
+    _ = try tab_view.tab_bar.widget.handleEvent(.{ .key = input.KeyEvent.init('w', input.KeyModifiers{ .ctrl = true }) });
+    try std.testing.expectEqual(@as(usize, 2), tab_view.tabs.items.len);
+    try std.testing.expectEqualStrings("two", tab_view.tabs.items[0].title);
+    try std.testing.expectEqualStrings("three", tab_view.tabs.items[1].title);
+}
