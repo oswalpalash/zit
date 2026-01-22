@@ -186,3 +186,32 @@ pub const Label = struct {
         return false; // Labels can't be focused
     }
 };
+
+test "label init/deinit" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "Hello");
+    defer label.deinit();
+
+    try std.testing.expectEqualStrings("Hello", label.text);
+}
+
+test "label setText updates preferred size" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "Hi");
+    defer label.deinit();
+
+    try label.setText("hi\nworld");
+    const size = try label.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 5), size.width);
+    try std.testing.expectEqual(@as(u16, 2), size.height);
+}
+
+test "label handles empty text" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "");
+    defer label.deinit();
+
+    const size = try label.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 0), size.width);
+    try std.testing.expectEqual(@as(u16, 0), size.height);
+}
