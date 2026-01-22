@@ -21,8 +21,8 @@ pub const FileBrowser = struct {
     highlight_bg: render.Color = render.Color{ .named_color = render.NamedColor.cyan },
     border_color: render.Color = render.Color{ .named_color = render.NamedColor.default },
     header_style: render.Style = render.Style{ .bold = true },
-    on_file_selected: ?*const fn ([]const u8, bool) void = null,
-    on_directory_changed: ?*const fn ([]const u8) void = null,
+    on_file_select: ?*const fn ([]const u8, bool) void = null,
+    on_directory_change: ?*const fn ([]const u8) void = null,
     search_buffer: [64]u8 = undefined,
     search_len: usize = 0,
     last_search_ms: ?i64 = null,
@@ -82,12 +82,12 @@ pub const FileBrowser = struct {
         try self.refresh();
     }
 
-    pub fn setOnFileSelected(self: *FileBrowser, callback: *const fn ([]const u8, bool) void) void {
-        self.on_file_selected = callback;
+    pub fn setOnFileSelect(self: *FileBrowser, callback: *const fn ([]const u8, bool) void) void {
+        self.on_file_select = callback;
     }
 
-    pub fn setOnDirectoryChanged(self: *FileBrowser, callback: *const fn ([]const u8) void) void {
-        self.on_directory_changed = callback;
+    pub fn setOnDirectoryChange(self: *FileBrowser, callback: *const fn ([]const u8) void) void {
+        self.on_directory_change = callback;
     }
 
     pub fn setTypeaheadTimeout(self: *FileBrowser, timeout_ms: u64) void {
@@ -111,7 +111,7 @@ pub const FileBrowser = struct {
         self.scroll = 0;
         self.resetTypeahead();
         try self.refresh();
-        if (self.on_directory_changed) |cb| {
+        if (self.on_directory_change) |cb| {
             cb(self.current_path);
         }
     }
@@ -197,7 +197,7 @@ pub const FileBrowser = struct {
 
             defer self.allocator.free(next_path);
             try self.setPath(next_path);
-        } else if (self.on_file_selected) |cb| {
+        } else if (self.on_file_select) |cb| {
             const full_path = try self.joinPath(entry.name);
             defer self.allocator.free(full_path);
             cb(full_path, entry.is_dir);
