@@ -588,6 +588,8 @@ pub const FlexLayout = struct {
     /// Add a child element
     pub fn addChild(self: *FlexLayout, child: FlexChild) !void {
         try self.children.append(self.base.allocator, child);
+        self.naturals_scratch.ensureTotalCapacity(self.base.allocator, self.children.items.len) catch {};
+        self.assigned_scratch.ensureTotalCapacity(self.base.allocator, self.children.items.len) catch {};
         self.cache.valid = false;
     }
 

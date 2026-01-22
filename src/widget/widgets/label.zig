@@ -108,31 +108,20 @@ pub const Label = struct {
         const bg = styled.bg;
         const style = styled.style;
 
-        // Split text into lines
-        var lines = std.ArrayList([]const u8).empty;
-        defer lines.deinit(self.allocator);
-
-        var start: usize = 0;
-        for (self.text, 0..) |c, i| {
-            if (c == '\n') {
-                try lines.append(self.allocator, self.text[start..i]);
-                start = i + 1;
-            }
-        }
-        if (start < self.text.len) {
-            try lines.append(self.allocator, self.text[start..]);
-        }
-
-        // If no text, nothing to draw
-        if (lines.items.len == 0) {
+        if (self.text.len == 0 or rect.height == 0) {
             return;
         }
 
-        // Draw each line
-        const max_lines = @min(lines.items.len, rect.height);
-        for (0..max_lines) |i| {
-            const line = lines.items[i];
-            const y = rect.y + @as(u16, @intCast(i));
+        var line_idx: u16 = 0;
+        var start: usize = 0;
+        var i: usize = 0;
+        while (i <= self.text.len) : (i += 1) {
+            const at_end = i == self.text.len;
+            if (!at_end and self.text[i] != '\n') continue;
+            if (line_idx >= rect.height) break;
+
+            const line = self.text[start..i];
+            const y = rect.y + line_idx;
 
             // Calculate x position based on alignment
             var x: u16 = rect.x;
@@ -156,6 +145,11 @@ pub const Label = struct {
             } else {
                 renderer.drawStr(x, y, line, fg, bg, style);
             }
+
+            line_idx += 1;
+            if (!at_end) {
+                start = i + 1;
+            }
         }
     }
 
@@ -176,28 +170,26 @@ pub const Label = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const self = @as(*Label, @ptrCast(@alignCast(widget_ptr)));
 
-        // Split text into lines
-        var lines = std.ArrayList([]const u8).empty;
-        defer lines.deinit(self.allocator);
+        if (self.text.len == 0) {
+            return layout_module.Size.zero();
+        }
 
+        var max_width: usize = 0;
+        var lines: usize = 0;
         var start: usize = 0;
-        for (self.text, 0..) |c, i| {
-            if (c == '\n') {
-                try lines.append(self.allocator, self.text[start..i]);
+        var i: usize = 0;
+        while (i <= self.text.len) : (i += 1) {
+            const at_end = i == self.text.len;
+            if (!at_end and self.text[i] != '\n') continue;
+            const line_len = i - start;
+            max_width = @max(max_width, line_len);
+            lines += 1;
+            if (!at_end) {
                 start = i + 1;
             }
         }
-        if (start < self.text.len) {
-            try lines.append(self.allocator, self.text[start..]);
-        }
 
-        // Find longest line
-        var max_width: usize = 0;
-        for (lines.items) |line| {
-            max_width = @max(max_width, line.len);
-        }
-
-        return layout_module.Size.init(max_width, lines.items.len);
+        return layout_module.Size.init(max_width, lines);
     }
 
     /// Can focus implementation for Label
