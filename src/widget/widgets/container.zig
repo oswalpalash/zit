@@ -179,3 +179,76 @@ pub const Container = struct {
         return false;
     }
 };
+
+test "container init/deinit" {
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), container.children.items.len);
+}
+
+test "container lays out child and forwards events" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        last_rect: ?layout_module.Rect = null,
+        handled: bool = false,
+        const Self = @This();
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(widget_ptr: *anyopaque, _: input.Event) anyerror!bool {
+            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            self.handled = true;
+            return true;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
+            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            self.last_rect = rect;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(4, 2);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return true;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+    container.setBorder(.single);
+
+    var dummy = Dummy{};
+    try container.addChild(&dummy.widget);
+    try std.testing.expectEqual(&container.widget, dummy.widget.parent.?);
+
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 4));
+    try std.testing.expect(dummy.last_rect != null);
+    const inner = dummy.last_rect.?;
+    try std.testing.expectEqual(@as(u16, 1), inner.x);
+    try std.testing.expectEqual(@as(u16, 1), inner.y);
+    try std.testing.expectEqual(@as(u16, 8), inner.width);
+    try std.testing.expectEqual(@as(u16, 2), inner.height);
+
+    const event = input.Event{ .key = input.KeyEvent.init('x', input.KeyModifiers{}) };
+    try std.testing.expect(try container.widget.handleEvent(event));
+    try std.testing.expect(dummy.handled);
+}
+
+test "container preferred size is zero without children" {
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    const size = try container.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 0), size.width);
+    try std.testing.expectEqual(@as(u16, 0), size.height);
+}
