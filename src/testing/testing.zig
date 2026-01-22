@@ -658,6 +658,95 @@ test "snapshot progress bar 100 percent" {
     try harness.expectGolden(&bar.widget, "src/testing/golden/progress_bar_100.snap", .{});
 }
 
+test "snapshot list with items" {
+    const alloc = std.testing.allocator;
+    var list = try widget.List.init(alloc);
+    defer list.deinit();
+    const Items = struct {
+        items: []const []const u8,
+        fn count(ctx: ?*anyopaque) usize {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items.len;
+        }
+        fn itemAt(index: usize, ctx: ?*anyopaque) []const u8 {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items[index];
+        }
+    };
+    var items = Items{
+        .items = &[_][]const u8{ "One", "Two", "Three" },
+    };
+    list.useItemProvider(.{
+        .ctx = &items,
+        .count = Items.count,
+        .item_at = Items.itemAt,
+    });
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(10, 3));
+    defer harness.deinit();
+    try harness.expectGolden(&list.widget, "src/testing/golden/list_items.snap", .{});
+}
+
+test "snapshot list empty" {
+    const alloc = std.testing.allocator;
+    var list = try widget.List.init(alloc);
+    defer list.deinit();
+    const Items = struct {
+        items: []const []const u8,
+        fn count(ctx: ?*anyopaque) usize {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items.len;
+        }
+        fn itemAt(index: usize, ctx: ?*anyopaque) []const u8 {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items[index];
+        }
+    };
+    var items = Items{
+        .items = &[_][]const u8{},
+    };
+    list.useItemProvider(.{
+        .ctx = &items,
+        .count = Items.count,
+        .item_at = Items.itemAt,
+    });
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(10, 3));
+    defer harness.deinit();
+    try harness.expectGolden(&list.widget, "src/testing/golden/list_empty.snap", .{});
+}
+
+test "snapshot list selected state" {
+    const alloc = std.testing.allocator;
+    var list = try widget.List.init(alloc);
+    defer list.deinit();
+    const Items = struct {
+        items: []const []const u8,
+        fn count(ctx: ?*anyopaque) usize {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items.len;
+        }
+        fn itemAt(index: usize, ctx: ?*anyopaque) []const u8 {
+            const data = @as(*@This(), @ptrCast(@alignCast(ctx.?)));
+            return data.items[index];
+        }
+    };
+    var items = Items{
+        .items = &[_][]const u8{ "One", "Two", "Three" },
+    };
+    list.useItemProvider(.{
+        .ctx = &items,
+        .count = Items.count,
+        .item_at = Items.itemAt,
+    });
+    list.setSelectedIndex(1);
+    list.widget.focused = true;
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(10, 3));
+    defer harness.deinit();
+    try harness.expectGolden(&list.widget, "src/testing/golden/list_selected.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);

@@ -102,6 +102,11 @@ pub const List = struct {
         .can_focus = canFocusFn,
     };
 
+    fn fromWidgetPtr(widget_ptr: *anyopaque) *List {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        return @fieldParentPtr("widget", widget_ref);
+    }
+
     /// Initialize a new list
     pub fn init(allocator: std.mem.Allocator) !*List {
         const self = try allocator.create(List);
@@ -111,6 +116,8 @@ pub const List = struct {
             .items = std.ArrayList([]const u8).empty,
             .allocator = allocator,
         };
+        self.item_provider = null;
+        self.scroll_driver.snap(0);
 
         return self;
     }
@@ -447,7 +454,7 @@ pub const List = struct {
 
     /// Draw implementation for List
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
 
         if (!self.widget.visible) {
             return;
@@ -543,7 +550,7 @@ pub const List = struct {
 
     /// Event handling implementation for List
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         const total_items = self.itemCount();
 
         if (!self.widget.visible or !self.widget.enabled) {
@@ -763,7 +770,7 @@ pub const List = struct {
 
     /// Layout implementation for List
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         self.widget.rect = rect;
 
         // Update visible items count
@@ -776,7 +783,7 @@ pub const List = struct {
 
     /// Get preferred size implementation for List
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
 
         // Find the longest item
         var max_width: u16 = 10; // Minimum width
@@ -795,7 +802,7 @@ pub const List = struct {
 
     /// Can focus implementation for List
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*List, @ptrCast(@alignCast(widget_ptr)));
+        const self = fromWidgetPtr(widget_ptr);
         return self.widget.enabled and self.itemCount() > 0;
     }
 };
@@ -823,14 +830,14 @@ test "list typeahead search cycles through matches" {
     list.setTypeaheadClock(TestClock.tick);
     list.setTypeaheadTimeout(1_000);
 
-    _ = try list.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    _ = try list.widget.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 1), list.selected_index); // Garden
 
-    _ = try list.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    _ = try list.widget.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 1), list.selected_index); // "ga" still Garden
 
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
-    _ = try list.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    _ = try list.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), list.selected_index); // Zzz
 }
 
@@ -847,6 +854,6 @@ test "list clears selection and ignores events when empty" {
     try std.testing.expectEqual(@as(usize, 0), list.selected_index);
 
     try list.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
-    const handled = try list.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
+    const handled = try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
 }
