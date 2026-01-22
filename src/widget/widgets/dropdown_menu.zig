@@ -438,3 +438,54 @@ pub const DropdownMenu = struct {
         return self.widget.enabled and self.items.items.len > 0;
     }
 };
+
+var test_dropdown_selection: ?usize = null;
+
+test "dropdown menu init/deinit" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), menu.items.items.len);
+    try menu.setLabel("Pick one");
+    try menu.addItem("One", true, null);
+}
+
+test "dropdown menu selects item on click" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.widget.rect = layout_module.Rect.init(0, 0, 10, 1);
+
+    test_dropdown_selection = null;
+    const callback = struct {
+        fn call(index: usize) void {
+            test_dropdown_selection = index;
+        }
+    }.call;
+    menu.setOnSelectionChanged(callback);
+
+    const open_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
+    try std.testing.expect(try menu.widget.handleEvent(open_event));
+    try std.testing.expect(menu.is_open);
+
+    const select_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 2, 1, 0) };
+    try std.testing.expect(try menu.widget.handleEvent(select_event));
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+    try std.testing.expectEqual(@as(?usize, 1), test_dropdown_selection);
+    try std.testing.expect(!menu.is_open);
+}
+
+test "dropdown menu ignores input when empty" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+    menu.widget.rect = layout_module.Rect.init(0, 0, 10, 1);
+
+    const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
+    try std.testing.expect(!try menu.widget.handleEvent(click_event));
+    try std.testing.expect(menu.getSelectedItemText() == null);
+}
