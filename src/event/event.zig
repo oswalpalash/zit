@@ -2352,33 +2352,23 @@ pub const Application = struct {
             return;
         }
 
-        // Convert input event to our event system
+        const target: *widget.Widget = &self.root.?.widget;
+        const event = fromInputEvent(input_event, target);
+        try self.event_queue.pushEvent(event);
+
         switch (input_event) {
-            .key => |key_event| {
-                // Determine if this is a press or release event
-                // For simplicity, we'll treat all key events as press events
-                const target: *widget.Widget = &self.root.?.widget;
-                try self.event_queue.createKeyPressEvent(key_event.key, key_event.modifiers, 0, target);
+            .mouse => |mouse_event| switch (mouse_event.action) {
+                .press => {
+                    try self.beginDrag(target, mouse_event.x, mouse_event.y, mouse_event.button, .{});
+                },
+                .release => {
+                    try self.endDrag(mouse_event.x, mouse_event.y, target);
+                },
+                .move => {
+                    try self.updateDrag(mouse_event.x, mouse_event.y, target);
+                },
+                .scroll_up, .scroll_down => {},
             },
-            .mouse => |mouse_event| {
-                const target: *widget.Widget = &self.root.?.widget;
-                switch (mouse_event.action) {
-                    .press => {
-                        try self.event_queue.createMousePressEvent(mouse_event.x, mouse_event.y, mouse_event.button, 1, .{}, target);
-                        try self.beginDrag(target, mouse_event.x, mouse_event.y, mouse_event.button, .{});
-                    },
-                    .release => {
-                        try self.event_queue.createMouseReleaseEvent(mouse_event.x, mouse_event.y, mouse_event.button, 1, .{}, target);
-                        try self.endDrag(mouse_event.x, mouse_event.y, target);
-                    },
-                    .move => {
-                        try self.event_queue.createMouseMoveEvent(mouse_event.x, mouse_event.y, mouse_event.button, .{}, target);
-                        try self.updateDrag(mouse_event.x, mouse_event.y, target);
-                    },
-                    .scroll_up, .scroll_down => {},
-                }
-            },
-            // Add other input event conversions here
             else => {},
         }
     }
