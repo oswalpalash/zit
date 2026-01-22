@@ -112,16 +112,19 @@ pub const Checkbox = struct {
 
         // Draw checkbox
         renderer.drawChar(rect.x, rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});
-        renderer.drawChar(rect.x - 1, rect.y, '[', fg, bg, render.Style{});
+        if (rect.x > 0) {
+            renderer.drawChar(rect.x - 1, rect.y, '[', fg, bg, render.Style{});
+        }
         renderer.drawChar(rect.x + 1, rect.y, ']', fg, bg, render.Style{});
 
         // Draw label
         if (self.label.len > 0 and rect.width > 4) {
             var truncated_text: [256]u8 = undefined;
-            if (rect.width > 7 and self.label.len > rect.width - 7) {
-                @memcpy(truncated_text[0 .. rect.width - 7], self.label[0 .. rect.width - 7]);
-                @memcpy(truncated_text[rect.width - 7 .. rect.width - 4], "...");
-                renderer.drawStr(rect.x + 3, rect.y, truncated_text[0 .. rect.width - 4], fg, bg, render.Style{});
+            const max_width = @min(@as(usize, rect.width), truncated_text.len);
+            if (max_width > 7 and self.label.len > max_width - 7) {
+                @memcpy(truncated_text[0 .. max_width - 7], self.label[0 .. max_width - 7]);
+                @memcpy(truncated_text[max_width - 7 .. max_width - 4], "...");
+                renderer.drawStr(rect.x + 3, rect.y, truncated_text[0 .. max_width - 4], fg, bg, render.Style{});
             } else {
                 renderer.drawStr(rect.x + 3, rect.y, self.label, fg, bg, render.Style{});
             }
