@@ -600,3 +600,61 @@ pub const ScrollContainer = struct {
             (self.show_v_scrollbar and self.content_height > self.getViewportHeight());
     }
 };
+
+test "scroll container init/deinit" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    try std.testing.expect(container.h_scrollbar != null);
+    try std.testing.expect(container.v_scrollbar != null);
+}
+
+test "scroll container scrolls content with mouse wheel" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(20, 20);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    try std.testing.expectEqual(@as(i16, 0), container.v_offset);
+
+    const scroll_event = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 1, 1, 0, 0) };
+    try std.testing.expect(try container.widget.handleEvent(scroll_event));
+    try std.testing.expect(container.v_offset > 0);
+}
+
+test "scroll container ignores scroll without content" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    const scroll_event = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 1, 1, 0, 0) };
+    try std.testing.expect(!try container.widget.handleEvent(scroll_event));
+    try std.testing.expectEqual(@as(i16, 0), container.v_offset);
+}
