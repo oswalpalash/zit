@@ -97,12 +97,23 @@ pub const Container = struct {
 
         const rect = self.widget.rect;
 
+        const styled = self.widget.applyStyle(
+            "container",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
         // Fill container background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         // Draw border if enabled
         if (self.show_border) {
-            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, self.fg, self.bg, render.Style{});
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, style);
         }
 
         // Draw children

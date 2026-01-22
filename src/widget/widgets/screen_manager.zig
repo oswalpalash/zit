@@ -290,8 +290,8 @@ pub const ScreenManager = struct {
 
         const target_idx = blk: {
             if (self.active_transition) |t| {
-                if (t.entering) break :blk t.entering.?;
-                if (t.exiting) break :blk t.exiting.?;
+                if (t.entering) |idx| break :blk idx;
+                if (t.exiting) |idx| break :blk idx;
             }
             break :blk self.screens.items.len - 1;
         };
@@ -385,7 +385,7 @@ test "screen manager runs lifecycle hooks on push/pop" {
     };
 
     try manager.push(.{ .widget = &block_a.widget, .label = "a", .lifecycle = hooks });
-    try manager.layout(layout_module.Rect.init(0, 0, 40, 10));
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 40, 10));
     try manager.tick(500);
 
     try manager.push(.{ .widget = &block_b.widget, .label = "b", .lifecycle = hooks });

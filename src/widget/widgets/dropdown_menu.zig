@@ -217,22 +217,33 @@ pub const DropdownMenu = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.disabled_bg
         else if (self.widget.focused)
             self.focused_bg
         else
             self.bg;
 
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.disabled_fg
         else if (self.widget.focused)
             self.focused_fg
         else
             self.fg;
 
+        const styled = self.widget.applyStyle(
+            "dropdown",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
         // Fill dropdown background
-        renderer.fillRect(rect.x, rect.y, rect.width, 1, ' ', fg, bg, render.Style{});
+        renderer.fillRect(rect.x, rect.y, rect.width, 1, ' ', fg, bg, style);
 
         // Draw selected item or label
         var display_text: []const u8 = undefined;
@@ -251,19 +262,19 @@ pub const DropdownMenu = struct {
                 break;
             }
 
-            renderer.drawChar(x, rect.y, char, fg, bg, render.Style{});
+            renderer.drawChar(x, rect.y, char, fg, bg, style);
             x += 1;
         }
 
         // Draw dropdown arrow
-        renderer.drawChar(rect.x + rect.width - 2, rect.y, '▼', fg, bg, render.Style{});
+        renderer.drawChar(rect.x + rect.width - 2, rect.y, '▼', fg, bg, style);
 
         // Draw dropdown menu if open
         if (self.is_open and self.items.items.len > 0) {
             const menu_height = @min(@as(i16, @intCast(self.items.items.len)), 10);
 
             // Fill menu background
-            renderer.fillRect(rect.x, rect.y + 1, rect.width, @as(u16, @intCast(@min(@as(i16, @intCast(self.items.items.len)), 10))), ' ', self.fg, self.bg, render.Style{});
+            renderer.fillRect(rect.x, rect.y + 1, rect.width, @as(u16, @intCast(@min(@as(i16, @intCast(self.items.items.len)), 10))), ' ', fg, bg, style);
 
             // Draw menu items
             for (self.items.items, 0..) |item, i| {
@@ -288,7 +299,7 @@ pub const DropdownMenu = struct {
                     self.bg;
 
                 // Draw item background
-                renderer.fillRect(rect.x, item_y, rect.width, 1, ' ', item_fg, item_bg, render.Style{});
+                renderer.fillRect(rect.x, item_y, rect.width, 1, ' ', item_fg, item_bg, style);
 
                 // Draw item text
                 x = rect.x + 1;
@@ -297,7 +308,7 @@ pub const DropdownMenu = struct {
                         break;
                     }
 
-                    renderer.drawChar(x, item_y, char, item_fg, item_bg, render.Style{});
+                    renderer.drawChar(x, item_y, char, item_fg, item_bg, style);
                     x += 1;
                 }
             }

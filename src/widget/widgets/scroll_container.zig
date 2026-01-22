@@ -41,7 +41,7 @@ pub const ScrollContainer = struct {
     /// Background color
     bg: render.Color = render.Color{ .named_color = render.NamedColor.default },
     /// Disabled foreground color
-    disabled_fg: render.Color = render.Color{ .named_color = render.NamedColor.gray },
+    disabled_fg: render.Color = render.Color{ .named_color = render.NamedColor.bright_black },
     /// Disabled background color
     disabled_bg: render.Color = render.Color{ .named_color = render.NamedColor.black },
     /// Show border
@@ -174,45 +174,58 @@ pub const ScrollContainer = struct {
     fn updateContentSize(self: *ScrollContainer) void {
         if (self.content) |content| {
             const content_size = content.getPreferredSize() catch layout_module.Size.init(0, 0);
-            self.content_width = content_size.width;
-            self.content_height = content_size.height;
+            self.content_width = @intCast(@min(content_size.width, std.math.maxInt(i16)));
+            self.content_height = @intCast(@min(content_size.height, std.math.maxInt(i16)));
             self.syncHScrollbar();
             self.syncVScrollbar();
         }
     }
 
+    const Viewport = struct {
+        width: i16,
+        height: i16,
+    };
+
+    /// Compute viewport size without mutual recursion between width/height.
+    fn computeViewport(self: *ScrollContainer) Viewport {
+        var base_width: i16 = @intCast(@min(self.widget.rect.width, std.math.maxInt(i16)));
+        var base_height: i16 = @intCast(@min(self.widget.rect.height, std.math.maxInt(i16)));
+
+        if (self.show_border) {
+            base_width -= 2;
+            base_height -= 2;
+        }
+
+        var need_h = false;
+        var need_v = false;
+        var width = base_width;
+        var height = base_height;
+
+        var iter: u2 = 0;
+        while (iter < 2) : (iter += 1) {
+            width = base_width - @as(i16, if (need_v) 1 else 0);
+            height = base_height - @as(i16, if (need_h) 1 else 0);
+            width = @max(width, 0);
+            height = @max(height, 0);
+
+            const next_h = self.show_h_scrollbar and self.content_width > width;
+            const next_v = self.show_v_scrollbar and self.content_height > height;
+            if (next_h == need_h and next_v == need_v) break;
+            need_h = next_h;
+            need_v = next_v;
+        }
+
+        return .{ .width = @max(width, 0), .height = @max(height, 0) };
+    }
+
     /// Get the viewport width (content area width)
     fn getViewportWidth(self: *ScrollContainer) i16 {
-        var width = self.widget.rect.width;
-
-        // Adjust for border
-        if (self.show_border) {
-            width -= 2;
-        }
-
-        // Adjust for vertical scrollbar if visible
-        if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-            width -= 1;
-        }
-
-        return @max(0, width);
+        return self.computeViewport().width;
     }
 
     /// Get the viewport height (content area height)
     fn getViewportHeight(self: *ScrollContainer) i16 {
-        var height = self.widget.rect.height;
-
-        // Adjust for border
-        if (self.show_border) {
-            height -= 2;
-        }
-
-        // Adjust for horizontal scrollbar if visible
-        if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-            height -= 1;
-        }
-
-        return @max(0, height);
+        return self.computeViewport().height;
     }
 
     fn maxVerticalOffset(self: *ScrollContainer) i16 {
@@ -288,11 +301,21 @@ pub const ScrollContainer = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
-        const bg = if (!self.widget.enabled) self.disabled_bg else self.bg;
-        const fg = if (!self.widget.enabled) self.disabled_fg else self.fg;
+        const base_bg = if (!self.widget.enabled) self.disabled_bg else self.bg;
+        const base_fg = if (!self.widget.enabled) self.disabled_fg else self.fg;
+        const styled = self.widget.applyStyle(
+            "scroll_container",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            self.style,
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Fill background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, self.style);
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         // Draw border if enabled
         if (self.show_border and rect.width >= 2 and rect.height >= 2) {
@@ -300,44 +323,42 @@ pub const ScrollContainer = struct {
 
             // Top and bottom borders
             for (1..@as(usize, @intCast(rect.width - 1))) |i| {
-                renderer.drawChar(rect.x + @as(i16, @intCast(i)), rect.y, border_chars[4], fg, bg, self.style);
-                renderer.drawChar(rect.x + @as(i16, @intCast(i)), rect.y + rect.height - 1, border_chars[4], fg, bg, self.style);
+                renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y, border_chars[4], fg, bg, style);
+                renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y + rect.height - 1, border_chars[4], fg, bg, style);
             }
 
             // Left and right borders
             for (1..@as(usize, @intCast(rect.height - 1))) |i| {
-                renderer.drawChar(rect.x, rect.y + @as(i16, @intCast(i)), border_chars[5], fg, bg, self.style);
-                renderer.drawChar(rect.x + rect.width - 1, rect.y + @as(i16, @intCast(i)), border_chars[5], fg, bg, self.style);
+                renderer.drawChar(rect.x, rect.y + @as(u16, @intCast(i)), border_chars[5], fg, bg, style);
+                renderer.drawChar(rect.x + rect.width - 1, rect.y + @as(u16, @intCast(i)), border_chars[5], fg, bg, style);
             }
 
             // Corners
-            renderer.drawChar(rect.x, rect.y, border_chars[0], fg, bg, self.style);
-            renderer.drawChar(rect.x + rect.width - 1, rect.y, border_chars[1], fg, bg, self.style);
-            renderer.drawChar(rect.x, rect.y + rect.height - 1, border_chars[2], fg, bg, self.style);
-            renderer.drawChar(rect.x + rect.width - 1, rect.y + rect.height - 1, border_chars[3], fg, bg, self.style);
+            renderer.drawChar(rect.x, rect.y, border_chars[0], fg, bg, style);
+            renderer.drawChar(rect.x + rect.width - 1, rect.y, border_chars[1], fg, bg, style);
+            renderer.drawChar(rect.x, rect.y + rect.height - 1, border_chars[2], fg, bg, style);
+            renderer.drawChar(rect.x + rect.width - 1, rect.y + rect.height - 1, border_chars[3], fg, bg, style);
         }
 
         // Draw content
         if (self.content) |content| {
             // Create a viewport for the content
-            var viewport = renderer.createViewport() catch null;
-            if (viewport) |*vp| {
-                const viewport_rect = self.getContentRect();
-
-                vp.x = viewport_rect.x;
-                vp.y = viewport_rect.y;
-                vp.width = viewport_rect.width;
-                vp.height = viewport_rect.height;
-                vp.offset_x = @as(i16, @intCast(self.h_offset));
-                vp.offset_y = @as(i16, @intCast(self.v_offset));
-
-                renderer.setViewport(vp);
+            var vp = renderer.createViewport() catch {
                 try content.draw(renderer);
-                renderer.clearViewport();
-            } else {
-                // Fallback if viewport creation fails
-                try content.draw(renderer);
-            }
+                return;
+            };
+            const viewport_rect = self.getContentRect();
+
+            vp.x = viewport_rect.x;
+            vp.y = viewport_rect.y;
+            vp.width = viewport_rect.width;
+            vp.height = viewport_rect.height;
+            vp.offset_x = @as(i16, @intCast(self.h_offset));
+            vp.offset_y = @as(i16, @intCast(self.v_offset));
+
+            renderer.setViewport(&vp);
+            try content.draw(renderer);
+            renderer.clearViewport();
         }
 
         // Draw scrollbars
@@ -564,8 +585,10 @@ pub const ScrollContainer = struct {
             var content_rect = self.getContentRect();
 
             // Content can be larger than viewport
-            content_rect.width = @max(content_rect.width, self.content_width);
-            content_rect.height = @max(content_rect.height, self.content_height);
+            const content_width: u16 = @intCast(@max(self.content_width, 0));
+            const content_height: u16 = @intCast(@max(self.content_height, 0));
+            content_rect.width = @max(content_rect.width, content_width);
+            content_rect.height = @max(content_rect.height, content_height);
 
             try content.layout(content_rect);
         }
@@ -582,8 +605,8 @@ pub const ScrollContainer = struct {
 
         if (self.content) |content| {
             const content_size = try content.getPreferredSize();
-            width = @max(width, content_size.width);
-            height = @max(height, content_size.height);
+            width = @max(width, @as(i16, @intCast(@min(content_size.width, std.math.maxInt(i16)))));
+            height = @max(height, @as(i16, @intCast(@min(content_size.height, std.math.maxInt(i16)))));
         }
 
         // Add border space

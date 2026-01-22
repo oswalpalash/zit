@@ -833,9 +833,19 @@ pub const Table = struct {
         }
 
         const rect = self.widget.rect;
+        const styled = self.widget.applyStyle(
+            "table",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Fill table background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         self.clampScroll();
         const total_rows = self.rowCount();
@@ -902,7 +912,7 @@ pub const Table = struct {
 
                     for (0..@as(usize, @intCast(column.width))) |i| {
                         const char: u21 = if (x > rect.x and i == 0) '┼' else '─';
-                        renderer.drawChar(x + @as(u16, @intCast(i)), y - 1, char, self.grid_fg, self.bg, render.Style{});
+                        renderer.drawChar(x + @as(u16, @intCast(i)), y - 1, char, self.grid_fg, bg, render.Style{});
                     }
 
                     x += column.width;
@@ -937,12 +947,12 @@ pub const Table = struct {
             const row_fg = if (is_selected)
                 (if (self.widget.focused) self.focused_fg else self.selected_fg)
             else
-                self.fg;
+                fg;
 
             const row_bg = if (is_selected)
                 (if (self.widget.focused) self.focused_bg else self.selected_bg)
             else
-                self.bg;
+                bg;
 
             // Draw each cell in the row
             for (self.columns.items, 0..) |column, col_idx| {
@@ -964,7 +974,7 @@ pub const Table = struct {
                     const cell_bg = cell_view.bg orelse row_bg;
                     const editing = self.isEditing() and self.editing_row.? == row_idx and self.editing_col.? == col_idx;
                     const text_slice = if (editing) self.edit_buffer.items else cell_view.text;
-                    const style = if (editing) render.Style{ .underline = true } else render.Style{};
+                    const cell_style = if (editing) render.Style{ .underline = true } else render.Style{};
 
                     // Draw cell background
                     renderer.fillRect(x, y, column.width, 1, ' ', cell_fg, cell_bg, render.Style{});
@@ -975,7 +985,7 @@ pub const Table = struct {
                             break;
                         }
 
-                        renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, cell_fg, cell_bg, style);
+                        renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, cell_fg, cell_bg, cell_style);
                     }
 
                     // Draw grid if enabled

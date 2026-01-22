@@ -4,6 +4,8 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const event_module = @import("../../event/event.zig");
 const animation = @import("../animation.zig");
+const css = @import("../css.zig");
+const theme = @import("../theme.zig");
 const container_widget = @import("container.zig");
 const scroll_container_widget = @import("scroll_container.zig");
 const split_pane_widget = @import("split_pane.zig");
@@ -38,6 +40,10 @@ pub const Widget = struct {
     id: []const u8 = "",
     /// Optional style class used by stylesheet helpers
     style_class: ?[]const u8 = null,
+    /// Optional stylesheet attached for CSS-like styling
+    style_sheet: ?*css.StyleSheet = null,
+    /// Optional theme used when resolving stylesheet roles
+    style_theme: ?theme.Theme = null,
     /// Optional focus ring styling
     focus_ring: ?render.FocusRingStyle = null,
     /// Animated visibility controller for show/hide transitions
@@ -125,6 +131,52 @@ pub const Widget = struct {
     /// Set widget style class for CSS-like styling
     pub fn setClass(self: *Widget, class: ?[]const u8) void {
         self.style_class = class;
+    }
+
+    /// Attach a stylesheet for CSS-like styling.
+    pub fn setStyleSheet(self: *Widget, sheet: ?*css.StyleSheet) void {
+        self.style_sheet = sheet;
+    }
+
+    /// Attach a theme for resolving stylesheet roles.
+    pub fn setStyleTheme(self: *Widget, theme_value: ?theme.Theme) void {
+        self.style_theme = theme_value;
+    }
+
+    /// Resolve stylesheet overrides for this widget.
+    pub fn resolveStyle(self: *Widget, type_name: []const u8, state: css.State, base_style: render.Style) css.StyleSheet.Resolved {
+        const sheet = self.style_sheet orelse return .{ .fg = null, .bg = null, .style = base_style };
+        var target = css.StyleTarget{
+            .id = if (self.id.len > 0) self.id else null,
+            .class = self.style_class,
+            .type_name = type_name,
+            .state = .{},
+        };
+        target.state = state;
+        return sheet.resolve(target, self.style_theme, base_style);
+    }
+
+    pub const AppliedStyle = struct {
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    };
+
+    /// Apply stylesheet overrides for the given colors.
+    pub fn applyStyle(self: *Widget, type_name: []const u8, state: css.State, base_style: render.Style, fg: render.Color, bg: render.Color) AppliedStyle {
+        const resolved = self.resolveStyle(type_name, state, base_style);
+        return .{
+            .fg = resolved.fg orelse fg,
+            .bg = resolved.bg orelse bg,
+            .style = resolved.style,
+        };
+    }
+
+    /// Apply stylesheet and theme context to the widget tree.
+    pub fn applyStyleContext(root: *Widget, sheet: ?*css.StyleSheet, theme_value: ?theme.Theme) void {
+        root.style_sheet = sheet;
+        root.style_theme = theme_value;
+        applyStyleContextImpl(root, sheet, theme_value);
     }
 
     /// Set focus ring styling.
@@ -294,6 +346,113 @@ fn traverseChildrenImpl(widget: *Widget, callback: *const fn (*Widget) void) voi
             const child = entry.screen.widget;
             callback(child);
             traverseChildrenImpl(child, callback);
+        }
+    }
+}
+
+fn applyStyleContextImpl(widget: *Widget, sheet: ?*css.StyleSheet, theme_value: ?theme.Theme) void {
+    if (asWidget(container_widget.Container, widget)) |container| {
+        for (container.children.items) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(flex_container_widget.FlexContainer, widget)) |container| {
+        for (container.children.items) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(grid_container_widget.GridContainer, widget)) |grid| {
+        for (grid.children.items) |entry| {
+            const child = entry.widget;
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(scroll_container_widget.ScrollContainer, widget)) |container| {
+        if (container.content) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        if (container.h_scrollbar) |bar| {
+            const child = &bar.widget;
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        if (container.v_scrollbar) |bar| {
+            const child = &bar.widget;
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(split_pane_widget.SplitPane, widget)) |pane| {
+        if (pane.first) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        if (pane.second) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(tab_view_widget.TabView, widget)) |tabs| {
+        const tab_bar_child = &tabs.tab_bar.widget;
+        tab_bar_child.style_sheet = sheet;
+        tab_bar_child.style_theme = theme_value;
+        applyStyleContextImpl(tab_bar_child, sheet, theme_value);
+        for (tabs.tabs.items) |tab| {
+            if (tab.content) |child| {
+                child.style_sheet = sheet;
+                child.style_theme = theme_value;
+                applyStyleContextImpl(child, sheet, theme_value);
+            }
+        }
+        return;
+    }
+
+    if (asWidget(block_widget.Block, widget)) |block| {
+        if (block.child) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(modal_widget.Modal, widget)) |modal| {
+        if (modal.content) |child| {
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
+        }
+        return;
+    }
+
+    if (asWidget(screen_manager_widget.ScreenManager, widget)) |manager| {
+        for (manager.screens.items) |entry| {
+            const child = entry.screen.widget;
+            child.style_sheet = sheet;
+            child.style_theme = theme_value;
+            applyStyleContextImpl(child, sheet, theme_value);
         }
     }
 }

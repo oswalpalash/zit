@@ -164,12 +164,20 @@ pub const Modal = struct {
         }
 
         const rect = self.widget.rect;
-        const style = render.Style{};
+        const styled = self.widget.applyStyle(
+            "modal",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Draw border
         for (0..rect.width) |i| {
-            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y, '-', self.border_fg, self.bg, style);
-            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y + rect.height - 1, '-', self.border_fg, self.bg, style);
+            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y, '-', self.border_fg, bg, style);
+            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y + rect.height - 1, '-', self.border_fg, bg, style);
         }
 
         // Draw title if enabled

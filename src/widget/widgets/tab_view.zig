@@ -123,7 +123,18 @@ pub const TabBar = struct {
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        const styled = self.widget.applyStyle(
+            "tab_bar",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         var x = rect.x;
         for (self.tabs, 0..) |tab, i| {
@@ -131,24 +142,32 @@ pub const TabBar = struct {
             const tab_fg = if (is_active) self.active_fg else self.inactive_fg;
             const tab_bg = if (is_active) self.active_bg else self.inactive_bg;
             const width = self.tabWidth(tab);
+            const width_u16: u16 = @intCast(@max(width, 0));
+            const height_u16: u16 = @intCast(@max(self.tab_height, 0));
             if (x >= rect.x + rect.width) break;
 
-            renderer.fillRect(x, rect.y, width, self.tab_height, ' ', tab_fg, tab_bg, render.Style{});
+            renderer.fillRect(x, rect.y, width_u16, height_u16, ' ', tab_fg, tab_bg, style);
 
-            const cursor = x + self.tab_padding;
+            const padding: u16 = @intCast(@max(self.tab_padding, 0));
+            const cursor: u16 = x + padding;
             for (tab.title, 0..) |char, j| {
-                if (cursor + @as(i16, @intCast(j)) >= rect.x + rect.width) break;
-                renderer.drawChar(cursor + @as(i16, @intCast(j)), rect.y, char, tab_fg, tab_bg, render.Style{});
+                const draw_x = cursor + @as(u16, @intCast(j));
+                if (draw_x >= rect.x + rect.width) break;
+                renderer.drawChar(draw_x, rect.y, char, tab_fg, tab_bg, style);
             }
 
             if (tab.closable or self.allow_close) {
-                const close_x = x + width - self.tab_padding - 1;
-                if (close_x < rect.x + rect.width) {
-                    renderer.drawChar(close_x, rect.y, 'x', tab_fg, tab_bg, render.Style{ .bold = true });
+                const close_x_i16: i16 = @as(i16, @intCast(x)) + width - self.tab_padding - 1;
+                if (close_x_i16 >= 0) {
+                    const close_x: u16 = @intCast(close_x_i16);
+                    if (close_x < rect.x + rect.width) {
+                        renderer.drawChar(close_x, rect.y, 'x', tab_fg, tab_bg, render.Style{ .bold = true });
+                    }
                 }
             }
 
-            x += width + 1;
+            const advance: u16 = @intCast(@max(width + 1, 0));
+            x += advance;
         }
 
         self.widget.drawFocusRing(renderer);
@@ -161,8 +180,8 @@ pub const TabBar = struct {
         if (event == .mouse) {
             const m = event.mouse;
             if (m.action == .press and m.button == 1) {
-                if (self.getTabIndexAt(m.x, m.y)) |idx| {
-                    if (self.isOnCloseGlyph(m.x, idx)) {
+                if (self.getTabIndexAt(@as(i16, @intCast(m.x)), @as(i16, @intCast(m.y)))) |idx| {
+                    if (self.isOnCloseGlyph(@as(i16, @intCast(m.x)), idx)) {
                         if ((self.tabs[idx].closable or self.allow_close) and self.on_tab_closed != null) {
                             self.on_tab_closed.?(idx, self.callback_ctx);
                             return true;
@@ -176,7 +195,19 @@ pub const TabBar = struct {
             }
         } else if (event == .key and self.widget.focused) {
             const key = event.key;
-            if (key.key == input.KeyCode.LEFT) {
+            if (self.allow_reorder and key.modifiers.ctrl and key.modifiers.shift and (key.key == input.KeyCode.LEFT or key.key == input.KeyCode.RIGHT)) {
+                const target = if (key.key == input.KeyCode.LEFT)
+                    if (self.active_tab == 0) @as(usize, 0) else self.active_tab - 1
+                else if (self.active_tab + 1 < self.tabs.len)
+                    self.active_tab + 1
+                else
+                    self.active_tab;
+
+                if (target != self.active_tab and self.on_tab_reordered != null) {
+                    self.on_tab_reordered.?(self.active_tab, target, self.callback_ctx);
+                    return true;
+                }
+            } else if (key.key == input.KeyCode.LEFT) {
                 if (self.active_tab > 0) {
                     self.setActive(self.active_tab - 1);
                     if (self.on_tab_selected) |cb| cb(self.active_tab, self.callback_ctx);
@@ -191,18 +222,6 @@ pub const TabBar = struct {
             } else if (key.key == 'w' and key.modifiers.ctrl) {
                 if (self.on_tab_closed != null and (self.tabs[self.active_tab].closable or self.allow_close)) {
                     self.on_tab_closed.?(self.active_tab, self.callback_ctx);
-                    return true;
-                }
-            } else if (self.allow_reorder and key.modifiers.ctrl and key.modifiers.shift and (key.key == input.KeyCode.LEFT or key.key == input.KeyCode.RIGHT)) {
-                const target = if (key.key == input.KeyCode.LEFT)
-                    if (self.active_tab == 0) @as(usize, 0) else self.active_tab - 1
-                else if (self.active_tab + 1 < self.tabs.len)
-                    self.active_tab + 1
-                else
-                    self.active_tab;
-
-                if (target != self.active_tab and self.on_tab_reordered != null) {
-                    self.on_tab_reordered.?(self.active_tab, target, self.callback_ctx);
                     return true;
                 }
             } else if (key.isPrintable() and key.key >= '1' and key.key <= '9') {
@@ -238,8 +257,10 @@ pub const TabBar = struct {
     }
 
     fn getTabIndexAt(self: *TabBar, x: i16, y: i16) ?usize {
-        if (y < self.widget.rect.y or y >= self.widget.rect.y + self.tab_height) return null;
-        var tab_x = self.widget.rect.x;
+        const rect_y: i16 = @intCast(@min(self.widget.rect.y, std.math.maxInt(i16)));
+        const rect_x: i16 = @intCast(@min(self.widget.rect.x, std.math.maxInt(i16)));
+        if (y < rect_y or y >= rect_y + self.tab_height) return null;
+        var tab_x = rect_x;
         for (self.tabs, 0..) |tab, idx| {
             const width = self.tabWidth(tab);
             if (x >= tab_x and x < tab_x + width) {
@@ -252,7 +273,7 @@ pub const TabBar = struct {
 
     fn isOnCloseGlyph(self: *TabBar, x: i16, idx: usize) bool {
         if (!(self.tabs[idx].closable or self.allow_close)) return false;
-        var tab_x = self.widget.rect.x;
+        var tab_x: i16 = @intCast(@min(self.widget.rect.x, std.math.maxInt(i16)));
         for (self.tabs, 0..) |tab, i| {
             const width = self.tabWidth(tab);
             if (i == idx) {
@@ -367,7 +388,13 @@ pub const TabView = struct {
         self.syncHeader();
 
         if (self.tabs.items.len == 1) {
-            self.setActiveTab(0);
+            if (spec.content == null and spec.loader != null) {
+                self.active_tab = 0;
+                self.tab_bar.setActive(0);
+                self.syncVisibility();
+            } else {
+                self.setActiveTab(0);
+            }
         }
     }
 
@@ -532,6 +559,10 @@ pub const TabView = struct {
         self.tab_bar.setCallbacks(onTabSelected, onTabClosed, onTabReordered, self);
     }
 
+    fn syncHeader(self: *TabView) void {
+        self.configureHeader();
+    }
+
     fn syncVisibility(self: *TabView) void {
         for (self.tabs.items, 0..) |tab, i| {
             if (tab.content) |content| {
@@ -542,8 +573,9 @@ pub const TabView = struct {
 
     fn contentRect(self: *TabView) layout_module.Rect {
         var rect = self.widget.rect;
-        rect.y += self.tab_bar.tab_height;
-        rect.height = if (rect.height > self.tab_bar.tab_height) rect.height - self.tab_bar.tab_height else 0;
+        const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
+        rect.y += tab_height;
+        rect.height = if (rect.height > tab_height) rect.height - tab_height else 0;
         if (self.show_border and rect.height >= 2 and rect.width >= 2) {
             rect.x += 1;
             rect.y += 1;
@@ -555,22 +587,34 @@ pub const TabView = struct {
 
     /// Draw implementation for TabView
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TabView, @ptrCast(widget_ptr));
+        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        const styled = self.widget.applyStyle(
+            "tab_view",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
         try self.tab_bar.widget.draw(renderer);
-        if (self.show_border and rect.width > 1 and rect.height > self.tab_bar.tab_height + 1) {
+        const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
+        if (self.show_border and rect.width > 1 and rect.height > tab_height + 1) {
             renderer.drawBox(
                 rect.x,
-                rect.y + self.tab_bar.tab_height,
+                rect.y + tab_height,
                 rect.width,
-                rect.height - self.tab_bar.tab_height,
+                rect.height - tab_height,
                 .single,
                 self.border_fg,
-                self.bg,
-                render.Style{},
+                bg,
+                style,
             );
         }
 
@@ -586,7 +630,7 @@ pub const TabView = struct {
 
     /// Event handling implementation for TabView
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*TabView, @ptrCast(widget_ptr));
+        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
 
         if (!self.widget.visible or !self.widget.enabled or self.tabs.items.len == 0) {
             return false;
@@ -602,10 +646,11 @@ pub const TabView = struct {
 
     /// Layout implementation for TabView
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TabView, @ptrCast(widget_ptr));
+        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
         self.widget.rect = rect;
 
-        const header_rect = layout_module.Rect.init(rect.x, rect.y, rect.width, self.tab_bar.tab_height);
+        const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
+        const header_rect = layout_module.Rect.init(rect.x, rect.y, rect.width, tab_height);
         try self.tab_bar.widget.layout(header_rect);
 
         const content_rect = self.contentRect();
@@ -618,20 +663,22 @@ pub const TabView = struct {
 
     /// Get preferred size implementation for TabView
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*TabView, @ptrCast(widget_ptr));
+        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
 
         var width: i16 = 20;
         var height: i16 = self.tab_bar.tab_height;
 
         const header_size = try self.tab_bar.widget.getPreferredSize();
-        width = @max(width, header_size.width);
-        height = @max(height, header_size.height);
+        width = @max(width, @as(i16, @intCast(@min(header_size.width, std.math.maxInt(i16)))));
+        height = @max(height, @as(i16, @intCast(@min(header_size.height, std.math.maxInt(i16)))));
 
         if (self.getActiveContent()) |content| {
             const content_size = try content.getPreferredSize();
             const border_space: i16 = if (self.show_border) 2 else 0;
-            width = @max(width, content_size.width + border_space * 2);
-            height += content_size.height + border_space * 2;
+            const content_width: i16 = @intCast(@min(content_size.width, std.math.maxInt(i16)));
+            const content_height: i16 = @intCast(@min(content_size.height, std.math.maxInt(i16)));
+            width = @max(width, content_width + border_space * 2);
+            height += content_height + border_space * 2;
         } else {
             height += 6;
         }
@@ -641,7 +688,7 @@ pub const TabView = struct {
 
     /// Can focus implementation for TabView
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TabView, @ptrCast(widget_ptr));
+        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.enabled or self.tabs.items.len == 0) return false;
 
         if (self.tab_bar.widget.canFocus()) return true;

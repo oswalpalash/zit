@@ -414,7 +414,7 @@ pub const InputField = struct {
 
         // Choose colors based on state
         const invalid = self.widget.enabled and self.hasValidationError();
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.disabled_fg
         else if (invalid)
             self.invalid_fg
@@ -423,7 +423,7 @@ pub const InputField = struct {
         else
             self.fg;
 
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.disabled_bg
         else if (invalid)
             self.invalid_bg
@@ -432,12 +432,23 @@ pub const InputField = struct {
         else
             self.bg;
 
+        const styled = self.widget.applyStyle(
+            "input",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            self.style,
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
         // Fill input field background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, self.style);
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         // Draw border if enabled
         if (self.show_border) {
-            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, self.style);
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, style);
         }
 
         // Get text content
@@ -459,17 +470,17 @@ pub const InputField = struct {
                 const safe_len = @min(copy_len, truncated.len - 3);
                 @memcpy(truncated[0..safe_len], self.placeholder[0..safe_len]);
                 @memcpy(truncated[safe_len .. safe_len + 3], "...");
-                renderer.drawStr(inner_x, inner_y, truncated[0 .. safe_len + 3], fg, bg, self.style);
+                renderer.drawStr(inner_x, inner_y, truncated[0 .. safe_len + 3], fg, bg, style);
             } else {
                 const slice_len: usize = @intCast(inner_width);
-                renderer.drawStr(inner_x, inner_y, self.placeholder[0..slice_len], fg, bg, self.style);
+                renderer.drawStr(inner_x, inner_y, self.placeholder[0..slice_len], fg, bg, style);
             }
         }
         // Otherwise draw text
         else if (content.len > 0 and inner_width > 0) {
             var rendered_len: usize = 0;
             if (content.len <= inner_width) {
-                renderer.drawStr(inner_x, inner_y, content, fg, bg, self.style);
+                renderer.drawStr(inner_x, inner_y, content, fg, bg, style);
                 rendered_len = content.len;
             } else if (inner_width > 3) {
                 var truncated: [256]u8 = undefined;
@@ -478,11 +489,11 @@ pub const InputField = struct {
                 @memcpy(truncated[0..safe_len], content[0..safe_len]);
                 @memcpy(truncated[safe_len .. safe_len + 3], "...");
                 rendered_len = safe_len + 3;
-                renderer.drawStr(inner_x, inner_y, truncated[0..rendered_len], fg, bg, self.style);
+                renderer.drawStr(inner_x, inner_y, truncated[0..rendered_len], fg, bg, style);
             } else {
                 const slice_len: usize = @intCast(inner_width);
                 rendered_len = slice_len;
-                renderer.drawStr(inner_x, inner_y, content[0..slice_len], fg, bg, self.style);
+                renderer.drawStr(inner_x, inner_y, content[0..slice_len], fg, bg, style);
             }
 
             // Draw cursor if focused
