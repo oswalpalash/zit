@@ -261,3 +261,44 @@ pub const Modal = struct {
         return self.getPreferredSize();
     }
 };
+
+var test_modal_closed: usize = 0;
+
+test "modal init/deinit" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    try modal.setTitle("Confirm");
+    try std.testing.expectEqualStrings("Confirm", modal.title);
+}
+
+test "modal closes on escape and fires callback" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    test_modal_closed = 0;
+    const callback = struct {
+        fn call() void {
+            test_modal_closed += 1;
+        }
+    }.call;
+    modal.setOnClose(callback);
+
+    modal.widget.visible = true;
+    const escape_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ESCAPE, input.KeyModifiers{}) };
+    try std.testing.expect(try modal.widget.handleEvent(escape_event));
+    try std.testing.expect(!modal.widget.visible);
+    try std.testing.expectEqual(@as(usize, 1), test_modal_closed);
+}
+
+test "modal clamps to available bounds when empty" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    try modal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
+    try std.testing.expectEqual(@as(u16, 8), modal.widget.rect.width);
+    try std.testing.expectEqual(@as(u16, 4), modal.widget.rect.height);
+}
