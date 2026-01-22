@@ -22,6 +22,10 @@ This document explains how Zit fits together internally: the main modules, how d
 - **Timers/Animations → Event loop**
   - `event.timer.TimerManager` and `widget.animation.Animator` enqueue callbacks/events that are processed alongside user input, keeping motion and IO unified.
 
+## Application Loop
+- The app loop is a thin orchestration layer around input polling, `Application.tickOnce()`, layout, and `Renderer.render()`.
+- See `docs/APP_LOOP_TUTORIAL.md` for a full end-to-end example that wires together terminal setup, the event queue, reflow layout, and rendering.
+
 ## Memory Management Strategy
 - **MemoryManager** owns:
   - An **arena allocator**: fast, resettable per-frame scratch space for transient buffers, measurements, and decoded input.
