@@ -86,7 +86,7 @@ pub const Table = struct {
     /// Show grid
     show_grid: bool = true,
     /// On row selected callback
-    on_row_selected: ?*const fn (usize) void = null,
+    on_row_select: ?*const fn (usize) void = null,
     /// Allocator for table operations
     allocator: std.mem.Allocator,
     /// Optional string interner for deduplicating cell/header text
@@ -502,8 +502,8 @@ pub const Table = struct {
         }
 
         // Call the row selected callback
-        if (old_selected != self.selected_row and self.on_row_selected != null and self.selected_row != null) {
-            self.on_row_selected.?(self.selected_row.?);
+        if (old_selected != self.selected_row and self.on_row_select != null and self.selected_row != null) {
+            self.on_row_select.?(self.selected_row.?);
         }
     }
 
@@ -562,8 +562,8 @@ pub const Table = struct {
     }
 
     /// Set the on-row-selected callback
-    pub fn setOnRowSelected(self: *Table, callback: *const fn (usize) void) void {
-        self.on_row_selected = callback;
+    pub fn setOnRowSelect(self: *Table, callback: *const fn (usize) void) void {
+        self.on_row_select = callback;
     }
 
     /// Set the border style
