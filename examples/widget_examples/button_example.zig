@@ -78,12 +78,12 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
     defer memory_manager.deinit();
 
-    // Initialize terminal with memory manager
-    var terminal = try zit.terminal.init(memory_manager.getArenaAllocator());
+    // Initialize terminal with the parent allocator
+    var terminal = try zit.terminal.init(allocator);
     defer terminal.deinit() catch {};
 
-    // Initialize input handler with memory manager
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &terminal);
+    // Initialize input handler with the parent allocator
+    var input_handler = zit.input.InputHandler.init(allocator, &terminal);
 
     // Create a root container using widget pool allocator
     var root = try Container.init(memory_manager.getWidgetPoolAllocator());
@@ -96,8 +96,8 @@ pub fn main() !void {
     root.setTheme(ui_theme);
     root.setBorder(.single);
 
-    // Create a renderer with memory manager
-    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), terminal.width, terminal.height);
+    // Create a renderer with the parent allocator
+    var renderer = try render.Renderer.init(allocator, terminal.width, terminal.height);
     defer renderer.deinit();
 
     // Create a title label using widget pool allocator
@@ -108,7 +108,7 @@ pub fn main() !void {
     try root.addChild(@as(*zit.widget.Widget, @ptrCast(title)));
 
     // Create a flex layout for buttons
-    var flex_layout = try layout.FlexLayout.init(memory_manager.getArenaAllocator(), .column);
+    var flex_layout = try layout.FlexLayout.init(allocator, .column);
     defer flex_layout.deinit();
     _ = flex_layout.mainAlignment(.center);
     _ = flex_layout.crossAlignment(.center);

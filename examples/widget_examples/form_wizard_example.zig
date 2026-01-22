@@ -95,13 +95,13 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = try zit.terminal.init(allocator);
     defer term.deinit() catch {};
 
-    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
+    var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
 
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -317,7 +317,7 @@ pub fn main() !void {
 
         switch (pending_action) {
             .next => {
-                if (try validateAccount(memory_manager.getArenaAllocator(), name, email, agree, &status)) {
+                if (try validateAccount(allocator, name, email, agree, &status)) {
                     step = 1;
                     focus_index = 0;
                     setStatus(&status, "Account info looks good. Preferences next.", .{});
@@ -333,7 +333,7 @@ pub fn main() !void {
                 pending_action = .none;
             },
             .submit => {
-                if (try validateAccount(memory_manager.getArenaAllocator(), name, email, agree, &status) and validatePreferences(newsletter, updates, &status)) {
+                if (try validateAccount(allocator, name, email, agree, &status) and validatePreferences(newsletter, updates, &status)) {
                     var summary: [160]u8 = undefined;
                     const theme_label = theme_choice.options.items[theme_choice.selected];
                     const msg = std.fmt.bufPrint(&summary, "Saved! User {s} ({s}), updates: {s}/{s}, theme: {s}", .{
