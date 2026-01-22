@@ -46,8 +46,10 @@ pub const ScrollContainer = struct {
     /// Show border
     show_border: bool = true,
     /// Border style
-    border: render.Color = render.Color{ .named_color = render.NamedColor.white },
-    /// Border style characters
+    border: BorderStyle = .single,
+    /// Custom border style characters
+    custom_border_style: ?*const [6]u21 = null,
+    /// Render style
     style: render.Style = render.Style{},
     /// Allocator for scroll container operations
     allocator: std.mem.Allocator,
@@ -129,7 +131,7 @@ pub const ScrollContainer = struct {
 
     /// Set custom border style
     pub fn setCustomBorderStyle(self: *ScrollContainer, style: *const [6]u21) void {
-        self.style = style;
+        self.custom_border_style = style;
     }
 
     /// Horizontal scroll callback
@@ -145,18 +147,11 @@ pub const ScrollContainer = struct {
     /// Update the content size
     fn updateContentSize(self: *ScrollContainer) void {
         if (self.content) |content| {
-            const content_size = content.get_preferred_size() catch layout_module.Size.init(0, 0);
+            const content_size = content.getPreferredSize() catch layout_module.Size.init(0, 0);
             self.content_width = content_size.width;
             self.content_height = content_size.height;
-
-            // Update scrollbar maximums
-            if (self.h_scrollbar) |h_scrollbar_widget| {
-                h_scrollbar_widget.setMaxValue(@intCast(@max(0, self.content_width - self.getViewportWidth())));
-            }
-
-            if (self.v_scrollbar) |v_scrollbar_widget| {
-                v_scrollbar_widget.setMaxValue(@as(u8, @intCast(@max(0, self.content_height - self.getViewportHeight()))));
-            }
+            self.syncHScrollbar();
+            self.syncVScrollbar();
         }
     }
 
@@ -218,23 +213,33 @@ pub const ScrollContainer = struct {
 
     fn syncVScrollbar(self: *ScrollContainer) void {
         if (self.v_scrollbar) |v_scrollbar_widget| {
-            const denom = @max(1, self.maxVerticalOffset());
-            const value = @as(u8, @intCast(self.v_offset * v_scrollbar_widget.max_value / denom));
+            const max_offset = self.maxVerticalOffset();
+            const denom = @as(f32, @floatFromInt(@max(1, max_offset)));
+            const value = @as(f32, @floatFromInt(self.v_offset)) / denom;
             v_scrollbar_widget.setValue(value);
+
+            const content_height = @max(1, self.content_height);
+            const ratio = @as(f32, @floatFromInt(self.getViewportHeight())) / @as(f32, @floatFromInt(content_height));
+            v_scrollbar_widget.setThumbRatio(ratio);
         }
     }
 
     fn syncHScrollbar(self: *ScrollContainer) void {
         if (self.h_scrollbar) |h_scrollbar_widget| {
-            const denom = @max(1, self.maxHorizontalOffset());
-            const value = @as(u8, @intCast(self.h_offset * h_scrollbar_widget.max_value / denom));
+            const max_offset = self.maxHorizontalOffset();
+            const denom = @as(f32, @floatFromInt(@max(1, max_offset)));
+            const value = @as(f32, @floatFromInt(self.h_offset)) / denom;
             h_scrollbar_widget.setValue(value);
+
+            const content_width = @max(1, self.content_width);
+            const ratio = @as(f32, @floatFromInt(self.getViewportWidth())) / @as(f32, @floatFromInt(content_width));
+            h_scrollbar_widget.setThumbRatio(ratio);
         }
     }
 
     /// Get the border characters based on style
     fn getBorderChars(self: *ScrollContainer) [6]u21 {
-        if (self.style) |custom_style| {
+        if (self.custom_border_style) |custom_style| {
             return custom_style.*;
         }
 
@@ -312,13 +317,13 @@ pub const ScrollContainer = struct {
         // Draw scrollbars
         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
             if (self.h_scrollbar) |h_scrollbar_widget| {
-                try h_scrollbar_widget.draw(renderer);
+                try h_scrollbar_widget.widget.draw(renderer);
             }
         }
 
         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
             if (self.v_scrollbar) |v_scrollbar_widget| {
-                try v_scrollbar_widget.draw(renderer);
+                try v_scrollbar_widget.widget.draw(renderer);
             }
         }
 
@@ -361,8 +366,10 @@ pub const ScrollContainer = struct {
         // First check if scrollbars handle the event
         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
             if (self.h_scrollbar) |h_scrollbar_widget| {
-                if (try h_scrollbar_widget.handle_event(event)) {
-                    self.h_offset = @as(i16, @intCast(@as(f32, h_scrollbar_widget.getValue()) * @max(1, (self.content_width - self.getViewportWidth()) / @max(1, h_scrollbar_widget.max_value))));
+                if (try h_scrollbar_widget.widget.handleEvent(event)) {
+                    const max_offset = self.maxHorizontalOffset();
+                    const offset = @as(i16, @intFromFloat(@round(h_scrollbar_widget.getValue() * @as(f32, @floatFromInt(max_offset)))));
+                    self.applyHOffset(offset);
                     return true;
                 }
             }
@@ -370,8 +377,10 @@ pub const ScrollContainer = struct {
 
         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
             if (self.v_scrollbar) |v_scrollbar_widget| {
-                if (try v_scrollbar_widget.handle_event(event)) {
-                    self.v_offset = @as(i16, @intCast(@as(f32, v_scrollbar_widget.getValue()) * @max(1, (self.content_height - self.getViewportHeight()) / @max(1, v_scrollbar_widget.max_value))));
+                if (try v_scrollbar_widget.widget.handleEvent(event)) {
+                    const max_offset = self.maxVerticalOffset();
+                    const offset = @as(i16, @intFromFloat(@round(v_scrollbar_widget.getValue() * @as(f32, @floatFromInt(max_offset)))));
+                    self.applyVOffset(offset);
                     return true;
                 }
             }
@@ -379,7 +388,7 @@ pub const ScrollContainer = struct {
 
         // Check if content handles the event
         if (self.content) |content| {
-            if (try content.handle_event(event)) {
+            if (try content.handleEvent(event)) {
                 return true;
             }
         }
@@ -506,7 +515,7 @@ pub const ScrollContainer = struct {
                     h_scrollbar_rect.width -= 1; // Make room for vertical scrollbar
                 }
 
-                try h_scrollbar_widget.layout(h_scrollbar_rect);
+                try h_scrollbar_widget.widget.layout(h_scrollbar_rect);
             }
         }
 
@@ -520,7 +529,7 @@ pub const ScrollContainer = struct {
                     v_scrollbar_rect.height -= 1; // Make room for horizontal scrollbar
                 }
 
-                try v_scrollbar_widget.layout(v_scrollbar_rect);
+                try v_scrollbar_widget.widget.layout(v_scrollbar_rect);
             }
         }
 
@@ -546,7 +555,7 @@ pub const ScrollContainer = struct {
         var height: i16 = 5; // Minimum height
 
         if (self.content) |content| {
-            const content_size = try content.get_preferred_size();
+            const content_size = try content.getPreferredSize();
             width = @max(width, content_size.width);
             height = @max(height, content_size.height);
         }
@@ -579,7 +588,7 @@ pub const ScrollContainer = struct {
 
         // We can focus if either scrollbars or content can focus
         if (self.content) |content| {
-            if (content.can_focus()) {
+            if (content.canFocus()) {
                 return true;
             }
         }
