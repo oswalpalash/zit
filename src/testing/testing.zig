@@ -548,6 +548,52 @@ test "snapshot comparison uses golden files" {
     try snap.expectGolden(alloc, "src/testing/golden/button_basic.snap", .{});
 }
 
+test "snapshot label basic render" {
+    const alloc = std.testing.allocator;
+    var label_builder = widget.LabelBuilder.init(alloc);
+    var label = try label_builder.content("Hello").build();
+    defer label.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(10, 1));
+    defer harness.deinit();
+    try harness.expectGolden(&label.widget, "src/testing/golden/label_basic.snap", .{});
+}
+
+test "snapshot label multiline render" {
+    const alloc = std.testing.allocator;
+    var label_builder = widget.LabelBuilder.init(alloc);
+    var label = try label_builder.content("Hello\nWorld").build();
+    defer label.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(10, 2));
+    defer harness.deinit();
+    try harness.expectGolden(&label.widget, "src/testing/golden/label_multiline.snap", .{});
+}
+
+test "snapshot label alignment variations" {
+    const alloc = std.testing.allocator;
+    var left_builder = widget.LabelBuilder.init(alloc);
+    var left = try left_builder.content("Hi").alignTo(.left).build();
+    defer left.deinit();
+    var left_harness = try WidgetHarness.init(alloc, layout.Size.init(8, 1));
+    defer left_harness.deinit();
+    try left_harness.expectGolden(&left.widget, "src/testing/golden/label_align_left.snap", .{});
+
+    var center_builder = widget.LabelBuilder.init(alloc);
+    var center = try center_builder.content("Hi").alignTo(.center).build();
+    defer center.deinit();
+    var center_harness = try WidgetHarness.init(alloc, layout.Size.init(8, 1));
+    defer center_harness.deinit();
+    try center_harness.expectGolden(&center.widget, "src/testing/golden/label_align_center.snap", .{});
+
+    var right_builder = widget.LabelBuilder.init(alloc);
+    var right = try right_builder.content("Hi").alignTo(.right).build();
+    defer right.deinit();
+    var right_harness = try WidgetHarness.init(alloc, layout.Size.init(8, 1));
+    defer right_harness.deinit();
+    try right_harness.expectGolden(&right.widget, "src/testing/golden/label_align_right.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);
