@@ -419,7 +419,7 @@ pub fn main() !void {
     for (menu_actions, 0..) |act, i| {
         try ctx_menu.addItem(menuLabel(act), true, @ptrCast(&menu_actions[i]));
     }
-    ctx_menu.setOnSelect(handleMenuSelection, null);
+    ctx_menu.setOnSelectWithContext(handleMenuSelection, null);
 
     var image = try widget.ImageWidget.init(memory_manager.getWidgetPoolAllocator(), 32, 12);
     defer image.deinit();
