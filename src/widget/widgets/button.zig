@@ -124,20 +124,21 @@ pub const Button = struct {
         if (self.button_text.len > 0 and rect.width > 2 and rect.height > 2) {
             const inner_width = rect.width - 2;
             var truncated_text: [256]u8 = undefined;
-            if (inner_width > 3 and self.button_text.len > inner_width - 3) {
-                @memcpy(truncated_text[0 .. inner_width - 3], self.button_text[0 .. inner_width - 3]);
-                @memcpy(truncated_text[inner_width - 3 .. inner_width], "...");
+            const max_width = @min(@as(usize, inner_width), truncated_text.len);
+            if (max_width > 3 and self.button_text.len > max_width - 3) {
+                @memcpy(truncated_text[0 .. max_width - 3], self.button_text[0 .. max_width - 3]);
+                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
                 // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(@min(inner_width, truncated_text.len)));
+                const text_len = @as(u16, @intCast(max_width));
                 const text_x = if (inner_width > text_len)
                     rect.x + 1 + (inner_width - text_len) / 2
                 else
                     rect.x + 1;
                 const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, truncated_text[0..inner_width], fg, bg, self.style);
+                renderer.drawStr(text_x, text_y, truncated_text[0..max_width], fg, bg, self.style);
             } else {
                 // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(@min(inner_width, self.button_text.len)));
+                const text_len = @as(u16, @intCast(@min(@as(usize, inner_width), self.button_text.len)));
                 const text_x = if (inner_width > text_len)
                     rect.x + 1 + (inner_width - text_len) / 2
                 else
