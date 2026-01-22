@@ -747,6 +747,21 @@ test "snapshot list selected state" {
     try harness.expectGolden(&list.widget, "src/testing/golden/list_selected.snap", .{});
 }
 
+test "snapshot table with headers and data" {
+    const alloc = std.testing.allocator;
+    var builder = widget.TableBuilder.init(alloc);
+    _ = try builder.addColumn(.{ .header = "Name", .width = 8 });
+    _ = try builder.addColumn(.{ .header = "Qty", .width = 6 });
+    var table = try builder.build();
+    defer table.deinit();
+    try table.addRow(&.{ "Apples", "5" });
+    try table.addRow(&.{ "Oranges", "12" });
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(14, 4));
+    defer harness.deinit();
+    try harness.expectGolden(&table.widget, "src/testing/golden/table_basic.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);
