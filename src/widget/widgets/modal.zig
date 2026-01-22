@@ -258,6 +258,6 @@ pub const Modal = struct {
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!Size {
         const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
-        return Size{ .width = self.width, .height = self.height };
+        return self.getPreferredSize();
     }
 };
