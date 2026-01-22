@@ -181,3 +181,59 @@ pub const Checkbox = struct {
         return self.widget.enabled;
     }
 };
+
+var test_checkbox_calls: usize = 0;
+var test_checkbox_state: ?bool = null;
+
+test "checkbox init/deinit" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Accept");
+    defer checkbox.deinit();
+
+    try std.testing.expectEqualStrings("Accept", checkbox.label);
+}
+
+test "checkbox toggles and fires callback" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Agree");
+    defer checkbox.deinit();
+
+    test_checkbox_calls = 0;
+    test_checkbox_state = null;
+    const callback = struct {
+        fn call(value: bool) void {
+            test_checkbox_calls += 1;
+            test_checkbox_state = value;
+        }
+    }.call;
+    checkbox.setOnChange(callback);
+    checkbox.widget.rect = layout_module.Rect.init(0, 0, 8, 1);
+
+    const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
+    try std.testing.expect(try checkbox.widget.handleEvent(click_event));
+    try std.testing.expect(checkbox.checked);
+    try std.testing.expectEqual(@as(usize, 1), test_checkbox_calls);
+    try std.testing.expectEqual(true, test_checkbox_state.?);
+}
+
+test "checkbox ignores presses when bounds are zero" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "");
+    defer checkbox.deinit();
+
+    test_checkbox_calls = 0;
+    test_checkbox_state = null;
+    const callback = struct {
+        fn call(value: bool) void {
+            test_checkbox_calls += 1;
+            test_checkbox_state = value;
+        }
+    }.call;
+    checkbox.setOnChange(callback);
+    checkbox.widget.rect = layout_module.Rect.init(0, 0, 0, 0);
+
+    const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
+    try std.testing.expect(!try checkbox.widget.handleEvent(click_event));
+    try std.testing.expectEqual(@as(usize, 0), test_checkbox_calls);
+    try std.testing.expectEqual(@as(?bool, null), test_checkbox_state);
+}
