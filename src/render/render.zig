@@ -1,8 +1,15 @@
 const std = @import("std");
 const text_metrics = @import("text_metrics.zig");
 const term_caps = @import("../terminal/capabilities.zig");
+const base_widget = @import("../widget/widgets/base_widget.zig");
 
 pub const TextDirection = text_metrics.TextDirection;
+
+/// Traverse a widget tree (root first) without allocations.
+pub fn traverseWidgetTree(root: *base_widget.Widget, callback: *const fn (*base_widget.Widget) void) void {
+    callback(root);
+    root.traverseChildren(callback);
+}
 
 fn validateColorComponent(value: anytype, comptime label: []const u8) u8 {
     if (@TypeOf(value) == comptime_int) {

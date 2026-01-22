@@ -266,14 +266,14 @@ pub const ScreenManager = struct {
         const rect = self.widget.rect;
         const active_trans = self.active_transition;
 
-        var draw_indices = std.ArrayList(usize).init(self.allocator);
-        defer draw_indices.deinit();
+        var draw_indices = std.ArrayList(usize).empty;
+        defer draw_indices.deinit(self.allocator);
 
         if (active_trans) |t| {
-            if (t.exiting) |idx| try draw_indices.append(idx);
-            if (t.entering) |idx| try draw_indices.append(idx);
+            if (t.exiting) |idx| try draw_indices.append(self.allocator, idx);
+            if (t.entering) |idx| try draw_indices.append(self.allocator, idx);
         } else {
-            try draw_indices.append(self.screens.items.len - 1);
+            try draw_indices.append(self.allocator, self.screens.items.len - 1);
         }
 
         std.mem.sort(usize, draw_indices.items, {}, comptime std.sort.asc(usize));
@@ -353,12 +353,13 @@ test "screen manager runs lifecycle hooks on push/pop" {
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
 
-    var order = std.ArrayList([]const u8).init(alloc);
-    defer order.deinit();
+    var order = std.ArrayList([]const u8).empty;
+    defer order.deinit(alloc);
     const recorder = struct {
         var events: *std.ArrayList([]const u8) = undefined;
+        var allocator: std.mem.Allocator = undefined;
         fn push(tag: []const u8) !void {
-            try events.append(tag);
+            try events.append(allocator, tag);
         }
         fn enter(_: *ScreenContext) anyerror!void {
             try push("enter");
@@ -375,6 +376,7 @@ test "screen manager runs lifecycle hooks on push/pop" {
     };
 
     recorder.events = &order;
+    recorder.allocator = alloc;
     const hooks = ScreenLifecycle{
         .on_enter = recorder.enter,
         .on_exit = recorder.exit,

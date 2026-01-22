@@ -4,6 +4,13 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const event_module = @import("../../event/event.zig");
 const animation = @import("../animation.zig");
+const container_widget = @import("container.zig");
+const scroll_container_widget = @import("scroll_container.zig");
+const split_pane_widget = @import("split_pane.zig");
+const tab_view_widget = @import("tab_view.zig");
+const block_widget = @import("block.zig");
+const modal_widget = @import("modal.zig");
+const screen_manager_widget = @import("screen_manager.zig");
 
 /// Focus direction for navigation
 pub const FocusDirection = enum {
@@ -142,6 +149,11 @@ pub const Widget = struct {
         self.parent = parent;
     }
 
+    /// Traverse widget children depth-first and invoke a callback for each child.
+    pub fn traverseChildren(widget: *Widget, callback: *const fn (*Widget) void) void {
+        traverseChildrenImpl(widget, callback);
+    }
+
     /// Draw a configurable focus ring if one is configured and the widget is focused.
     pub fn drawFocusRing(self: *Widget, renderer: *render.Renderer) void {
         if (!self.focused) return;
@@ -181,6 +193,91 @@ pub const Widget = struct {
         };
     }
 };
+
+fn asWidget(comptime T: type, base_ptr: *Widget) ?*T {
+    if (!@hasDecl(T, "vtable") or !@hasField(T, "widget")) return null;
+    if (base_ptr.vtable == &T.vtable) {
+        return @alignCast(@fieldParentPtr("widget", base_ptr));
+    }
+    return null;
+}
+
+fn traverseChildrenImpl(widget: *Widget, callback: *const fn (*Widget) void) void {
+    if (asWidget(container_widget.Container, widget)) |container| {
+        for (container.children.items) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(scroll_container_widget.ScrollContainer, widget)) |container| {
+        if (container.content) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        if (container.h_scrollbar) |bar| {
+            const child = &bar.widget;
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        if (container.v_scrollbar) |bar| {
+            const child = &bar.widget;
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(split_pane_widget.SplitPane, widget)) |pane| {
+        if (pane.first) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        if (pane.second) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(tab_view_widget.TabView, widget)) |tabs| {
+        const tab_bar_child = &tabs.tab_bar.widget;
+        callback(tab_bar_child);
+        traverseChildrenImpl(tab_bar_child, callback);
+        for (tabs.tabs.items) |tab| {
+            if (tab.content) |child| {
+                callback(child);
+                traverseChildrenImpl(child, callback);
+            }
+        }
+        return;
+    }
+
+    if (asWidget(block_widget.Block, widget)) |block| {
+        if (block.child) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(modal_widget.Modal, widget)) |modal| {
+        if (modal.content) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(screen_manager_widget.ScreenManager, widget)) |manager| {
+        for (manager.screens.items) |entry| {
+            const child = entry.screen.widget;
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+    }
+}
 
 /// Adapter function to convert Widget layout to LayoutElement layout
 fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) layout_module.Size {

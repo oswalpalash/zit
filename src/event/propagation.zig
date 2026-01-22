@@ -3,6 +3,24 @@ const event = @import("event.zig");
 const widget = @import("../widget/widget.zig");
 
 /// Functions for working with event propagation paths
+/// Walk up the parent pointers starting at `start_widget`.
+pub const RootTraversal = struct {
+    current: ?*widget.Widget,
+
+    pub fn next(self: *RootTraversal) ?*widget.Widget {
+        if (self.current) |node| {
+            self.current = node.parent;
+            return node;
+        }
+        return null;
+    }
+};
+
+/// Create a traversal helper for walking from a widget to the root.
+pub fn traverseToRoot(start_widget: *widget.Widget) RootTraversal {
+    return RootTraversal{ .current = start_widget };
+}
+
 /// Build a widget path from child to root for event propagation while reusing scratch storage.
 pub fn buildWidgetPathInto(
     allocator: std.mem.Allocator,
@@ -10,11 +28,10 @@ pub fn buildWidgetPathInto(
     scratch: *std.ArrayListUnmanaged(*widget.Widget),
 ) ![]*widget.Widget {
     // Count depth first so we can size the scratch list up-front and avoid growth allocations.
-    var depth: usize = 1;
-    var probe = start_widget;
-    while (probe.parent) |parent| {
+    var depth: usize = 0;
+    var counter = traverseToRoot(start_widget);
+    while (counter.next()) |_| {
         depth += 1;
-        probe = @ptrCast(parent);
     }
 
     scratch.clearRetainingCapacity();
@@ -22,12 +39,9 @@ pub fn buildWidgetPathInto(
         try scratch.ensureTotalCapacity(allocator, depth);
     }
 
-    var current = start_widget;
-    while (true) {
+    var iter = traverseToRoot(start_widget);
+    while (iter.next()) |current| {
         scratch.appendAssumeCapacity(current);
-        if (current.parent) |parent| {
-            current = @ptrCast(parent);
-        } else break;
     }
 
     // Reverse so path is ordered root -> target
@@ -94,4 +108,30 @@ pub fn processEventsWithPropagation(queue: *event.EventQueue, allocator: std.mem
             }
         }
     }
+}
+
+test "traverseToRoot walks widget parents" {
+    const alloc = std.testing.allocator;
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    var child = try widget.Container.init(alloc);
+    defer child.deinit();
+    var leaf = try widget.Container.init(alloc);
+    defer leaf.deinit();
+
+    try root.addChild(&child.widget);
+    try child.addChild(&leaf.widget);
+
+    var order = std.ArrayList(*widget.Widget).empty;
+    defer order.deinit(alloc);
+
+    var traversal = traverseToRoot(&leaf.widget);
+    while (traversal.next()) |node| {
+        try order.append(alloc, node);
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), order.items.len);
+    try std.testing.expectEqual(&leaf.widget, order.items[0]);
+    try std.testing.expectEqual(&child.widget, order.items[1]);
+    try std.testing.expectEqual(&root.widget, order.items[2]);
 }
