@@ -47,7 +47,7 @@ pub fn main() !void {
             std.debug.print("Selected row {d}\n", .{idx});
         }
     };
-    table.setOnRowSelected(onSelectCtx.logSelection);
+    table.setOnRowSelect(onSelectCtx.logSelection);
 
     try term.enableRawMode();
     try term.hideCursor();
