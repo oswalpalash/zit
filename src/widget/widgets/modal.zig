@@ -77,6 +77,7 @@ pub const Modal = struct {
     /// Set the modal content
     pub fn setContent(self: *Modal, content: *Widget) void {
         self.content = content;
+        content.parent = &self.widget;
     }
 
     /// Set the modal title
