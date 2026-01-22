@@ -1,5 +1,6 @@
 const std = @import("std");
 const renderer_mod = @import("../render/render.zig");
+const base_widget = @import("../widget/widgets/base_widget.zig");
 
 fn checkedDimension(value: anytype, comptime label: []const u8) u16 {
     if (@TypeOf(value) == comptime_int or @TypeOf(value) == comptime_float) {
@@ -34,6 +35,12 @@ fn intersectsViewport(rect: Rect, renderer: *renderer_mod.Renderer) bool {
     if (rect.width == 0 or rect.height == 0) return false;
     if (renderer.back.width == 0 or renderer.back.height == 0) return false;
     return rect.x < renderer.back.width and rect.y < renderer.back.height;
+}
+
+/// Traverse a widget tree (root first) without allocations.
+pub fn traverseWidgetTree(root: *base_widget.Widget, callback: *const fn (*base_widget.Widget) void) void {
+    callback(root);
+    root.traverseChildren(callback);
 }
 
 /// Layout system module
