@@ -762,6 +762,24 @@ test "snapshot table with headers and data" {
     try harness.expectGolden(&table.widget, "src/testing/golden/table_basic.snap", .{});
 }
 
+test "snapshot modal with content" {
+    const alloc = std.testing.allocator;
+    var modal = try widget.Modal.init(alloc);
+    defer modal.deinit();
+    try modal.setTitle("Confirm");
+    modal.width = 20;
+    modal.height = 6;
+
+    var label_builder = widget.LabelBuilder.init(alloc);
+    var label = try label_builder.content("Proceed?").build();
+    defer label.deinit();
+    modal.setContent(&label.widget);
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(24, 8));
+    defer harness.deinit();
+    try harness.expectGolden(&modal.widget, "src/testing/golden/modal_basic.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);
