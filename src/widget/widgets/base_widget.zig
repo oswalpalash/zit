@@ -34,6 +34,10 @@ pub const Widget = struct {
     focused: bool = false,
     /// Whether the widget is visible
     visible: bool = true,
+    /// Whether the widget needs to be redrawn
+    dirty: bool = true,
+    /// Optional dirty rectangle for partial redraws
+    dirty_rect: ?layout_module.Rect = null,
     /// Whether the widget is enabled
     enabled: bool = true,
     /// Widget ID for identification
@@ -89,7 +93,11 @@ pub const Widget = struct {
 
     /// Draw the widget
     pub fn draw(self: *Widget, renderer: *render.Renderer) !void {
-        return self.vtable.draw(self, renderer);
+        const animating = self.visibility_transition.isAnimating();
+        if (!self.visible and !animating) return;
+        if (!self.dirty and !animating) return;
+        try self.vtable.draw(self, renderer);
+        self.clearDirty();
     }
 
     /// Handle an input event
@@ -97,13 +105,21 @@ pub const Widget = struct {
         if (!self.visible or !self.enabled or self.visibility_transition.isHiding()) {
             return false;
         }
-        return self.vtable.handle_event(self, event);
+        const handled = try self.vtable.handle_event(self, event);
+        if (handled) {
+            self.markDirty();
+        }
+        return handled;
     }
 
     /// Layout the widget
     pub fn layout(self: *Widget, rect: layout_module.Rect) !void {
+        const previous = self.rect;
         self.rect = rect;
         try self.vtable.layout(self, rect);
+        if (!rectEql(previous, self.rect)) {
+            self.markDirtyRect(rectUnion(previous, self.rect));
+        }
         if (self.accessibility_update_bounds) |cb| {
             cb(self.accessibility_ctx, self, self.rect);
         }
@@ -124,38 +140,48 @@ pub const Widget = struct {
 
     /// Set focus state
     pub fn setFocus(self: *Widget, focused: bool) void {
+        if (self.focused == focused) return;
         self.focused = focused;
+        self.markDirty();
     }
 
     /// Set visibility
     pub fn setVisible(self: *Widget, visible: bool) void {
+        if (self.visible == visible) return;
         self.visible = visible;
         self.visibility_transition.snap(visible);
+        self.markDirty();
     }
 
     /// Set enabled state
     pub fn setEnabled(self: *Widget, enabled: bool) void {
+        if (self.enabled == enabled) return;
         self.enabled = enabled;
+        self.markDirty();
     }
 
     /// Set widget ID
     pub fn setId(self: *Widget, id: []const u8) void {
         self.id = id;
+        self.markDirty();
     }
 
     /// Set widget style class for CSS-like styling
     pub fn setClass(self: *Widget, class: ?[]const u8) void {
         self.style_class = class;
+        self.markDirty();
     }
 
     /// Attach a stylesheet for CSS-like styling.
     pub fn setStyleSheet(self: *Widget, sheet: ?*css.StyleSheet) void {
         self.style_sheet = sheet;
+        self.markDirty();
     }
 
     /// Attach a theme for resolving stylesheet roles.
     pub fn setStyleTheme(self: *Widget, theme_value: ?theme.Theme) void {
         self.style_theme = theme_value;
+        self.markDirty();
     }
 
     /// Set accessibility metadata for this widget.
@@ -225,6 +251,7 @@ pub const Widget = struct {
     /// Set focus ring styling.
     pub fn setFocusRing(self: *Widget, ring: ?render.FocusRingStyle) void {
         self.focus_ring = ring;
+        self.markDirty();
     }
 
     /// Animate visibility using configured transitions. This keeps the widget
@@ -234,6 +261,31 @@ pub const Widget = struct {
             self.visible = true;
         }
         _ = try self.visibility_transition.animate(animator, visible, opts);
+        self.markDirty();
+    }
+
+    /// Mark the widget dirty so it redraws on the next render pass.
+    pub fn markDirty(self: *Widget) void {
+        self.markDirtyRect(self.rect);
+    }
+
+    /// Mark a specific rect as dirty and propagate to parents.
+    pub fn markDirtyRect(self: *Widget, rect: layout_module.Rect) void {
+        self.dirty = true;
+        if (self.dirty_rect) |existing| {
+            self.dirty_rect = rectUnion(existing, rect);
+        } else {
+            self.dirty_rect = rect;
+        }
+        if (self.parent) |parent| {
+            parent.markDirtyRect(rect);
+        }
+    }
+
+    /// Clear the dirty flag after a successful draw.
+    pub fn clearDirty(self: *Widget) void {
+        self.dirty = false;
+        self.dirty_rect = null;
     }
 
     /// Current visibility alpha (1 when fully visible, 0 when hidden).
@@ -697,6 +749,14 @@ fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) 
 fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout_module.Rect) void {
     const widget = @as(*Widget, @ptrCast(@alignCast(ctx)));
 
+    const animating = widget.visibility_transition.isAnimating();
+    if (!widget.visible and !animating) {
+        return;
+    }
+    if (!widget.dirty and !animating) {
+        return;
+    }
+
     var draw_rect = rect;
     const disp = widget.visibility_transition.displacement();
     if (disp.dx != 0 or disp.dy != 0) {
@@ -747,6 +807,30 @@ fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {
     std.log.err(
         "zit.widget: {s} {s} failed with {s} (rect={d}x{d}+{d},{d}, visible={any}, enabled={any}). Tip: set an id for easier tracing and use zit.debug.LayoutDebugger to visualize bounds.",
         .{ id, action, @errorName(err), widget.rect.width, widget.rect.height, widget.rect.x, widget.rect.y, widget.visible, widget.enabled },
+    );
+}
+
+fn rectEql(lhs: layout_module.Rect, rhs: layout_module.Rect) bool {
+    return lhs.x == rhs.x and lhs.y == rhs.y and lhs.width == rhs.width and lhs.height == rhs.height;
+}
+
+fn rectUnion(lhs: layout_module.Rect, rhs: layout_module.Rect) layout_module.Rect {
+    const min_x: u32 = @min(lhs.x, rhs.x);
+    const min_y: u32 = @min(lhs.y, rhs.y);
+    const lhs_max_x: u32 = @as(u32, lhs.x) + lhs.width;
+    const rhs_max_x: u32 = @as(u32, rhs.x) + rhs.width;
+    const lhs_max_y: u32 = @as(u32, lhs.y) + lhs.height;
+    const rhs_max_y: u32 = @as(u32, rhs.y) + rhs.height;
+    const max_x = @max(lhs_max_x, rhs_max_x);
+    const max_y = @max(lhs_max_y, rhs_max_y);
+    const width = if (max_x > min_x) max_x - min_x else 0;
+    const height = if (max_y > min_y) max_y - min_y else 0;
+    const max_u16: u32 = std.math.maxInt(u16);
+    return layout_module.Rect.init(
+        @min(min_x, max_u16),
+        @min(min_y, max_u16),
+        @min(width, max_u16),
+        @min(height, max_u16),
     );
 }
 
