@@ -1484,3 +1484,59 @@ test "table inline edit updates cell" {
     const updated = table.cellView(0, 1).text;
     try std.testing.expectEqualStrings("idle x", updated);
 }
+
+test "table resizes columns from header drag handles" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 5, true);
+    try table.addColumn("B", 6, true);
+
+    try table.widget.layout(layout_module.Rect.init(0, 0, 20, 4));
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 5, 0, 1, 0) });
+    try std.testing.expectEqual(@as(?usize, 0), table.resizing_column);
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 7, 0, 1, 0) });
+    try std.testing.expectEqual(@as(u16, 7), table.columns.items[0].width);
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 1, 0, 1, 0) });
+    try std.testing.expectEqual(@as(u16, 3), table.columns.items[0].width);
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 1, 0, 1, 0) });
+    try std.testing.expectEqual(@as(?usize, null), table.resizing_column);
+}
+
+test "table row provider sampling caps preferred height" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Value", 8, true);
+
+    const Provider = struct {
+        fn rowCount(ctx: ?*anyopaque) usize {
+            _ = ctx;
+            return 50;
+        }
+
+        fn cellAt(row: usize, col: usize, ctx: ?*anyopaque) TableCellView {
+            _ = row;
+            _ = col;
+            _ = ctx;
+            return .{ .text = "x" };
+        }
+    };
+
+    table.virtual_sample_limit = 3;
+    table.useRowProvider(.{
+        .ctx = null,
+        .row_count = Provider.rowCount,
+        .cell_at = Provider.cellAt,
+    });
+
+    const size = try Table.getPreferredSizeFn(@ptrCast(@alignCast(&table.widget)));
+    try std.testing.expectEqual(@as(u16, 4), size.height);
+}
