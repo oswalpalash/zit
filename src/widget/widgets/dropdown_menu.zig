@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// MenuItem structure
 pub const MenuItem = struct {
@@ -65,6 +66,7 @@ pub const DropdownMenu = struct {
             .items = std.ArrayList(MenuItem).empty,
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -139,6 +141,20 @@ pub const DropdownMenu = struct {
         if (old_index != self.selected_index and self.on_select != null) {
             self.on_select.?(self.selected_index);
         }
+    }
+
+    /// Apply theme defaults for dropdown colors.
+    pub fn setTheme(self: *DropdownMenu, theme_value: theme.Theme) void {
+        const base_colors = theme.controlColors(theme_value);
+        const selected = theme.selectionColors(theme_value);
+        self.fg = base_colors.fg;
+        self.bg = base_colors.bg;
+        self.selected_fg = selected.fg;
+        self.selected_bg = selected.bg;
+        self.focused_fg = selected.focused_fg;
+        self.focused_bg = selected.focused_bg;
+        self.disabled_fg = base_colors.disabled_fg;
+        self.disabled_bg = base_colors.disabled_bg;
     }
 
     /// Get the selected item index

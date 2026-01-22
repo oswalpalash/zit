@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Container widget for holding and arranging other widgets
 pub const Container = struct {
@@ -39,6 +40,7 @@ pub const Container = struct {
             .children = std.ArrayList(*base.Widget).empty,
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -76,6 +78,13 @@ pub const Container = struct {
     pub fn setBorder(self: *Container, border: render.BorderStyle) void {
         self.border = border;
         self.show_border = border != .none;
+    }
+
+    /// Apply theme defaults for container colors.
+    pub fn setTheme(self: *Container, theme_value: theme.Theme) void {
+        const colors = theme.containerColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
     }
 
     /// Draw implementation for Container

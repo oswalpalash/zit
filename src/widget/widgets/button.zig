@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Button widget
 pub const Button = struct {
@@ -49,6 +50,7 @@ pub const Button = struct {
             .button_text = try allocator.dupe(u8, button_text),
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -87,6 +89,18 @@ pub const Button = struct {
     /// Set the on-click callback
     pub fn setOnClick(self: *Button, callback: *const fn () void) void {
         self.on_click = callback;
+    }
+
+    /// Apply theme defaults for button colors and text style.
+    pub fn setTheme(self: *Button, theme_value: theme.Theme) void {
+        const colors = theme.controlColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.focused_fg = colors.focused_fg;
+        self.focused_bg = colors.focused_bg;
+        self.disabled_fg = colors.disabled_fg;
+        self.disabled_bg = colors.disabled_bg;
+        self.style = theme_value.style;
     }
 
     /// Draw implementation for Button

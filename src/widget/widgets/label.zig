@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Label widget for displaying text
 pub const Label = struct {
@@ -46,6 +47,7 @@ pub const Label = struct {
             .text = try allocator.dupe(u8, text),
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -76,6 +78,14 @@ pub const Label = struct {
     /// Set the text style
     pub fn setStyle(self: *Label, style: render.Style) void {
         self.style = style;
+    }
+
+    /// Apply theme defaults for label colors and text style.
+    pub fn setTheme(self: *Label, theme_value: theme.Theme) void {
+        const colors = theme.textColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.style = colors.style;
     }
 
     /// Draw implementation for Label

@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Checkbox widget
 pub const Checkbox = struct {
@@ -47,6 +48,7 @@ pub const Checkbox = struct {
             .label = try allocator.dupe(u8, label),
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -83,6 +85,17 @@ pub const Checkbox = struct {
     /// Set the on-change callback
     pub fn setOnChange(self: *Checkbox, callback: *const fn (bool) void) void {
         self.on_change = callback;
+    }
+
+    /// Apply theme defaults for checkbox colors.
+    pub fn setTheme(self: *Checkbox, theme_value: theme.Theme) void {
+        const colors = theme.controlColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.focused_fg = colors.focused_fg;
+        self.focused_bg = colors.focused_bg;
+        self.disabled_fg = colors.disabled_fg;
+        self.disabled_bg = colors.disabled_bg;
     }
 
     /// Draw implementation for Checkbox

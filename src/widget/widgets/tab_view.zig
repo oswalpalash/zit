@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Lazy factory for tab content, called when a tab is first activated.
 pub const TabLoader = *const fn (std.mem.Allocator) anyerror!*base.Widget;
@@ -64,6 +65,7 @@ pub const TabBar = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
         return self;
     }
 
@@ -103,6 +105,17 @@ pub const TabBar = struct {
         self.active_bg = active_bg;
         self.inactive_fg = inactive_fg;
         self.inactive_bg = inactive_bg;
+    }
+
+    /// Apply theme defaults for tab colors.
+    pub fn setTheme(self: *TabBar, theme_value: theme.Theme) void {
+        const colors = theme.tabColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.active_fg = colors.active_fg;
+        self.active_bg = colors.active_bg;
+        self.inactive_fg = colors.inactive_fg;
+        self.inactive_bg = colors.inactive_bg;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -313,6 +326,7 @@ pub const TabView = struct {
             .tab_bar = header,
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
         self.configureHeader();
         return self;
     }
@@ -381,6 +395,19 @@ pub const TabView = struct {
         if (self.on_tab_select != null and old_active != self.active_tab and self.tabs.items.len > 0) {
             self.on_tab_select.?(self.active_tab);
         }
+    }
+
+    /// Apply theme defaults for tab view colors.
+    pub fn setTheme(self: *TabView, theme_value: theme.Theme) void {
+        const colors = theme.tabColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.active_fg = colors.active_fg;
+        self.active_bg = colors.active_bg;
+        self.inactive_fg = colors.inactive_fg;
+        self.inactive_bg = colors.inactive_bg;
+        self.border_fg = colors.border_fg;
+        self.tab_bar.setTabColors(self.fg, self.bg, self.active_fg, self.active_bg, self.inactive_fg, self.inactive_bg);
     }
 
     /// Move a tab to a new index for reordering.

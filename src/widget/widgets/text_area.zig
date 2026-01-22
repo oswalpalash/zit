@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
+const theme = @import("../theme.zig");
 
 /// Multi-line text editor with scrolling, undo/redo, and clipboard support.
 pub const TextArea = struct {
@@ -71,11 +72,7 @@ pub const TextArea = struct {
         };
 
         self.clipboard = &self.clipboard_storage;
-        self.widget.setFocusRing(render.FocusRingStyle{
-            .color = self.focused_bg,
-            .border = .rounded,
-            .style = render.Style{ .bold = true },
-        });
+        self.setTheme(theme.Theme.dark());
         try self.undo_redo.capture(self.buffer.items);
         return self;
     }
@@ -126,6 +123,25 @@ pub const TextArea = struct {
         self.bg = bg;
         self.focused_fg = focused_fg;
         self.focused_bg = focused_bg;
+    }
+
+    /// Apply theme defaults for text area colors and focus ring.
+    pub fn setTheme(self: *TextArea, theme_value: theme.Theme) void {
+        const colors = theme.inputColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.focused_fg = colors.focused_fg;
+        self.focused_bg = colors.focused_bg;
+        self.disabled_fg = colors.disabled_fg;
+        self.disabled_bg = colors.disabled_bg;
+        self.invalid_fg = colors.invalid_fg;
+        self.invalid_bg = colors.invalid_bg;
+        self.style = colors.style;
+        self.widget.setFocusRing(render.FocusRingStyle{
+            .color = self.focused_bg,
+            .border = .rounded,
+            .style = render.Style{ .bold = true },
+        });
     }
 
     pub fn setBorder(self: *TextArea, border: render.BorderStyle) void {
