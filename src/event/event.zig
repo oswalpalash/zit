@@ -2007,6 +2007,10 @@ pub const Application = struct {
     drag_manager: DragManager,
     /// Global shortcut registry
     shortcut_registry: ShortcutRegistry,
+    /// Optional stylesheet for CSS-like styling
+    style_sheet: ?*widget.css.StyleSheet = null,
+    /// Optional theme for stylesheet resolution
+    style_theme: ?widget.theme.Theme = null,
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -2098,6 +2102,25 @@ pub const Application = struct {
     /// Set the root widget
     pub fn setRoot(self: *Application, root: *widget.Container) void {
         self.root = root;
+        self.applyStyleContext();
+    }
+
+    /// Attach a stylesheet for CSS-like widget styling.
+    pub fn setStyleSheet(self: *Application, sheet: ?*widget.css.StyleSheet) void {
+        self.style_sheet = sheet;
+        self.applyStyleContext();
+    }
+
+    /// Attach a theme to resolve stylesheet role() references.
+    pub fn setStyleTheme(self: *Application, theme_value: widget.theme.Theme) void {
+        self.style_theme = theme_value;
+        self.applyStyleContext();
+    }
+
+    fn applyStyleContext(self: *Application) void {
+        if (self.root) |root| {
+            widget.Widget.applyStyleContext(&root.widget, self.style_sheet, self.style_theme);
+        }
     }
 
     /// Process input, timers, and animations once without blocking.

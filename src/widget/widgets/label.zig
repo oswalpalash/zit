@@ -97,6 +97,16 @@ pub const Label = struct {
         }
 
         const rect = self.widget.rect;
+        const styled = self.widget.applyStyle(
+            "label",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            self.style,
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Split text into lines
         var lines = std.ArrayList([]const u8).empty;
@@ -142,9 +152,9 @@ pub const Label = struct {
             if (max_width > 3 and line.len > max_width - 3) {
                 @memcpy(truncated_text[0 .. max_width - 3], line[0 .. max_width - 3]);
                 @memcpy(truncated_text[max_width - 3 .. max_width], "...");
-                renderer.drawStr(x, y, truncated_text[0..max_width], self.fg, self.bg, self.style);
+                renderer.drawStr(x, y, truncated_text[0..max_width], fg, bg, style);
             } else {
-                renderer.drawStr(x, y, line, self.fg, self.bg, self.style);
+                renderer.drawStr(x, y, line, fg, bg, style);
             }
         }
     }

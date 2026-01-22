@@ -109,19 +109,29 @@ pub const Checkbox = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.disabled_fg
         else if (self.widget.focused)
             self.focused_fg
         else
             self.fg;
 
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.disabled_bg
         else if (self.widget.focused)
             self.focused_bg
         else
             self.bg;
+
+        const styled = self.widget.applyStyle(
+            "checkbox",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
 
         // Draw checkbox
         renderer.drawChar(rect.x, rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});

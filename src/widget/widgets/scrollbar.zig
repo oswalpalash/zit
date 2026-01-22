@@ -114,7 +114,7 @@ pub const Scrollbar = struct {
 
     /// Draw implementation for Scrollbar
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Scrollbar, @ptrCast(widget_ptr));
+        const self = @as(*Scrollbar, @ptrCast(@alignCast(widget_ptr)));
 
         if (!self.widget.visible) {
             return;
@@ -123,19 +123,29 @@ pub const Scrollbar = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.bg
         else if (self.widget.focused)
             self.focused_bg
         else
             self.bg;
 
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.fg
         else if (self.widget.focused)
             self.focused_fg
         else
             self.fg;
+
+        const styled = self.widget.applyStyle(
+            "scrollbar",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
 
         // Fill scrollbar background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, render.Style{});
@@ -146,23 +156,26 @@ pub const Scrollbar = struct {
                 const track_height = @as(f32, @floatFromInt(rect.height));
                 const thumb_height = @as(i16, @intFromFloat(@max(1, track_height * self.thumb_ratio)));
                 const thumb_pos = @as(i16, @intFromFloat(@min(track_height - @as(f32, @floatFromInt(thumb_height)), track_height * self.value)));
+                const thumb_y: u16 = @intCast(@max(@as(i16, @intCast(rect.y)) + thumb_pos, 0));
+                const thumb_height_u16: u16 = @intCast(@max(thumb_height, 0));
 
-                renderer.fillRect(rect.x, rect.y + thumb_pos, rect.width, thumb_height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                renderer.fillRect(rect.x, thumb_y, rect.width, thumb_height_u16, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
             }
         } else {
             if (rect.width > 2) {
                 const track_width = @as(f32, @floatFromInt(rect.width));
                 const thumb_width = @as(i16, @intFromFloat(@max(1, track_width * self.thumb_ratio)));
                 const thumb_pos = @as(i16, @intFromFloat(@min(track_width - @as(f32, @floatFromInt(thumb_width)), track_width * self.value)));
+                const thumb_x: u16 = @intCast(@max(@as(i16, @intCast(rect.x)) + thumb_pos, 0));
 
-                renderer.fillRect(rect.x + thumb_pos, rect.y, thumb_width, rect.height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                renderer.fillRect(thumb_x, rect.y, @intCast(@max(thumb_width, 0)), rect.height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
             }
         }
     }
 
     /// Event handling implementation for Scrollbar
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Scrollbar, @ptrCast(widget_ptr));
+        const self = @as(*Scrollbar, @ptrCast(@alignCast(widget_ptr)));
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -179,21 +192,22 @@ pub const Scrollbar = struct {
                 if (mouse_event.action == .press and mouse_event.button == 1) {
                     self.dragging = true;
                     if (self.orientation == .vertical) {
-                        self.drag_start_pos = mouse_event.y;
+                        self.drag_start_pos = @intCast(@min(mouse_event.y, std.math.maxInt(i16)));
                     } else {
-                        self.drag_start_pos = mouse_event.x;
+                        self.drag_start_pos = @intCast(@min(mouse_event.x, std.math.maxInt(i16)));
                     }
                     self.drag_start_value = self.value;
                     return true;
                 }
                 // Mouse wheel scrolls
                 else if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
-                    const step: f32 = @as(f32, @floatFromInt(if (mouse_event.scroll_delta != 0)
-                        mouse_event.scroll_delta
+                    const step_value: i16 = if (mouse_event.scroll_delta != 0)
+                        @intCast(mouse_event.scroll_delta)
                     else if (mouse_event.action == .scroll_up)
                         -1
                     else
-                        1));
+                        1;
+                    const step: f32 = @floatFromInt(step_value);
                     self.setValue(self.value + (0.1 * step));
                     return true;
                 }
@@ -209,7 +223,8 @@ pub const Scrollbar = struct {
             if (self.dragging and mouse_event.action == .move) {
                 if (self.orientation == .vertical) {
                     const track_height = @as(f32, @floatFromInt(rect.height));
-                    const delta = @as(f32, @floatFromInt(mouse_event.y - self.drag_start_pos));
+                    const delta_i32: i32 = @as(i32, @intCast(mouse_event.y)) - @as(i32, self.drag_start_pos);
+                    const delta = @as(f32, @floatFromInt(delta_i32));
                     const delta_value = delta / track_height;
 
                     var new_value = self.drag_start_value + delta_value;
@@ -218,7 +233,8 @@ pub const Scrollbar = struct {
                     self.setValue(new_value);
                 } else {
                     const track_width = @as(f32, @floatFromInt(rect.width));
-                    const delta = @as(f32, @floatFromInt(mouse_event.x - self.drag_start_pos));
+                    const delta_i32: i32 = @as(i32, @intCast(mouse_event.x)) - @as(i32, self.drag_start_pos);
+                    const delta = @as(f32, @floatFromInt(delta_i32));
                     const delta_value = delta / track_width;
 
                     var new_value = self.drag_start_value + delta_value;
@@ -282,13 +298,13 @@ pub const Scrollbar = struct {
 
     /// Layout implementation for Scrollbar
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Scrollbar, @ptrCast(widget_ptr));
+        const self = @as(*Scrollbar, @ptrCast(@alignCast(widget_ptr)));
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for Scrollbar
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Scrollbar, @ptrCast(widget_ptr));
+        const self = @as(*Scrollbar, @ptrCast(@alignCast(widget_ptr)));
 
         if (self.orientation == .vertical) {
             return layout_module.Size.init(1, 10); // Default vertical scrollbar size
@@ -299,7 +315,7 @@ pub const Scrollbar = struct {
 
     /// Can focus implementation for Scrollbar
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Scrollbar, @ptrCast(widget_ptr));
+        const self = @as(*Scrollbar, @ptrCast(@alignCast(widget_ptr)));
         return self.widget.enabled;
     }
 };

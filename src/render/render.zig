@@ -931,6 +931,16 @@ pub const TerminalCapabilities = struct {
 
 /// Renderer for drawing to the terminal
 pub const Renderer = struct {
+    /// Viewport metadata for optional clipping/offsetting.
+    pub const Viewport = struct {
+        x: u16 = 0,
+        y: u16 = 0,
+        width: u16 = 0,
+        height: u16 = 0,
+        offset_x: i16 = 0,
+        offset_y: i16 = 0,
+    };
+
     /// Front buffer (currently displayed)
     front: Buffer,
     /// Back buffer (being prepared)
@@ -963,6 +973,7 @@ pub const Renderer = struct {
     output_batch: std.ArrayListUnmanaged(u8) = .{},
     grapheme_scratch: std.ArrayListUnmanaged(text_metrics.Grapheme) = .{},
     text_direction: TextDirection = .auto,
+    viewport: ?Viewport = null,
 
     /// Initialize a new renderer
     pub fn init(allocator: std.mem.Allocator, width: u16, height: u16) !Renderer {
@@ -1036,6 +1047,22 @@ pub const Renderer = struct {
     /// Configure an optional scratch allocator for per-frame allocations.
     pub fn setScratchAllocator(self: *Renderer, allocator: ?std.mem.Allocator) void {
         self.scratch_allocator = allocator;
+    }
+
+    /// Allocate a viewport descriptor for clipping/offsetting.
+    pub fn createViewport(self: *Renderer) !Viewport {
+        _ = self;
+        return Viewport{};
+    }
+
+    /// Set the active viewport.
+    pub fn setViewport(self: *Renderer, viewport: *Viewport) void {
+        self.viewport = viewport.*;
+    }
+
+    /// Clear any active viewport.
+    pub fn clearViewport(self: *Renderer) void {
+        self.viewport = null;
     }
 
     fn scratchAllocator(self: *Renderer) std.mem.Allocator {

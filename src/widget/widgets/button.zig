@@ -114,25 +114,36 @@ pub const Button = struct {
         const rect = self.widget.rect;
 
         // Choose colors based on state
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.disabled_fg
         else if (self.widget.focused)
             self.focused_fg
         else
             self.fg;
 
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.disabled_bg
         else if (self.widget.focused)
             self.focused_bg
         else
             self.bg;
 
+        const styled = self.widget.applyStyle(
+            "button",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            self.style,
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
         // Fill button background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, self.style);
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         // Draw border
-        renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, self.style);
+        renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, style);
 
         // Draw text centered
         if (self.button_text.len > 0 and rect.width > 2 and rect.height > 2) {
@@ -149,7 +160,7 @@ pub const Button = struct {
                 else
                     rect.x + 1;
                 const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, truncated_text[0..max_width], fg, bg, self.style);
+                renderer.drawStr(text_x, text_y, truncated_text[0..max_width], fg, bg, style);
             } else {
                 // Safely calculate text position to avoid overflow
                 const text_len = @as(u16, @intCast(@min(@as(usize, inner_width), self.button_text.len)));
@@ -158,7 +169,7 @@ pub const Button = struct {
                 else
                     rect.x + 1;
                 const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, self.button_text, fg, bg, self.style);
+                renderer.drawStr(text_x, text_y, self.button_text, fg, bg, style);
             }
         }
     }

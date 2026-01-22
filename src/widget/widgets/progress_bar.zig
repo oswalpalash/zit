@@ -177,9 +177,19 @@ pub const ProgressBar = struct {
         }
 
         const rect = self.widget.rect;
+        const styled = self.widget.applyStyle(
+            "progress_bar",
+            .{ .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Fill background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         const effective_progress: f32 = if (self.animator != null) self.progress_driver.current else @as(f32, @floatFromInt(self.progress));
         const clamped = std.math.clamp(effective_progress, 0, 100);
@@ -191,7 +201,7 @@ pub const ProgressBar = struct {
             const progress_width = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.width)) * (clamped / 100.0)));
 
             if (progress_width > 0) {
-                renderer.fillRect(rect.x, rect.y, progress_width, rect.height, self.fill_char, fill_fg, fill_bg, render.Style{});
+                renderer.fillRect(rect.x, rect.y, progress_width, rect.height, self.fill_char, fill_fg, fill_bg, style);
             }
 
             // Show percentage text
@@ -214,7 +224,7 @@ pub const ProgressBar = struct {
                     const text_fg = if (is_in_progress_area) self.bg else self.fg;
                     const text_bg = if (is_in_progress_area) fill_fg else self.bg;
 
-                    renderer.drawChar(x, y, char, text_fg, text_bg, render.Style{});
+                    renderer.drawChar(x, y, char, text_fg, text_bg, style);
                 }
             }
         } else {
@@ -222,7 +232,7 @@ pub const ProgressBar = struct {
             const start_y = rect.y + @as(u16, @intCast(@max(0, @as(i16, @intCast(rect.height)) - @as(i16, @intCast(progress_height)))));
 
             if (progress_height > 0) {
-                renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, fill_fg, fill_bg, render.Style{});
+                renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, fill_fg, fill_bg, style);
             }
 
             // Show percentage text

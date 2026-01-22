@@ -811,7 +811,7 @@ pub const TextArea = struct {
         const rect = self.widget.rect;
 
         const invalid = self.widget.enabled and self.hasValidationError();
-        const fg = if (!self.widget.enabled)
+        const base_fg = if (!self.widget.enabled)
             self.disabled_fg
         else if (invalid)
             self.invalid_fg
@@ -820,7 +820,7 @@ pub const TextArea = struct {
         else
             self.fg;
 
-        const bg = if (!self.widget.enabled)
+        const base_bg = if (!self.widget.enabled)
             self.disabled_bg
         else if (invalid)
             self.invalid_bg
@@ -829,9 +829,20 @@ pub const TextArea = struct {
         else
             self.bg;
 
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, self.style);
+        const styled = self.widget.applyStyle(
+            "text_area",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            self.style,
+            base_fg,
+            base_bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
+
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
         if (self.show_border) {
-            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, self.style);
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, style);
         }
 
         const border_adjust: u16 = if (self.show_border) 1 else 0;
@@ -847,7 +858,7 @@ pub const TextArea = struct {
 
         if (self.buffer.items.len == 0 and self.placeholder.len > 0) {
             const clipped = self.placeholder[0..@min(self.placeholder.len, viewport.width)];
-            renderer.drawStr(inner_x, inner_y, clipped, fg, bg, self.style);
+            renderer.drawStr(inner_x, inner_y, clipped, fg, bg, style);
         } else {
             var row: u16 = 0;
             while (row < viewport.height) : (row += 1) {
@@ -862,15 +873,15 @@ pub const TextArea = struct {
                         while (col < end) : (col += 1) {
                             const ch = line[col];
                             const global_idx = range.start + col;
-                            var style = self.style;
+                            var cell_style = style;
                             if (selection_range) |sel| {
                                 if (global_idx >= sel.start and global_idx < sel.end) {
-                                    style.reverse = true;
-                                    style.bold = true;
+                                    cell_style.reverse = true;
+                                    cell_style.bold = true;
                                 }
                             }
                             const draw_x = inner_x + @as(u16, @intCast(col - slice_start));
-                            renderer.drawChar(draw_x, inner_y + row, ch, fg, bg, style);
+                            renderer.drawChar(draw_x, inner_y + row, ch, fg, bg, cell_style);
                         }
                     }
                 } else {

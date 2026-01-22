@@ -2,7 +2,6 @@ const std = @import("std");
 const render = @import("../render/render.zig");
 const Theme = @import("theme.zig").Theme;
 const ThemeRole = @import("theme.zig").ThemeRole;
-const BaseWidget = @import("widgets/base_widget.zig").Widget;
 
 /// Target metadata used to match stylesheet rules.
 pub const StyleTarget = struct {
@@ -11,16 +10,6 @@ pub const StyleTarget = struct {
     type_name: ?[]const u8 = null,
     state: State = .{},
 };
-
-/// Convenience helper to build a target from a widget instance and type name.
-pub fn targetFromWidget(widget: *const BaseWidget, type_name: []const u8) StyleTarget {
-    return StyleTarget{
-        .id = if (widget.id.len > 0) widget.id else null,
-        .class = widget.style_class,
-        .type_name = type_name,
-        .state = .{},
-    };
-}
 
 /// Pseudo-state flags that mirror CSS-like :hover, :focus, etc.
 pub const State = packed struct {
@@ -101,18 +90,47 @@ pub const StyleSheet = struct {
     /// Resolve the final colors and style for a target against the rule set.
     pub fn resolve(self: *StyleSheet, target: StyleTarget, theme: ?Theme, base_style: render.Style) Resolved {
         var resolved = Resolved{ .style = base_style };
+        var fg_spec: i8 = -1;
+        var bg_spec: i8 = -1;
+        var bold_spec: i8 = -1;
+        var italic_spec: i8 = -1;
+        var underline_spec: i8 = -1;
 
         for (self.rules.items) |rule| {
             if (!matches(rule.selector, target) or !matchesState(rule.state, target.state)) continue;
+            const spec = specificity(rule.selector);
 
             if (rule.properties.fg) |fg_value| {
-                resolved.fg = colorFromValue(fg_value, theme);
+                if (spec >= fg_spec) {
+                    resolved.fg = colorFromValue(fg_value, theme);
+                    fg_spec = spec;
+                }
             }
             if (rule.properties.bg) |bg_value| {
-                resolved.bg = colorFromValue(bg_value, theme);
+                if (spec >= bg_spec) {
+                    resolved.bg = colorFromValue(bg_value, theme);
+                    bg_spec = spec;
+                }
             }
 
-            applyFlags(&resolved.style, rule.properties);
+            if (rule.properties.bold) |flag| {
+                if (spec >= bold_spec) {
+                    resolved.style.bold = flag;
+                    bold_spec = spec;
+                }
+            }
+            if (rule.properties.italic) |flag| {
+                if (spec >= italic_spec) {
+                    resolved.style.italic = flag;
+                    italic_spec = spec;
+                }
+            }
+            if (rule.properties.underline) |flag| {
+                if (spec >= underline_spec) {
+                    resolved.style.underline = flag;
+                    underline_spec = spec;
+                }
+            }
         }
 
         return resolved;
@@ -198,6 +216,15 @@ fn matchesState(rule_state: State, target_state: State) bool {
     if (rule_state.active and !target_state.active) return false;
     if (rule_state.disabled and !target_state.disabled) return false;
     return true;
+}
+
+fn specificity(selector: Selector) i8 {
+    return switch (selector) {
+        .id => 3,
+        .class => 2,
+        .type_name => 1,
+        .any => 0,
+    };
 }
 
 fn colorFromValue(value: ColorValue, theme: ?Theme) ?render.Color {

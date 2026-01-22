@@ -475,9 +475,19 @@ pub const List = struct {
         }
 
         const rect = self.widget.rect;
+        const styled = self.widget.applyStyle(
+            "list",
+            .{ .focus = self.widget.focused, .disabled = !self.widget.enabled },
+            render.Style{},
+            self.fg,
+            self.bg,
+        );
+        const fg = styled.fg;
+        const bg = styled.bg;
+        const style = styled.style;
 
         // Fill list background
-        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
         // Calculate visible items
         self.visible_items_count = @intCast(@as(usize, rect.height));
@@ -510,15 +520,15 @@ pub const List = struct {
             const item_fg = if (is_selected)
                 (if (self.widget.focused) self.focused_fg else self.selected_fg)
             else
-                self.fg;
+                fg;
 
             const item_bg = if (is_selected)
                 (if (self.widget.focused) self.focused_bg else self.selected_bg)
             else
-                self.bg;
+                bg;
 
             // Draw item background
-            renderer.fillRect(rect.x, y, rect.width, 1, ' ', item_fg, item_bg, render.Style{});
+            renderer.fillRect(rect.x, y, rect.width, 1, ' ', item_fg, item_bg, style);
 
             // Draw item text
             var x = rect.x;
@@ -527,7 +537,7 @@ pub const List = struct {
                     break;
                 }
 
-                renderer.drawChar(x, y, char, item_fg, item_bg, render.Style{});
+                renderer.drawChar(x, y, char, item_fg, item_bg, style);
                 x += 1;
             }
 
@@ -544,11 +554,11 @@ pub const List = struct {
                 else
                     event_module.DropVisuals.State.idle;
                 const colors = event_module.DropVisuals.Colors{
-                    .border = self.fg,
-                    .fill = self.bg,
+                    .border = fg,
+                    .fill = bg,
                     .valid = render.Color{ .named_color = render.NamedColor.green },
                     .invalid = render.Color{ .named_color = render.NamedColor.red },
-                    .text = self.fg,
+                    .text = fg,
                 };
                 event_module.DropVisuals.outline(renderer, layout_module.Rect{
                     .x = rect.x,
