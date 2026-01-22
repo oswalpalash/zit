@@ -30,8 +30,8 @@ pub const Scrollbar = struct {
     focused_fg: render.Color = render.Color{ .named_color = render.NamedColor.black },
     /// Focused background color
     focused_bg: render.Color = render.Color{ .named_color = render.NamedColor.cyan },
-    /// On value changed callback
-    on_value_changed: ?*const fn (f32) void = null,
+    /// On value change callback
+    on_value_change: ?*const fn (f32) void = null,
     /// Dragging state
     dragging: bool = false,
     /// Drag start position
@@ -73,8 +73,8 @@ pub const Scrollbar = struct {
         const old_value = self.value;
         self.value = std.math.clamp(value, 0, 1);
 
-        if (old_value != self.value and self.on_value_changed != null) {
-            self.on_value_changed.?(self.value);
+        if (old_value != self.value and self.on_value_change != null) {
+            self.on_value_change.?(self.value);
         }
     }
 
@@ -95,9 +95,9 @@ pub const Scrollbar = struct {
         self.thumb_fg = thumb_fg;
     }
 
-    /// Set the on-value-changed callback
-    pub fn setOnValueChanged(self: *Scrollbar, callback: *const fn (f32) void) void {
-        self.on_value_changed = callback;
+    /// Set the on-value-change callback
+    pub fn setOnValueChange(self: *Scrollbar, callback: *const fn (f32) void) void {
+        self.on_value_change = callback;
     }
 
     /// Draw implementation for Scrollbar
@@ -317,7 +317,7 @@ test "scrollbar updates value on scroll event" {
             test_scrollbar_value = value;
         }
     }.call;
-    bar.setOnValueChanged(callback);
+    bar.setOnValueChange(callback);
 
     const scroll_event = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 0, 0, 0, 1) };
     try std.testing.expect(try bar.widget.handleEvent(scroll_event));
