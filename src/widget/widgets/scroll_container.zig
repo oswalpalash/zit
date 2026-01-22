@@ -80,6 +80,8 @@ pub const ScrollContainer = struct {
             .v_scrollbar = v_scrollbar_widget,
             .allocator = allocator,
         };
+        h_scrollbar_widget.widget.parent = &self.widget;
+        v_scrollbar_widget.widget.parent = &self.widget;
 
         return self;
     }
@@ -100,6 +102,7 @@ pub const ScrollContainer = struct {
     /// Set the content widget
     pub fn setContent(self: *ScrollContainer, content: *base.Widget) void {
         self.content = content;
+        content.parent = &self.widget;
         self.updateContentSize();
     }
 
