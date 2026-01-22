@@ -231,5 +231,5 @@ test "block draws title inside border" {
     try block.widget.draw(&renderer);
 
     const cell = renderer.back.getCell(1, 0).*;
-    try std.testing.expectEqual('S', cell.ch);
+    try std.testing.expectEqual('S', cell.codepoint());
 }
