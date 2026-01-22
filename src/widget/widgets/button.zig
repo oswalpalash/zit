@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Button widget
 pub const Button = struct {
@@ -51,6 +52,7 @@ pub const Button = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.button), self.button_text, "");
 
         return self;
     }
@@ -65,6 +67,7 @@ pub const Button = struct {
     pub fn setText(self: *Button, text: []const u8) !void {
         self.allocator.free(self.button_text);
         self.button_text = try self.allocator.dupe(u8, text);
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.button), self.button_text, "");
     }
 
     /// Set the button colors

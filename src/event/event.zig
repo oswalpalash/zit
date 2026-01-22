@@ -2103,6 +2103,7 @@ pub const Application = struct {
     pub fn setRoot(self: *Application, root: *widget.Container) void {
         self.root = root;
         self.applyStyleContext();
+        self.applyAccessibilityContext();
     }
 
     /// Attach a stylesheet for CSS-like widget styling.
@@ -2121,6 +2122,36 @@ pub const Application = struct {
         if (self.root) |root| {
             widget.Widget.applyStyleContext(&root.widget, self.style_sheet, self.style_theme);
         }
+    }
+
+    fn applyAccessibilityContext(self: *Application) void {
+        if (self.root) |root| {
+            if (self.accessibility) |manager| {
+                widget.Widget.applyAccessibilityContext(&root.widget, manager, registerAccessibleNodeCallback, updateAccessibleBoundsCallback);
+            } else {
+                widget.Widget.applyAccessibilityContext(&root.widget, null, null, null);
+            }
+        }
+    }
+
+    fn registerAccessibleNodeCallback(ctx: ?*anyopaque, w: *widget.Widget) void {
+        const manager = @as(*accessibility.Manager, @ptrCast(@alignCast(ctx orelse return)));
+        if (w.accessibility_role == 0 and w.accessibility_name.len == 0 and w.accessibility_description.len == 0) {
+            return;
+        }
+        const role: accessibility.Role = @enumFromInt(w.accessibility_role);
+        manager.registerNode(accessibility.AccessibleNode{
+            .widget_ptr = w,
+            .role = role,
+            .name = w.accessibility_name,
+            .description = w.accessibility_description,
+            .bounds = w.rect,
+        }) catch {};
+    }
+
+    fn updateAccessibleBoundsCallback(ctx: ?*anyopaque, w: *widget.Widget, rect: @import("../layout/layout.zig").Rect) void {
+        const manager = @as(*accessibility.Manager, @ptrCast(@alignCast(ctx orelse return)));
+        manager.updateBounds(w, rect);
     }
 
     /// Process input, timers, and animations once without blocking.
@@ -2371,6 +2402,7 @@ pub const Application = struct {
         manager.* = accessibility.Manager.init(self.allocator);
         self.accessibility = manager;
         self.focus_manager.accessibility = manager;
+        self.applyAccessibilityContext();
     }
 
     /// Disable accessibility and free resources
@@ -2381,6 +2413,7 @@ pub const Application = struct {
         }
         self.accessibility = null;
         self.focus_manager.accessibility = null;
+        self.applyAccessibilityContext();
     }
 
     /// Register an accessible node for a widget

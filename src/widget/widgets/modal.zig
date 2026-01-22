@@ -6,6 +6,7 @@ const Size = layout_module.Size;
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Modal dialog widget
 pub const Modal = struct {
@@ -65,6 +66,7 @@ pub const Modal = struct {
             .content = null,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), "Modal", "");
         return self;
     }
 
@@ -96,6 +98,11 @@ pub const Modal = struct {
         const title_copy = try self.allocator.alloc(u8, title.len);
         @memcpy(title_copy, title);
         self.title = title_copy;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.accessibilityLabel(), "");
+    }
+
+    fn accessibilityLabel(self: *Modal) []const u8 {
+        return if (self.title.len > 0) self.title else "Modal";
     }
 
     /// Set the modal colors

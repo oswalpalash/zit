@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Scrollbar orientation
 pub const ScrollOrientation = enum {
@@ -61,8 +62,16 @@ pub const Scrollbar = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.slider), accessibilityLabel(orientation), "");
 
         return self;
+    }
+
+    fn accessibilityLabel(orientation: ScrollOrientation) []const u8 {
+        return switch (orientation) {
+            .horizontal => "Horizontal scrollbar",
+            .vertical => "Vertical scrollbar",
+        };
     }
 
     /// Clean up scrollbar resources
