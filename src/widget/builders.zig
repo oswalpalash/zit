@@ -40,7 +40,7 @@ pub const ButtonBuilder = struct {
     disabled_bg: render.Color = render.Color.named(render.NamedColor.black),
     style: render.Style = render.Style{ .bold = true },
     border: render.BorderStyle = .rounded,
-    on_press: ?*const fn () void = null,
+    on_click: ?*const fn () void = null,
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) ButtonBuilder {
@@ -80,8 +80,8 @@ pub const ButtonBuilder = struct {
         return self;
     }
 
-    pub fn onPress(self: *ButtonBuilder, callback: *const fn () void) *ButtonBuilder {
-        self.on_press = callback;
+    pub fn onClick(self: *ButtonBuilder, callback: *const fn () void) *ButtonBuilder {
+        self.on_click = callback;
         return self;
     }
 
@@ -116,8 +116,8 @@ pub const ButtonBuilder = struct {
         button.setDisabledColors(self.disabled_fg, self.disabled_bg);
         button.setBorder(self.border);
         button.style = self.style;
-        if (self.on_press) |callback| {
-            button.setOnPress(callback);
+        if (self.on_click) |callback| {
+            button.setOnClick(callback);
         }
         self.common.apply(&button.widget);
         return button;
@@ -695,14 +695,14 @@ test "button builder creates focused button with defaults and chaining" {
     }.run;
 
     var builder = ButtonBuilder.init(alloc);
-    var button = try builder.text("Launch").focusedColors(render.Color.named(.white), render.Color.named(.green)).onPress(onPress).build();
+    var button = try builder.text("Launch").focusedColors(render.Color.named(.white), render.Color.named(.green)).onClick(onPress).build();
     defer button.deinit();
 
     try std.testing.expectEqualStrings("Launch", button.button_text);
     try std.testing.expect(button.widget.enabled);
-    try std.testing.expect(button.on_press != null);
+    try std.testing.expect(button.on_click != null);
     State.pressed = false;
-    button.on_press.?();
+    button.on_click.?();
     try std.testing.expect(State.pressed);
 }
 

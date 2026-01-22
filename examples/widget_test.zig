@@ -105,7 +105,7 @@ pub fn main() !void {
     modal.setContent(&modal_content.widget);
 
     // Set modal button callback
-    modal_button.setOnPress(showModal);
+    modal_button.setOnClick(showModal);
 
     // Store the modal in a global variable to access in the callback
     g_modal = modal;

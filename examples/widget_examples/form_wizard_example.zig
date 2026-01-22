@@ -141,7 +141,7 @@ pub fn main() !void {
 
     var next_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Next →");
     defer next_button.deinit();
-    next_button.setOnPress(requestNext);
+    next_button.setOnClick(requestNext);
 
     // Step 2 fields.
     var newsletter = try widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "Send me the weekly digest");
@@ -157,11 +157,11 @@ pub fn main() !void {
 
     var back_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "← Back");
     defer back_button.deinit();
-    back_button.setOnPress(requestBack);
+    back_button.setOnClick(requestBack);
 
     var submit_button = try widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Submit");
     defer submit_button.deinit();
-    submit_button.setOnPress(requestSubmit);
+    submit_button.setOnClick(requestSubmit);
     submit_button.setBorder(.double);
 
     var status = StatusLine{};

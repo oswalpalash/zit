@@ -118,7 +118,7 @@ pub fn main() !void {
     // Standard button
     const standard_button = try Button.init(memory_manager.getWidgetPoolAllocator(), "Standard Button");
     defer standard_button.deinit();
-    standard_button.setOnPress(struct {
+    standard_button.setOnClick(struct {
         fn callback() void {
             std.debug.print("Standard button pressed\n", .{});
         }
@@ -149,7 +149,7 @@ pub fn main() !void {
         render.Color{ .named_color = render.NamedColor.black },
         render.Color{ .named_color = render.NamedColor.green },
     );
-    colored_button.setOnPress(struct {
+    colored_button.setOnClick(struct {
         fn callback() void {
             std.debug.print("Colored button pressed\n", .{});
         }
@@ -165,7 +165,7 @@ pub fn main() !void {
         render.Color{ .named_color = render.NamedColor.black },
         render.Color{ .named_color = render.NamedColor.yellow },
     );
-    highlight_button.setOnPress(struct {
+    highlight_button.setOnClick(struct {
         fn callback() void {
             std.debug.print("Highlight button pressed\n", .{});
         }
@@ -189,7 +189,7 @@ pub fn main() !void {
         var label_buf: [32]u8 = undefined;
     };
     counter_data.button = counter_button;
-    counter_button.setOnPress(struct {
+    counter_button.setOnClick(struct {
         fn callback() void {
             counter_state += 1;
             const text = std.fmt.bufPrint(&counter_data.label_buf, "Counter: {}", .{counter_state}) catch return;
@@ -207,7 +207,7 @@ pub fn main() !void {
         var label_buf: [32]u8 = undefined;
     };
     toggle_data.button = toggle_button;
-    toggle_button.setOnPress(struct {
+    toggle_button.setOnClick(struct {
         fn callback() void {
             toggle_data.state = !toggle_data.state;
             const text = std.fmt.bufPrint(&toggle_data.label_buf, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch return;

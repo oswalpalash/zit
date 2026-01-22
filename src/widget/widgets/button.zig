@@ -26,8 +26,8 @@ pub const Button = struct {
     style: render.Style = render.Style{},
     /// Border style
     border: render.BorderStyle = .single,
-    /// Callback function for button press
-    on_press: ?*const fn () void = null,
+    /// Callback function for button click
+    on_click: ?*const fn () void = null,
     /// Allocator for button operations
     allocator: std.mem.Allocator,
 
@@ -84,9 +84,9 @@ pub const Button = struct {
         self.border = border;
     }
 
-    /// Set the on-press callback
-    pub fn setOnPress(self: *Button, callback: *const fn () void) void {
-        self.on_press = callback;
+    /// Set the on-click callback
+    pub fn setOnClick(self: *Button, callback: *const fn () void) void {
+        self.on_click = callback;
     }
 
     /// Draw implementation for Button
@@ -162,7 +162,7 @@ pub const Button = struct {
                 if (mouse.action == .press and mouse.button == 1) {
                     // Check if click is within button bounds
                     if (self.widget.rect.contains(mouse.x, mouse.y)) {
-                        if (self.on_press) |callback| {
+                        if (self.on_click) |callback| {
                             callback();
                         }
                         return true;
@@ -171,7 +171,7 @@ pub const Button = struct {
             },
             .key => |key| {
                 if (self.widget.focused and (key.key == '\n' or key.key == ' ')) {
-                    if (self.on_press) |callback| {
+                    if (self.on_click) |callback| {
                         callback();
                     }
                     return true;
@@ -230,7 +230,7 @@ test "button triggers callback on press" {
             test_button_presses += 1;
         }
     }.call;
-    button.setOnPress(callback);
+    button.setOnClick(callback);
     button.widget.rect = layout_module.Rect.init(0, 0, 6, 3);
 
     const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) };
@@ -254,7 +254,7 @@ test "button ignores presses when bounds are zero" {
             test_button_presses += 1;
         }
     }.call;
-    button.setOnPress(callback);
+    button.setOnClick(callback);
     button.widget.rect = layout_module.Rect.init(0, 0, 0, 0);
 
     const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
