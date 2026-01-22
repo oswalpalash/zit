@@ -625,6 +625,39 @@ test "snapshot checkbox checked render" {
     try snap.expectGolden(alloc, "src/testing/golden/checkbox_checked.snap", .{});
 }
 
+test "snapshot progress bar 0 percent" {
+    const alloc = std.testing.allocator;
+    var bar_builder = widget.ProgressBarBuilder.init(alloc);
+    var bar = try bar_builder.percentage(0).build();
+    defer bar.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(12, 1));
+    defer harness.deinit();
+    try harness.expectGolden(&bar.widget, "src/testing/golden/progress_bar_0.snap", .{});
+}
+
+test "snapshot progress bar 50 percent" {
+    const alloc = std.testing.allocator;
+    var bar_builder = widget.ProgressBarBuilder.init(alloc);
+    var bar = try bar_builder.percentage(50).build();
+    defer bar.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(12, 1));
+    defer harness.deinit();
+    try harness.expectGolden(&bar.widget, "src/testing/golden/progress_bar_50.snap", .{});
+}
+
+test "snapshot progress bar 100 percent" {
+    const alloc = std.testing.allocator;
+    var bar_builder = widget.ProgressBarBuilder.init(alloc);
+    var bar = try bar_builder.percentage(100).build();
+    defer bar.deinit();
+
+    var harness = try WidgetHarness.init(alloc, layout.Size.init(12, 1));
+    defer harness.deinit();
+    try harness.expectGolden(&bar.widget, "src/testing/golden/progress_bar_100.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);
