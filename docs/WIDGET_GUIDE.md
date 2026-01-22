@@ -1,6 +1,7 @@
 # Widget Guide
 
 How to design and ship custom widgets that integrate with Zit’s rendering, layout, and event pipelines.
+See `docs/WIDGET_CATALOG.md` for the full widget index and example references.
 
 ## The Widget Interface
 The base `widget.Widget` holds state (rect, visibility, focus, optional focus ring, parent pointer) and a vtable:
