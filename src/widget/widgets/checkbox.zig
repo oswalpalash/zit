@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -143,16 +144,11 @@ pub const Checkbox = struct {
         renderer.drawChar(rect.x + 1, rect.y, ']', fg, bg, render.Style{});
 
         // Draw label
-        if (self.label.len > 0 and rect.width > 4) {
+        if (self.label.len > 0 and rect.width > 3) {
+            const available_width: u16 = rect.width - 3;
             var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, rect.width), truncated_text.len);
-            if (max_width > 7 and self.label.len > max_width - 7) {
-                @memcpy(truncated_text[0 .. max_width - 7], self.label[0 .. max_width - 7]);
-                @memcpy(truncated_text[max_width - 7 .. max_width - 4], "...");
-                renderer.drawStr(rect.x + 3, rect.y, truncated_text[0 .. max_width - 4], fg, bg, render.Style{});
-            } else {
-                renderer.drawStr(rect.x + 3, rect.y, self.label, fg, bg, render.Style{});
-            }
+            const draw_text = text_metrics.truncateToWidth(self.label, available_width, &truncated_text, true);
+            renderer.drawStr(rect.x + 3, rect.y, draw_text, fg, bg, render.Style{});
         }
     }
 
@@ -195,7 +191,9 @@ pub const Checkbox = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
 
-        return layout_module.Size.init(@as(u16, @intCast(@min(self.label.len + 4, 40))), // Cap width at 40 chars
+        const label_width = text_metrics.measureWidth(self.label).width;
+        const raw_width: u16 = label_width + 4;
+        return layout_module.Size.init(@min(raw_width, @as(u16, 40)), // Cap width at 40 chars
             1 // Height is 1 row
         );
     }

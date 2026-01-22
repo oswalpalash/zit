@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -152,28 +153,14 @@ pub const Button = struct {
         if (self.button_text.len > 0 and rect.width > 2 and rect.height > 2) {
             const inner_width = rect.width - 2;
             var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, inner_width), truncated_text.len);
-            if (max_width > 3 and self.button_text.len > max_width - 3) {
-                @memcpy(truncated_text[0 .. max_width - 3], self.button_text[0 .. max_width - 3]);
-                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
-                // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(max_width));
-                const text_x = if (inner_width > text_len)
-                    rect.x + 1 + (inner_width - text_len) / 2
-                else
-                    rect.x + 1;
-                const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, truncated_text[0..max_width], fg, bg, style);
-            } else {
-                // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(@min(@as(usize, inner_width), self.button_text.len)));
-                const text_x = if (inner_width > text_len)
-                    rect.x + 1 + (inner_width - text_len) / 2
-                else
-                    rect.x + 1;
-                const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, self.button_text, fg, bg, style);
-            }
+            const draw_text = text_metrics.truncateToWidth(self.button_text, inner_width, &truncated_text, true);
+            const text_width = text_metrics.measureWidth(draw_text).width;
+            const text_x = if (inner_width > text_width)
+                rect.x + 1 + (inner_width - text_width) / 2
+            else
+                rect.x + 1;
+            const text_y = rect.y + rect.height / 2;
+            renderer.drawStr(text_x, text_y, draw_text, fg, bg, style);
         }
     }
 
@@ -222,10 +209,12 @@ pub const Button = struct {
         const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
 
         // Calculate the preferred height based on text length
-        const height: u16 = if (self.button_text.len > 30) 5 else 3; // Use taller button for longer text
+        const text_width = text_metrics.measureWidth(self.button_text).width;
+        const height: u16 = if (text_width > 30) 5 else 3; // Use taller button for longer text
 
         // Button size should accommodate text plus borders
-        return layout_module.Size.init(@as(u16, @intCast(@min(self.button_text.len + 4, 40))), // Cap width at 40 chars
+        const raw_width: u16 = text_width + 4;
+        return layout_module.Size.init(@min(raw_width, @as(u16, 40)), // Cap width at 40 chars
             height // Adjustable height
         );
     }

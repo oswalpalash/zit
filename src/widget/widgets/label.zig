@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 
@@ -123,28 +124,24 @@ pub const Label = struct {
             const line = self.text[start..i];
             const y = rect.y + line_idx;
 
+            var truncated_text: [256]u8 = undefined;
+            const draw_text = text_metrics.truncateToWidth(line, rect.width, &truncated_text, true);
+            const draw_width = text_metrics.measureWidth(draw_text).width;
+
             // Calculate x position based on alignment
             var x: u16 = rect.x;
             if (self.alignment == .center) {
-                if (line.len < rect.width) {
-                    x = rect.x + (rect.width - @as(u16, @intCast(line.len))) / 2;
+                if (draw_width < rect.width) {
+                    x = rect.x + (rect.width - draw_width) / 2;
                 }
             } else if (self.alignment == .right) {
-                if (line.len < rect.width) {
-                    x = rect.x + rect.width - @as(u16, @intCast(line.len));
+                if (draw_width < rect.width) {
+                    x = rect.x + rect.width - draw_width;
                 }
             }
 
             // Draw the line
-            var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, rect.width), truncated_text.len);
-            if (max_width > 3 and line.len > max_width - 3) {
-                @memcpy(truncated_text[0 .. max_width - 3], line[0 .. max_width - 3]);
-                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
-                renderer.drawStr(x, y, truncated_text[0..max_width], fg, bg, style);
-            } else {
-                renderer.drawStr(x, y, line, fg, bg, style);
-            }
+            renderer.drawStr(x, y, draw_text, fg, bg, style);
 
             line_idx += 1;
             if (!at_end) {
@@ -174,15 +171,16 @@ pub const Label = struct {
             return layout_module.Size.zero();
         }
 
-        var max_width: usize = 0;
-        var lines: usize = 0;
+        var max_width: u16 = 0;
+        var lines: u16 = 0;
         var start: usize = 0;
         var i: usize = 0;
         while (i <= self.text.len) : (i += 1) {
             const at_end = i == self.text.len;
             if (!at_end and self.text[i] != '\n') continue;
-            const line_len = i - start;
-            max_width = @max(max_width, line_len);
+            const line = self.text[start..i];
+            const line_width = text_metrics.measureWidth(line).width;
+            max_width = @max(max_width, line_width);
             lines += 1;
             if (!at_end) {
                 start = i + 1;

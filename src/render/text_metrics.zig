@@ -101,6 +101,40 @@ pub fn measureWidth(str: []const u8) Metrics {
     return unicode_width.measure(str);
 }
 
+/// Truncate text to a max column width, preserving UTF-8 boundaries.
+/// When with_ellipsis is true, "..." is appended if truncation occurs.
+pub fn truncateToWidth(text: []const u8, max_cols: u16, buffer: []u8, with_ellipsis: bool) []const u8 {
+    if (max_cols == 0 or buffer.len == 0) return buffer[0..0];
+
+    const metrics = measureWidth(text);
+    if (metrics.width <= max_cols) return text;
+
+    const ellipsis = "...";
+    const add_ellipsis = with_ellipsis and max_cols > ellipsis.len;
+    var available: u16 = max_cols;
+    if (add_ellipsis) {
+        available -= @as(u16, @intCast(ellipsis.len));
+    }
+
+    var it = GraphemeIterator.init(text);
+    var used_cols: u16 = 0;
+    var len: usize = 0;
+    while (it.next()) |g| {
+        if (used_cols + g.width > available) break;
+        if (len + g.len > buffer.len) break;
+        std.mem.copyForwards(u8, buffer[len .. len + g.len], g.slice());
+        len += g.len;
+        used_cols += g.width;
+    }
+
+    if (add_ellipsis and len + ellipsis.len <= buffer.len) {
+        std.mem.copyForwards(u8, buffer[len .. len + ellipsis.len], ellipsis);
+        len += ellipsis.len;
+    }
+
+    return buffer[0..len];
+}
+
 /// Detect a dominant text direction using a simple RTL majority heuristic.
 pub fn detectDirection(str: []const u8) TextDirection {
     var rtl: usize = 0;

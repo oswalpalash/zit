@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 
 /// File browser widget with basic directory navigation and selection.
@@ -290,24 +291,8 @@ pub const FileBrowser = struct {
     fn truncateIntoBuffer(text: []const u8, max_chars: usize, buffer: []u8) []const u8 {
         if (max_chars == 0) return buffer[0..0];
 
-        const available = @min(max_chars, buffer.len);
-        if (text.len <= available) {
-            @memcpy(buffer[0..text.len], text);
-            return buffer[0..text.len];
-        }
-
-        if (available <= 3) {
-            const len = @min(available, text.len);
-            @memcpy(buffer[0..len], text[0..len]);
-            return buffer[0..len];
-        }
-
-        const cut = available - 3;
-        @memcpy(buffer[0..cut], text[0..cut]);
-        buffer[cut] = '.';
-        buffer[cut + 1] = '.';
-        buffer[cut + 2] = '.';
-        return buffer[0..available];
+        const capped: u16 = @intCast(@min(max_chars, @as(usize, std.math.maxInt(u16))));
+        return text_metrics.truncateToWidth(text, capped, buffer, true);
     }
 
     fn handleTypeaheadKey(self: *FileBrowser, byte: u8) bool {
