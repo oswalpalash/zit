@@ -357,12 +357,24 @@ pub const LayoutElement = struct {
 pub const Layout = struct {
     /// Allocator for layout operations
     allocator: std.mem.Allocator,
+    /// Optional scratch allocator for per-frame allocations
+    scratch_allocator: ?std.mem.Allocator = null,
 
     /// Initialize a new layout
     pub fn init(allocator: std.mem.Allocator) Layout {
         return Layout{
             .allocator = allocator,
+            .scratch_allocator = null,
         };
+    }
+
+    /// Set an optional scratch allocator for per-frame allocations.
+    pub fn setScratchAllocator(self: *Layout, allocator: ?std.mem.Allocator) void {
+        self.scratch_allocator = allocator;
+    }
+
+    fn scratchAllocator(self: *Layout) std.mem.Allocator {
+        return self.scratch_allocator orelse self.allocator;
     }
 };
 
@@ -564,6 +576,12 @@ pub const FlexLayout = struct {
     pub fn gap(self: *FlexLayout, gap_value: u16) *FlexLayout {
         self.gap_size = gap_value;
         self.cache.valid = false;
+        return self;
+    }
+
+    /// Set an optional scratch allocator for per-frame allocations.
+    pub fn setScratchAllocator(self: *FlexLayout, allocator: ?std.mem.Allocator) *FlexLayout {
+        self.base.setScratchAllocator(allocator);
         return self;
     }
 
@@ -1363,6 +1381,12 @@ pub const GridLayout = struct {
         return self;
     }
 
+    /// Set an optional scratch allocator for per-frame allocations.
+    pub fn setScratchAllocator(self: *GridLayout, allocator: ?std.mem.Allocator) *GridLayout {
+        self.base.setScratchAllocator(allocator);
+        return self;
+    }
+
     /// Update the column track sizing
     pub fn setColumns(self: *GridLayout, tracks: []const GridTrack) !*GridLayout {
         self.column_tracks.clearRetainingCapacity();
@@ -1545,11 +1569,12 @@ pub const GridLayout = struct {
             };
         }
 
-        const columns = try self.resolveTracks(self.column_tracks.items, available_width, horizontal_gap);
-        defer self.base.allocator.free(columns);
+        const scratch = self.base.scratchAllocator();
+        const columns = try resolveTracks(scratch, self.column_tracks.items, available_width, horizontal_gap);
+        defer scratch.free(columns);
 
-        const rows = try self.resolveTracks(self.row_tracks.items, available_height, vertical_gap);
-        defer self.base.allocator.free(rows);
+        const rows = try resolveTracks(scratch, self.row_tracks.items, available_height, vertical_gap);
+        defer scratch.free(rows);
 
         self.cache.columns.clearRetainingCapacity();
         try self.cache.columns.ensureTotalCapacity(self.base.allocator, columns.len);
@@ -1571,8 +1596,8 @@ pub const GridLayout = struct {
         };
     }
 
-    fn resolveTracks(self: *GridLayout, tracks: []const GridTrack, available: u16, gap_total: u16) ![]u16 {
-        const sizes = try self.base.allocator.alloc(u16, tracks.len);
+    fn resolveTracks(allocator: std.mem.Allocator, tracks: []const GridTrack, available: u16, gap_total: u16) ![]u16 {
+        const sizes = try allocator.alloc(u16, tracks.len);
 
         const available_for_tracks: u32 = if (available > gap_total)
             @as(u32, available) - gap_total

@@ -937,6 +937,8 @@ pub const Renderer = struct {
     back: Buffer,
     /// Allocator for renderer operations
     allocator: std.mem.Allocator,
+    /// Optional scratch allocator for per-frame temporary allocations
+    scratch_allocator: ?std.mem.Allocator = null,
     /// Current cursor position
     cursor_x: u16 = 0,
     cursor_y: u16 = 0,
@@ -1029,6 +1031,15 @@ pub const Renderer = struct {
         }
         self.style_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
         self.grapheme_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
+    }
+
+    /// Configure an optional scratch allocator for per-frame allocations.
+    pub fn setScratchAllocator(self: *Renderer, allocator: ?std.mem.Allocator) void {
+        self.scratch_allocator = allocator;
+    }
+
+    fn scratchAllocator(self: *Renderer) std.mem.Allocator {
+        return self.scratch_allocator orelse self.allocator;
     }
 
     fn resetDirty(self: *Renderer) void {
@@ -1327,8 +1338,9 @@ pub const Renderer = struct {
         if (stops.len == 0) return;
         const checked = self.checkedRect(x, y, width, height) orelse return;
 
-        const sorted = copyAndSortStops(self.allocator, stops) catch return;
-        defer self.allocator.free(sorted);
+        const scratch = self.scratchAllocator();
+        const sorted = copyAndSortStops(scratch, stops) catch return;
+        defer scratch.free(sorted);
 
         const axis_len: u16 = if (direction == .horizontal) checked.width else checked.height;
         if (axis_len == 0) return;
