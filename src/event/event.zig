@@ -6,6 +6,7 @@ const timer = @import("timer.zig");
 const accessibility = @import("../widget/accessibility.zig");
 const render = @import("../render/render.zig");
 const layout = @import("../layout/layout.zig");
+const memory = @import("../memory/memory.zig");
 
 const event_loop_sleep_ms: u64 = 10;
 const focus_history_limit: usize = 10;
@@ -1986,6 +1987,8 @@ pub const Application = struct {
     running: bool = false,
     /// Allocator for application operations
     allocator: std.mem.Allocator,
+    /// Optional memory manager for per-frame scratch allocations
+    memory_manager: ?*memory.MemoryManager = null,
     /// Focus manager
     focus_manager: FocusManager,
     /// I/O event manager
@@ -2021,6 +2024,26 @@ pub const Application = struct {
         app.drag_manager = DragManager.init(&app.event_queue, allocator);
 
         return app;
+    }
+
+    /// Initialize an application backed by a memory manager.
+    pub fn initWithMemoryManager(manager: *memory.MemoryManager) Application {
+        var app = Application.init(manager.getParentAllocator());
+        app.memory_manager = manager;
+        return app;
+    }
+
+    /// Attach a memory manager for per-frame scratch allocations.
+    pub fn setMemoryManager(self: *Application, manager: ?*memory.MemoryManager) void {
+        self.memory_manager = manager;
+    }
+
+    /// Get the allocator used for per-frame scratch work.
+    pub fn frameAllocator(self: *Application) std.mem.Allocator {
+        if (self.memory_manager) |manager| {
+            return manager.frameAllocator();
+        }
+        return self.allocator;
     }
 
     /// Clean up application resources
@@ -2085,8 +2108,13 @@ pub const Application = struct {
 
         self.ensureShortcutHook();
 
+        if (self.memory_manager) |manager| {
+            manager.resetFrame();
+        }
+
+        const frame_allocator = self.frameAllocator();
         if (self.use_propagation) {
-            try self.event_queue.processEventsWithPropagation(self.allocator);
+            try self.event_queue.processEventsWithPropagation(frame_allocator);
         } else {
             try self.event_queue.processEvents();
         }

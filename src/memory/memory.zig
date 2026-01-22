@@ -51,9 +51,19 @@ pub const MemoryManager = struct {
         self.arena_allocator.reset();
     }
 
+    /// Reset per-frame temporary allocations.
+    pub fn resetFrame(self: *Self) void {
+        self.resetArena();
+    }
+
     /// Get the arena allocator for short-lived allocations.
     pub fn getArenaAllocator(self: *Self) Allocator {
         return self.arena_allocator.allocator();
+    }
+
+    /// Get the frame allocator for per-frame scratch.
+    pub fn frameAllocator(self: *Self) Allocator {
+        return self.getArenaAllocator();
     }
 
     /// Get the widget pool allocator for widget instances.
