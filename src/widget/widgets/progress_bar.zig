@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const testing = @import("../../testing/testing.zig");
 const animation = @import("../animation.zig");
 
 /// Progress bar direction
@@ -270,3 +271,35 @@ pub const ProgressBar = struct {
         return false; // Progress bars are not focusable
     }
 };
+
+test "progress bar init/deinit" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    try std.testing.expectEqual(@as(u8, 0), bar.progress);
+}
+
+test "progress bar updates progress and renders fill" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    bar.setProgress(50);
+    try std.testing.expectEqual(@as(u8, 50), bar.progress);
+    try std.testing.expectEqual(@as(f32, 50), bar.progress_driver.current);
+
+    var snap = try testing.renderWidget(alloc, &bar.widget, layout_module.Size.init(10, 1));
+    defer snap.deinit(alloc);
+    try std.testing.expect(std.mem.indexOfScalar(u8, snap.text(), '%') != null);
+}
+
+test "progress bar tolerates zero size" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    var snap = try testing.renderWidget(alloc, &bar.widget, layout_module.Size.init(0, 0));
+    defer snap.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 0), snap.text().len);
+}
