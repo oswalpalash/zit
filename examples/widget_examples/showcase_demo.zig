@@ -345,13 +345,13 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = try zit.terminal.init(allocator);
     defer term.deinit() catch {};
 
-    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
+    var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
 
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -429,7 +429,7 @@ pub fn main() !void {
         .image = image,
         .autocomplete = autocomplete,
         .ctx_menu = ctx_menu,
-        .log = EventLog.init(memory_manager.getArenaAllocator()),
+        .log = EventLog.init(allocator),
     };
     defer state.log.deinit();
     demo_state_ptr = &state;

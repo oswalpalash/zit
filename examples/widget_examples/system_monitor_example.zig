@@ -118,7 +118,7 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = try zit.terminal.init(allocator);
     defer term.deinit() catch {};
 
     // Use the general allocator so per-frame renderer scratch buffers can be freed.

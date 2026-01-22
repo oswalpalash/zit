@@ -25,16 +25,16 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
     defer memory_manager.deinit();
 
-    // Initialize terminal with memory manager
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    // Initialize terminal with the parent allocator
+    var term = try zit.terminal.init(allocator);
     defer term.deinit() catch {};
 
-    // Initialize renderer with memory manager
-    var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);
+    // Initialize renderer with the parent allocator
+    var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
 
-    // Initialize input handler with memory manager
-    var input_handler = zit.input.InputHandler.init(memory_manager.getArenaAllocator(), &term);
+    // Initialize input handler with the parent allocator
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
