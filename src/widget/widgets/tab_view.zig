@@ -288,7 +288,7 @@ pub const TabView = struct {
     /// Show border
     show_border: bool = true,
     /// On tab changed callback
-    on_tab_changed: ?*const fn (usize) void = null,
+    on_tab_select: ?*const fn (usize) void = null,
     /// Allocator for tab view operations
     allocator: std.mem.Allocator,
 
@@ -372,8 +372,8 @@ pub const TabView = struct {
         self.syncHeader();
         self.syncVisibility();
 
-        if (self.on_tab_changed != null and old_active != self.active_tab and self.tabs.items.len > 0) {
-            self.on_tab_changed.?(self.active_tab);
+        if (self.on_tab_select != null and old_active != self.active_tab and self.tabs.items.len > 0) {
+            self.on_tab_select.?(self.active_tab);
         }
     }
 
@@ -415,7 +415,7 @@ pub const TabView = struct {
         self.syncVisibility();
         self.tab_bar.setActive(clamped);
 
-        if (self.on_tab_changed) |cb| {
+        if (self.on_tab_select) |cb| {
             cb(self.active_tab);
         }
     }
@@ -449,9 +449,9 @@ pub const TabView = struct {
         self.border_fg = border_fg;
     }
 
-    /// Set the on-tab-changed callback
-    pub fn setOnTabChanged(self: *TabView, callback: *const fn (usize) void) void {
-        self.on_tab_changed = callback;
+    /// Set the on-tab-select callback
+    pub fn setOnTabSelect(self: *TabView, callback: *const fn (usize) void) void {
+        self.on_tab_select = callback;
     }
 
     /// Allow keyboard-driven tab movement.
