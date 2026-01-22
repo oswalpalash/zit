@@ -347,6 +347,9 @@ pub const TabView = struct {
             .closable = spec.closable,
             .loaded = spec.content != null,
         });
+        if (spec.content) |content| {
+            content.parent = &self.widget;
+        }
         self.syncHeader();
 
         if (self.tabs.items.len == 1) {
@@ -475,6 +478,7 @@ pub const TabView = struct {
         tab.loaded = true;
 
         if (tab.content) |tab_content| {
+            tab_content.parent = &self.widget;
             const rect = self.contentRect();
             tab_content.layout(rect) catch {};
         }
