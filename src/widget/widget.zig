@@ -180,9 +180,7 @@ pub fn progress(allocator: std.mem.Allocator, value: usize, max_value: usize) !*
 
 /// Create a new scrollbar
 pub fn createScrollbar(allocator: std.mem.Allocator, orientation: ScrollOrientation) !*Scrollbar {
-    var scrollbar_widget = try Scrollbar.init(allocator);
-    scrollbar_widget.setOrientation(orientation);
-    return scrollbar_widget;
+    return Scrollbar.init(allocator, orientation);
 }
 
 /// Create a new scroll container
