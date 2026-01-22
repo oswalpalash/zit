@@ -606,6 +606,11 @@ pub const FlexLayout = struct {
 
     /// Render the layout
     pub fn renderLayout(self: *FlexLayout, renderer: *renderer_mod.Renderer, rect: Rect) void {
+        self.forEachChildRect(rect, renderer, renderFlexChild);
+    }
+
+    /// Visit each child rectangle (used by widgets to apply layout without rendering).
+    pub fn forEachChildRect(self: *FlexLayout, rect: Rect, ctx: *anyopaque, callback: *const fn (*anyopaque, *FlexChild, Rect) void) void {
         // Apply padding to rect
         const padded_rect = rect.shrink(self.padding_insets);
 
@@ -676,8 +681,7 @@ pub const FlexLayout = struct {
                     .height = child_main_size,
                 };
 
-            if (!intersectsViewport(child_rect, renderer)) continue;
-            child.element.render(renderer, child_rect);
+            callback(ctx, child, child_rect);
 
             current_position += margin_main_before;
             current_position += child_main_size;
@@ -687,6 +691,12 @@ pub const FlexLayout = struct {
                 current_position += self.cache.gap_value;
             }
         }
+    }
+
+    fn renderFlexChild(ctx: *anyopaque, child: *FlexChild, child_rect: Rect) void {
+        const renderer = @as(*renderer_mod.Renderer, @ptrCast(@alignCast(ctx)));
+        if (!intersectsViewport(child_rect, renderer)) return;
+        child.element.render(renderer, child_rect);
     }
 
     fn ensureCache(self: *FlexLayout, available_main: u16, available_cross: u16) void {
@@ -1463,6 +1473,11 @@ pub const GridLayout = struct {
 
     /// Render the layout
     pub fn renderLayout(self: *GridLayout, renderer: *renderer_mod.Renderer, rect: Rect) void {
+        self.forEachCellRect(rect, renderer, renderGridCell);
+    }
+
+    /// Visit each populated cell rectangle (used by widgets to apply layout without rendering).
+    pub fn forEachCellRect(self: *GridLayout, rect: Rect, ctx: *anyopaque, callback: *const fn (*anyopaque, LayoutElement, Rect) void) void {
         // Apply padding to rect
         const padded_rect = rect.shrink(self.padding_insets);
 
@@ -1500,10 +1515,7 @@ pub const GridLayout = struct {
                             .height = row_sizes[row],
                         };
 
-                        if (!intersectsViewport(cell_rect, renderer)) {
-                            continue;
-                        }
-                        cell.render(renderer, cell_rect);
+                        callback(ctx, cell, cell_rect);
                     }
                 }
                 x = saturatingAdd(x, column_sizes[col]);
@@ -1512,6 +1524,12 @@ pub const GridLayout = struct {
             y = saturatingAdd(y, row_sizes[row]);
             y = saturatingAdd(y, self.gap_size);
         }
+    }
+
+    fn renderGridCell(ctx: *anyopaque, cell: LayoutElement, cell_rect: Rect) void {
+        const renderer = @as(*renderer_mod.Renderer, @ptrCast(@alignCast(ctx)));
+        if (!intersectsViewport(cell_rect, renderer)) return;
+        cell.render(renderer, cell_rect);
     }
 
     fn ensureTrackCache(self: *GridLayout, available_width: u16, available_height: u16, horizontal_gap: u16, vertical_gap: u16) !struct { columns: []const u16, rows: []const u16 } {

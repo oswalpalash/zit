@@ -11,6 +11,8 @@ const tab_view_widget = @import("tab_view.zig");
 const block_widget = @import("block.zig");
 const modal_widget = @import("modal.zig");
 const screen_manager_widget = @import("screen_manager.zig");
+const flex_container_widget = @import("flex_container.zig");
+const grid_container_widget = @import("grid_container.zig");
 
 /// Focus direction for navigation
 pub const FocusDirection = enum {
@@ -205,6 +207,23 @@ fn asWidget(comptime T: type, base_ptr: *Widget) ?*T {
 fn traverseChildrenImpl(widget: *Widget, callback: *const fn (*Widget) void) void {
     if (asWidget(container_widget.Container, widget)) |container| {
         for (container.children.items) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(flex_container_widget.FlexContainer, widget)) |container| {
+        for (container.children.items) |child| {
+            callback(child);
+            traverseChildrenImpl(child, callback);
+        }
+        return;
+    }
+
+    if (asWidget(grid_container_widget.GridContainer, widget)) |grid| {
+        for (grid.children.items) |entry| {
+            const child = entry.widget;
             callback(child);
             traverseChildrenImpl(child, callback);
         }
