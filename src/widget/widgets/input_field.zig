@@ -6,6 +6,7 @@ const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
 const input_mask = @import("../input_mask.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Input field widget for text entry
 pub const InputField = struct {
@@ -102,6 +103,7 @@ pub const InputField = struct {
         self.clipboard = &self.clipboard_storage;
         self.setTheme(theme.Theme.dark());
         try self.undo_redo.capture(self.text[0..0]);
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
 
         return self;
     }
@@ -299,11 +301,17 @@ pub const InputField = struct {
         if (placeholder.len == 0) {
             self.placeholder = "";
             self.placeholder_owned = false;
+            self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
             return;
         }
 
         self.placeholder = try self.allocator.dupe(u8, placeholder);
         self.placeholder_owned = true;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+    }
+
+    fn accessibilityLabel(self: *InputField) []const u8 {
+        return if (self.placeholder.len > 0) self.placeholder else "Input";
     }
 
     /// Apply a mask pattern (e.g. "(###) ###-####"). The input field owns the mask.

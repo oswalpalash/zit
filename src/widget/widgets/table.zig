@@ -6,6 +6,7 @@ const input = @import("../../input/input.zig");
 const memory = @import("../../memory/memory.zig");
 const animation = @import("../animation.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// TableCell structure
 pub const TableCell = struct {
@@ -166,6 +167,7 @@ pub const Table = struct {
             .edit_buffer = .{},
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Table", "");
 
         return self;
     }

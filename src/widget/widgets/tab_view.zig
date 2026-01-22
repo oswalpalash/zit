@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Lazy factory for tab content, called when a tab is first activated.
 pub const TabLoader = *const fn (std.mem.Allocator) anyerror!*base.Widget;
@@ -66,6 +67,7 @@ pub const TabBar = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.tablist), "Tabs", "");
         return self;
     }
 
@@ -349,6 +351,7 @@ pub const TabView = struct {
         };
         self.setTheme(theme.Theme.dark());
         self.configureHeader();
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.tabpanel), "Tab panel", "");
         return self;
     }
 

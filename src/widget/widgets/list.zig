@@ -6,6 +6,7 @@ const input = @import("../../input/input.zig");
 const animation = @import("../animation.zig");
 const event_module = @import("../../event/event.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 const ActiveDrag = struct {
     source: *List,
@@ -120,6 +121,7 @@ pub const List = struct {
         self.setTheme(theme.Theme.dark());
         self.item_provider = null;
         self.scroll_driver.snap(0);
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "List", "");
 
         return self;
     }

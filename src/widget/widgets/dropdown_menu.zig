@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// MenuItem structure
 pub const MenuItem = struct {
@@ -67,6 +68,7 @@ pub const DropdownMenu = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), self.label, "");
 
         return self;
     }
@@ -126,6 +128,7 @@ pub const DropdownMenu = struct {
         const label_copy = try self.allocator.alloc(u8, label.len);
         @memcpy(label_copy, label);
         self.label = label_copy;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), self.label, "");
     }
 
     /// Set the selected item

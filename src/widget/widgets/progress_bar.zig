@@ -6,6 +6,7 @@ const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
 const animation = @import("../animation.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Progress bar direction
 pub const ProgressDirection = enum {
@@ -70,6 +71,7 @@ pub const ProgressBar = struct {
         self.progress_driver.snap(@floatFromInt(self.progress));
         self.fill_fg_transition.snap(self.fill_fg);
         self.fill_bg_transition.snap(self.fill_bg);
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), "Progress", "");
         return self;
     }
 

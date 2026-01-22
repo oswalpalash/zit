@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Multi-line text editor with scrolling, undo/redo, and clipboard support.
 pub const TextArea = struct {
@@ -74,6 +75,7 @@ pub const TextArea = struct {
         self.clipboard = &self.clipboard_storage;
         self.setTheme(theme.Theme.dark());
         try self.undo_redo.capture(self.buffer.items);
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
         return self;
     }
 
@@ -111,11 +113,17 @@ pub const TextArea = struct {
         if (placeholder.len == 0) {
             self.placeholder = "";
             self.placeholder_owned = false;
+            self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
             return;
         }
 
         self.placeholder = try self.allocator.dupe(u8, placeholder);
         self.placeholder_owned = true;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+    }
+
+    fn accessibilityLabel(self: *TextArea) []const u8 {
+        return if (self.placeholder.len > 0) self.placeholder else "Text area";
     }
 
     pub fn setColors(self: *TextArea, fg: render.Color, bg: render.Color, focused_fg: render.Color, focused_bg: render.Color) void {

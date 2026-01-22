@@ -44,6 +44,18 @@ pub const Widget = struct {
     style_sheet: ?*css.StyleSheet = null,
     /// Optional theme used when resolving stylesheet roles
     style_theme: ?theme.Theme = null,
+    /// Accessibility role identifier (matches accessibility.Role enum value)
+    accessibility_role: u8 = 0,
+    /// Accessibility name for announcements
+    accessibility_name: []const u8 = "",
+    /// Accessibility description for announcements
+    accessibility_description: []const u8 = "",
+    /// Accessibility context pointer provided by the application
+    accessibility_ctx: ?*anyopaque = null,
+    /// Callback for registering accessibility nodes
+    accessibility_register: ?*const fn (?*anyopaque, *Widget) void = null,
+    /// Callback for updating accessibility bounds
+    accessibility_update_bounds: ?*const fn (?*anyopaque, *Widget, layout_module.Rect) void = null,
     /// Optional focus ring styling
     focus_ring: ?render.FocusRingStyle = null,
     /// Animated visibility controller for show/hide transitions
@@ -91,7 +103,10 @@ pub const Widget = struct {
     /// Layout the widget
     pub fn layout(self: *Widget, rect: layout_module.Rect) !void {
         self.rect = rect;
-        return self.vtable.layout(self, rect);
+        try self.vtable.layout(self, rect);
+        if (self.accessibility_update_bounds) |cb| {
+            cb(self.accessibility_ctx, self, self.rect);
+        }
     }
 
     /// Get preferred size
@@ -143,6 +158,18 @@ pub const Widget = struct {
         self.style_theme = theme_value;
     }
 
+    /// Set accessibility metadata for this widget.
+    pub fn setAccessibility(self: *Widget, role_id: u8, name: []const u8, description: []const u8) void {
+        self.accessibility_role = role_id;
+        self.accessibility_name = name;
+        self.accessibility_description = description;
+        if (self.accessibility_register) |cb| {
+            if (role_id != 0 or name.len > 0 or description.len > 0) {
+                cb(self.accessibility_ctx, self);
+            }
+        }
+    }
+
     /// Resolve stylesheet overrides for this widget.
     pub fn resolveStyle(self: *Widget, type_name: []const u8, state: css.State, base_style: render.Style) css.StyleSheet.Resolved {
         const sheet = self.style_sheet orelse return .{ .fg = null, .bg = null, .style = base_style };
@@ -177,6 +204,22 @@ pub const Widget = struct {
         root.style_sheet = sheet;
         root.style_theme = theme_value;
         applyStyleContextImpl(root, sheet, theme_value);
+    }
+
+    /// Apply accessibility callbacks to the widget tree.
+    pub fn applyAccessibilityContext(
+        root: *Widget,
+        ctx: ?*anyopaque,
+        register: ?*const fn (?*anyopaque, *Widget) void,
+        update: ?*const fn (?*anyopaque, *Widget, layout_module.Rect) void,
+    ) void {
+        root.accessibility_ctx = ctx;
+        root.accessibility_register = register;
+        root.accessibility_update_bounds = update;
+        if (register != null and (root.accessibility_role != 0 or root.accessibility_name.len > 0 or root.accessibility_description.len > 0)) {
+            register.?(ctx, root);
+        }
+        applyAccessibilityContextImpl(root, ctx, register, update);
     }
 
     /// Set focus ring styling.
@@ -453,6 +496,170 @@ fn applyStyleContextImpl(widget: *Widget, sheet: ?*css.StyleSheet, theme_value: 
             child.style_sheet = sheet;
             child.style_theme = theme_value;
             applyStyleContextImpl(child, sheet, theme_value);
+        }
+    }
+}
+
+fn applyAccessibilityContextImpl(
+    widget: *Widget,
+    ctx: ?*anyopaque,
+    register: ?*const fn (?*anyopaque, *Widget) void,
+    update: ?*const fn (?*anyopaque, *Widget, layout_module.Rect) void,
+) void {
+    if (asWidget(container_widget.Container, widget)) |container| {
+        for (container.children.items) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(flex_container_widget.FlexContainer, widget)) |container| {
+        for (container.children.items) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(grid_container_widget.GridContainer, widget)) |grid| {
+        for (grid.children.items) |entry| {
+            const child = entry.widget;
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(scroll_container_widget.ScrollContainer, widget)) |container| {
+        if (container.content) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        if (container.h_scrollbar) |bar| {
+            const child = &bar.widget;
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        if (container.v_scrollbar) |bar| {
+            const child = &bar.widget;
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(split_pane_widget.SplitPane, widget)) |pane| {
+        if (pane.first) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        if (pane.second) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(tab_view_widget.TabView, widget)) |tabs| {
+        const tab_bar_child = &tabs.tab_bar.widget;
+        tab_bar_child.accessibility_ctx = ctx;
+        tab_bar_child.accessibility_register = register;
+        tab_bar_child.accessibility_update_bounds = update;
+        if (register != null and (tab_bar_child.accessibility_role != 0 or tab_bar_child.accessibility_name.len > 0 or tab_bar_child.accessibility_description.len > 0)) {
+            register.?(ctx, tab_bar_child);
+        }
+        applyAccessibilityContextImpl(tab_bar_child, ctx, register, update);
+        for (tabs.tabs.items) |tab| {
+            if (tab.content) |child| {
+                child.accessibility_ctx = ctx;
+                child.accessibility_register = register;
+                child.accessibility_update_bounds = update;
+                if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                    register.?(ctx, child);
+                }
+                applyAccessibilityContextImpl(child, ctx, register, update);
+            }
+        }
+        return;
+    }
+
+    if (asWidget(block_widget.Block, widget)) |block| {
+        if (block.child) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(modal_widget.Modal, widget)) |modal| {
+        if (modal.content) |child| {
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
+        }
+        return;
+    }
+
+    if (asWidget(screen_manager_widget.ScreenManager, widget)) |manager| {
+        for (manager.screens.items) |entry| {
+            const child = entry.screen.widget;
+            child.accessibility_ctx = ctx;
+            child.accessibility_register = register;
+            child.accessibility_update_bounds = update;
+            if (register != null and (child.accessibility_role != 0 or child.accessibility_name.len > 0 or child.accessibility_description.len > 0)) {
+                register.?(ctx, child);
+            }
+            applyAccessibilityContextImpl(child, ctx, register, update);
         }
     }
 }

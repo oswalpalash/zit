@@ -5,6 +5,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// BorderStyle for ScrollContainer
 pub const BorderStyle = enum {
@@ -84,6 +85,7 @@ pub const ScrollContainer = struct {
         h_scrollbar_widget.widget.parent = &self.widget;
         v_scrollbar_widget.widget.parent = &self.widget;
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Scroll container", "");
 
         return self;
     }
