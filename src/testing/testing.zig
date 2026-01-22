@@ -594,6 +594,37 @@ test "snapshot label alignment variations" {
     try right_harness.expectGolden(&right.widget, "src/testing/golden/label_align_right.snap", .{});
 }
 
+test "snapshot checkbox unchecked render" {
+    const alloc = std.testing.allocator;
+    var checkbox = try widget.Checkbox.init(alloc, "Accept");
+    defer checkbox.deinit();
+
+    var mock = try MockTerminal.init(alloc, 14, 1);
+    defer mock.deinit();
+    try checkbox.widget.layout(layout.Rect.init(1, 0, 13, 1));
+    try checkbox.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectGolden(alloc, "src/testing/golden/checkbox_unchecked.snap", .{});
+}
+
+test "snapshot checkbox checked render" {
+    const alloc = std.testing.allocator;
+    var checkbox = try widget.Checkbox.init(alloc, "Accept");
+    checkbox.setChecked(true);
+    defer checkbox.deinit();
+
+    var mock = try MockTerminal.init(alloc, 14, 1);
+    defer mock.deinit();
+    try checkbox.widget.layout(layout.Rect.init(1, 0, 13, 1));
+    try checkbox.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectGolden(alloc, "src/testing/golden/checkbox_checked.snap", .{});
+}
+
 test "mock terminal captures ansi output and queues input" {
     const alloc = std.testing.allocator;
     var mock = try MockTerminal.init(alloc, 6, 2);
