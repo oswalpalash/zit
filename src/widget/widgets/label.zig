@@ -128,10 +128,11 @@ pub const Label = struct {
 
             // Draw the line
             var truncated_text: [256]u8 = undefined;
-            if (rect.width > 3 and line.len > rect.width - 3) {
-                @memcpy(truncated_text[0 .. rect.width - 3], line[0 .. rect.width - 3]);
-                @memcpy(truncated_text[rect.width - 3 .. rect.width], "...");
-                renderer.drawStr(x, y, truncated_text[0..rect.width], self.fg, self.bg, self.style);
+            const max_width = @min(@as(usize, rect.width), truncated_text.len);
+            if (max_width > 3 and line.len > max_width - 3) {
+                @memcpy(truncated_text[0 .. max_width - 3], line[0 .. max_width - 3]);
+                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
+                renderer.drawStr(x, y, truncated_text[0..max_width], self.fg, self.bg, self.style);
             } else {
                 renderer.drawStr(x, y, line, self.fg, self.bg, self.style);
             }
