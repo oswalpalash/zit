@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Scrollbar orientation
 pub const ScrollOrientation = enum {
@@ -59,6 +60,7 @@ pub const Scrollbar = struct {
             .orientation = orientation,
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -98,6 +100,16 @@ pub const Scrollbar = struct {
     /// Set the on-value-change callback
     pub fn setOnValueChange(self: *Scrollbar, callback: *const fn (f32) void) void {
         self.on_value_change = callback;
+    }
+
+    /// Apply theme defaults for scrollbar colors.
+    pub fn setTheme(self: *Scrollbar, theme_value: theme.Theme) void {
+        const colors = theme.scrollbarColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.thumb_fg = colors.thumb_fg;
+        self.focused_fg = colors.focused_fg;
+        self.focused_bg = colors.focused_bg;
     }
 
     /// Draw implementation for Scrollbar

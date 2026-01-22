@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
 const animation = @import("../animation.zig");
+const theme = @import("../theme.zig");
 
 /// Progress bar direction
 pub const ProgressDirection = enum {
@@ -64,6 +65,7 @@ pub const ProgressBar = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
 
         self.progress_driver.snap(@floatFromInt(self.progress));
         self.fill_fg_transition.snap(self.fill_fg);
@@ -158,6 +160,12 @@ pub const ProgressBar = struct {
     /// Set the border style
     pub fn setBorder(self: *ProgressBar, border: render.BorderStyle) void {
         self.border = border;
+    }
+
+    /// Apply theme defaults for progress bar colors.
+    pub fn setTheme(self: *ProgressBar, theme_value: theme.Theme) void {
+        const colors = theme.progressColors(theme_value);
+        self.setColors(colors.fg, colors.bg, colors.fill_fg, colors.fill_bg);
     }
 
     /// Draw implementation for ProgressBar

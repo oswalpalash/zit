@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const memory = @import("../../memory/memory.zig");
 const animation = @import("../animation.zig");
+const theme = @import("../theme.zig");
 
 /// TableCell structure
 pub const TableCell = struct {
@@ -164,6 +165,7 @@ pub const Table = struct {
             .view_dirty = true,
             .edit_buffer = .{},
         };
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -559,6 +561,20 @@ pub const Table = struct {
     pub fn setSelectedColors(self: *Table, selected_fg: render.Color, selected_bg: render.Color) void {
         self.selected_fg = selected_fg;
         self.selected_bg = selected_bg;
+    }
+
+    /// Apply theme defaults for table colors.
+    pub fn setTheme(self: *Table, theme_value: theme.Theme) void {
+        const colors = theme.tableColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.header_fg = colors.header_fg;
+        self.header_bg = colors.header_bg;
+        self.selected_fg = colors.selected_fg;
+        self.selected_bg = colors.selected_bg;
+        self.focused_fg = colors.focused_fg;
+        self.focused_bg = colors.focused_bg;
+        self.grid_fg = colors.grid_fg;
     }
 
     /// Set the on-row-selected callback

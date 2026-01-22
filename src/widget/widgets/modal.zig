@@ -5,6 +5,7 @@ const layout_module = @import("../../layout/layout.zig");
 const Size = layout_module.Size;
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// Modal dialog widget
 pub const Modal = struct {
@@ -63,6 +64,7 @@ pub const Modal = struct {
             .title = "",
             .content = null,
         };
+        self.setTheme(theme.Theme.dark());
         return self;
     }
 
@@ -107,6 +109,16 @@ pub const Modal = struct {
     pub fn setTitleColors(self: *Modal, title_fg: render.Color, title_bg: render.Color) void {
         self.title_fg = title_fg;
         self.title_bg = title_bg;
+    }
+
+    /// Apply theme defaults for modal colors.
+    pub fn setTheme(self: *Modal, theme_value: theme.Theme) void {
+        const colors = theme.modalColors(theme_value);
+        self.title_fg = colors.title_fg;
+        self.title_bg = colors.title_bg;
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.border_fg = colors.border_fg;
     }
 
     /// Set whether to show the title

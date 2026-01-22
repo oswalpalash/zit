@@ -4,6 +4,7 @@ const scrollbar = @import("scrollbar.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const theme = @import("../theme.zig");
 
 /// BorderStyle for ScrollContainer
 pub const BorderStyle = enum {
@@ -82,6 +83,7 @@ pub const ScrollContainer = struct {
         };
         h_scrollbar_widget.widget.parent = &self.widget;
         v_scrollbar_widget.widget.parent = &self.widget;
+        self.setTheme(theme.Theme.dark());
 
         return self;
     }
@@ -135,6 +137,22 @@ pub const ScrollContainer = struct {
     pub fn setBorder(self: *ScrollContainer, show_border: bool, border_style: BorderStyle) void {
         self.show_border = show_border;
         self.border = border_style;
+    }
+
+    /// Apply theme defaults for container and scrollbar colors.
+    pub fn setTheme(self: *ScrollContainer, theme_value: theme.Theme) void {
+        const colors = theme.controlColors(theme_value);
+        self.fg = colors.fg;
+        self.bg = colors.bg;
+        self.disabled_fg = colors.disabled_fg;
+        self.disabled_bg = colors.disabled_bg;
+        self.style = theme_value.style;
+        if (self.h_scrollbar) |h_scrollbar_widget| {
+            h_scrollbar_widget.setTheme(theme_value);
+        }
+        if (self.v_scrollbar) |v_scrollbar_widget| {
+            v_scrollbar_widget.setTheme(theme_value);
+        }
     }
 
     /// Set custom border style

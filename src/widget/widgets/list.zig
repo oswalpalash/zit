@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const animation = @import("../animation.zig");
 const event_module = @import("../../event/event.zig");
+const theme = @import("../theme.zig");
 
 const ActiveDrag = struct {
     source: *List,
@@ -116,6 +117,7 @@ pub const List = struct {
             .items = std.ArrayList([]const u8).empty,
             .allocator = allocator,
         };
+        self.setTheme(theme.Theme.dark());
         self.item_provider = null;
         self.scroll_driver.snap(0);
 
@@ -224,6 +226,18 @@ pub const List = struct {
         self.bg = bg;
         self.selected_fg = selected_fg;
         self.selected_bg = selected_bg;
+    }
+
+    /// Apply theme defaults for list colors.
+    pub fn setTheme(self: *List, theme_value: theme.Theme) void {
+        const surface = theme.surfaceColors(theme_value);
+        const selected = theme.selectionColors(theme_value);
+        self.fg = surface.fg;
+        self.bg = surface.bg;
+        self.selected_fg = selected.fg;
+        self.selected_bg = selected.bg;
+        self.focused_fg = selected.focused_fg;
+        self.focused_bg = selected.focused_bg;
     }
 
     /// Set the on-select callback

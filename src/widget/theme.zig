@@ -261,6 +261,247 @@ pub const Theme = struct {
     }
 };
 
+/// Stable role map for widget defaults.
+pub const WidgetRoleMap = struct {
+    pub const control_fg: ThemeRole = .text;
+    pub const control_bg: ThemeRole = .surface;
+    pub const control_focus_fg: ThemeRole = .background;
+    pub const control_focus_bg: ThemeRole = .accent;
+    pub const control_disabled_fg: ThemeRole = .muted;
+    pub const control_disabled_bg: ThemeRole = .surface;
+    pub const control_border: ThemeRole = .border;
+    pub const selection_fg: ThemeRole = .background;
+    pub const selection_bg: ThemeRole = .accent;
+    pub const container_fg: ThemeRole = .text;
+    pub const container_bg: ThemeRole = .background;
+    pub const text_fg: ThemeRole = .text;
+    pub const text_bg: ThemeRole = .background;
+    pub const muted_fg: ThemeRole = .muted;
+    pub const progress_fill: ThemeRole = .accent;
+    pub const progress_bg: ThemeRole = .surface;
+    pub const table_header_fg: ThemeRole = .background;
+    pub const table_header_bg: ThemeRole = .accent;
+    pub const table_grid: ThemeRole = .border;
+    pub const tab_bar_fg: ThemeRole = .text;
+    pub const tab_bar_bg: ThemeRole = .background;
+    pub const tab_active_fg: ThemeRole = .background;
+    pub const tab_active_bg: ThemeRole = .accent;
+    pub const tab_inactive_fg: ThemeRole = .text;
+    pub const tab_inactive_bg: ThemeRole = .surface;
+    pub const scrollbar_thumb: ThemeRole = .muted;
+    pub const modal_title_fg: ThemeRole = .background;
+    pub const modal_title_bg: ThemeRole = .accent;
+    pub const input_invalid_fg: ThemeRole = .background;
+    pub const input_invalid_bg: ThemeRole = .danger;
+};
+
+pub const TextColors = struct {
+    fg: Color,
+    bg: Color,
+    style: render.Style,
+};
+
+pub const SurfaceColors = struct {
+    fg: Color,
+    bg: Color,
+    style: render.Style,
+};
+
+pub const ControlColors = struct {
+    fg: Color,
+    bg: Color,
+    focused_fg: Color,
+    focused_bg: Color,
+    disabled_fg: Color,
+    disabled_bg: Color,
+    border: Color,
+};
+
+pub const InputColors = struct {
+    fg: Color,
+    bg: Color,
+    focused_fg: Color,
+    focused_bg: Color,
+    disabled_fg: Color,
+    disabled_bg: Color,
+    invalid_fg: Color,
+    invalid_bg: Color,
+    placeholder_fg: Color,
+    style: render.Style,
+};
+
+pub const SelectionColors = struct {
+    fg: Color,
+    bg: Color,
+    focused_fg: Color,
+    focused_bg: Color,
+};
+
+pub const ProgressColors = struct {
+    fg: Color,
+    bg: Color,
+    fill_fg: Color,
+    fill_bg: Color,
+};
+
+pub const ScrollbarColors = struct {
+    fg: Color,
+    bg: Color,
+    thumb_fg: Color,
+    focused_fg: Color,
+    focused_bg: Color,
+};
+
+pub const TableColors = struct {
+    fg: Color,
+    bg: Color,
+    header_fg: Color,
+    header_bg: Color,
+    selected_fg: Color,
+    selected_bg: Color,
+    focused_fg: Color,
+    focused_bg: Color,
+    grid_fg: Color,
+};
+
+pub const TabColors = struct {
+    fg: Color,
+    bg: Color,
+    active_fg: Color,
+    active_bg: Color,
+    inactive_fg: Color,
+    inactive_bg: Color,
+    border_fg: Color,
+};
+
+pub const ModalColors = struct {
+    title_fg: Color,
+    title_bg: Color,
+    fg: Color,
+    bg: Color,
+    border_fg: Color,
+};
+
+pub fn textColors(theme_value: Theme) TextColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.text_fg),
+        .bg = theme_value.color(WidgetRoleMap.text_bg),
+        .style = theme_value.style,
+    };
+}
+
+pub fn surfaceColors(theme_value: Theme) SurfaceColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.control_fg),
+        .bg = theme_value.color(WidgetRoleMap.control_bg),
+        .style = theme_value.style,
+    };
+}
+
+pub fn containerColors(theme_value: Theme) SurfaceColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.container_fg),
+        .bg = theme_value.color(WidgetRoleMap.container_bg),
+        .style = theme_value.style,
+    };
+}
+
+pub fn controlColors(theme_value: Theme) ControlColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.control_fg),
+        .bg = theme_value.color(WidgetRoleMap.control_bg),
+        .focused_fg = theme_value.color(WidgetRoleMap.control_focus_fg),
+        .focused_bg = theme_value.color(WidgetRoleMap.control_focus_bg),
+        .disabled_fg = theme_value.color(WidgetRoleMap.control_disabled_fg),
+        .disabled_bg = theme_value.color(WidgetRoleMap.control_disabled_bg),
+        .border = theme_value.color(WidgetRoleMap.control_border),
+    };
+}
+
+pub fn inputColors(theme_value: Theme) InputColors {
+    const base = controlColors(theme_value);
+    return .{
+        .fg = base.fg,
+        .bg = base.bg,
+        .focused_fg = base.focused_fg,
+        .focused_bg = base.focused_bg,
+        .disabled_fg = base.disabled_fg,
+        .disabled_bg = base.disabled_bg,
+        .invalid_fg = theme_value.color(WidgetRoleMap.input_invalid_fg),
+        .invalid_bg = theme_value.color(WidgetRoleMap.input_invalid_bg),
+        .placeholder_fg = theme_value.color(WidgetRoleMap.muted_fg),
+        .style = theme_value.style,
+    };
+}
+
+pub fn selectionColors(theme_value: Theme) SelectionColors {
+    const selected_bg = theme_value.color(WidgetRoleMap.selection_bg);
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.selection_fg),
+        .bg = selected_bg,
+        .focused_fg = theme_value.color(WidgetRoleMap.selection_fg),
+        .focused_bg = adjust(selected_bg, -12),
+    };
+}
+
+pub fn progressColors(theme_value: Theme) ProgressColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.control_fg),
+        .bg = theme_value.color(WidgetRoleMap.progress_bg),
+        .fill_fg = theme_value.color(WidgetRoleMap.progress_fill),
+        .fill_bg = theme_value.color(WidgetRoleMap.progress_fill),
+    };
+}
+
+pub fn scrollbarColors(theme_value: Theme) ScrollbarColors {
+    const base = controlColors(theme_value);
+    return .{
+        .fg = base.fg,
+        .bg = base.bg,
+        .thumb_fg = theme_value.color(WidgetRoleMap.scrollbar_thumb),
+        .focused_fg = base.focused_fg,
+        .focused_bg = base.focused_bg,
+    };
+}
+
+pub fn tableColors(theme_value: Theme) TableColors {
+    const surface = surfaceColors(theme_value);
+    const selected = selectionColors(theme_value);
+    return .{
+        .fg = surface.fg,
+        .bg = surface.bg,
+        .header_fg = theme_value.color(WidgetRoleMap.table_header_fg),
+        .header_bg = theme_value.color(WidgetRoleMap.table_header_bg),
+        .selected_fg = selected.fg,
+        .selected_bg = selected.bg,
+        .focused_fg = selected.focused_fg,
+        .focused_bg = selected.focused_bg,
+        .grid_fg = theme_value.color(WidgetRoleMap.table_grid),
+    };
+}
+
+pub fn tabColors(theme_value: Theme) TabColors {
+    return .{
+        .fg = theme_value.color(WidgetRoleMap.tab_bar_fg),
+        .bg = theme_value.color(WidgetRoleMap.tab_bar_bg),
+        .active_fg = theme_value.color(WidgetRoleMap.tab_active_fg),
+        .active_bg = theme_value.color(WidgetRoleMap.tab_active_bg),
+        .inactive_fg = theme_value.color(WidgetRoleMap.tab_inactive_fg),
+        .inactive_bg = theme_value.color(WidgetRoleMap.tab_inactive_bg),
+        .border_fg = theme_value.color(WidgetRoleMap.control_border),
+    };
+}
+
+pub fn modalColors(theme_value: Theme) ModalColors {
+    return .{
+        .title_fg = theme_value.color(WidgetRoleMap.modal_title_fg),
+        .title_bg = theme_value.color(WidgetRoleMap.modal_title_bg),
+        .fg = theme_value.color(WidgetRoleMap.control_fg),
+        .bg = theme_value.color(WidgetRoleMap.control_bg),
+        .border_fg = theme_value.color(WidgetRoleMap.control_border),
+    };
+}
+
 /// Slightly darken or lighten an RGB color for hover/pressed states.
 pub fn adjust(color: Color, amount: i8) Color {
     return switch (color) {

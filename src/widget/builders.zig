@@ -1,6 +1,7 @@
 const std = @import("std");
 const render = @import("../render/render.zig");
 const base = @import("widgets/base_widget.zig");
+const theme = @import("theme.zig");
 const Button = @import("widgets/button.zig").Button;
 const Label = @import("widgets/label.zig").Label;
 const Checkbox = @import("widgets/checkbox.zig").Checkbox;
@@ -44,7 +45,20 @@ pub const ButtonBuilder = struct {
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) ButtonBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.controlColors(base_theme);
+        var style = base_theme.style;
+        style.bold = true;
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .focused_fg = defaults.focused_fg,
+            .focused_bg = defaults.focused_bg,
+            .disabled_fg = defaults.disabled_fg,
+            .disabled_bg = defaults.disabled_bg,
+            .style = style,
+        };
     }
 
     pub fn text(self: *ButtonBuilder, value: []const u8) *ButtonBuilder {
@@ -135,7 +149,14 @@ pub const LabelBuilder = struct {
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) LabelBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.textColors(base_theme);
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .style = defaults.style,
+        };
     }
 
     pub fn content(self: *LabelBuilder, value: []const u8) *LabelBuilder {
@@ -201,7 +222,14 @@ pub const CheckboxBuilder = struct {
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) CheckboxBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.controlColors(base_theme);
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .style = base_theme.style,
+        };
     }
 
     pub fn text(self: *CheckboxBuilder, value: []const u8) *CheckboxBuilder {
@@ -281,7 +309,18 @@ pub const InputBuilder = struct {
     prefer_system_clipboard: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) InputBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.inputColors(base_theme);
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .focused_fg = defaults.focused_fg,
+            .focused_bg = defaults.focused_bg,
+            .disabled_fg = defaults.disabled_fg,
+            .disabled_bg = defaults.disabled_bg,
+            .style = defaults.style,
+        };
     }
 
     pub fn withPlaceholder(self: *InputBuilder, placeholder_text: []const u8) *InputBuilder {
@@ -402,7 +441,18 @@ pub const TextAreaBuilder = struct {
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) TextAreaBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.inputColors(base_theme);
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .focused_fg = defaults.focused_fg,
+            .focused_bg = defaults.focused_bg,
+            .disabled_fg = defaults.disabled_fg,
+            .disabled_bg = defaults.disabled_bg,
+            .style = defaults.style,
+        };
     }
 
     pub fn withPlaceholder(self: *TextAreaBuilder, placeholder: []const u8) *TextAreaBuilder {
@@ -531,7 +581,15 @@ pub const ProgressBarBuilder = struct {
     common: Common = .{},
 
     pub fn init(allocator: std.mem.Allocator) ProgressBarBuilder {
-        return .{ .allocator = allocator };
+        const base_theme = theme.Theme.dark();
+        const defaults = theme.progressColors(base_theme);
+        return .{
+            .allocator = allocator,
+            .fg = defaults.fg,
+            .bg = defaults.bg,
+            .fill = defaults.fill_fg,
+            .fill_bg = defaults.fill_bg,
+        };
     }
 
     pub fn percentage(self: *ProgressBarBuilder, percent: u8) *ProgressBarBuilder {
