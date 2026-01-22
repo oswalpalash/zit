@@ -59,7 +59,7 @@ pub fn main() !void {
     defer button.deinit();
     button.setColors(zit.render.Color{ .named_color = zit.render.NamedColor.black }, zit.render.Color{ .named_color = zit.render.NamedColor.green }, zit.render.Color{ .named_color = zit.render.NamedColor.white }, zit.render.Color{ .named_color = zit.render.NamedColor.bright_green });
     button.setBorder(.rounded);
-    button.setOnPress(onButtonPress);
+    button.setOnClick(onButtonPress);
 
     var checkbox = try zit.widget.Checkbox.init(memory_manager.getWidgetPoolAllocator(), "Enable Feature");
     defer checkbox.deinit();

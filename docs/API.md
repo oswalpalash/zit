@@ -49,7 +49,7 @@ while (true) {
 ```zig
 var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Deploy");
 defer button.deinit();
-button.setOnPress(myHandler);
+button.setOnClick(myHandler);
 
 const rect = zit.layout.Rect.init(2, 2, 12, 1);
 try button.widget.layout(rect);
