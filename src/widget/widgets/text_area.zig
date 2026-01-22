@@ -1118,3 +1118,21 @@ test "text area real-time validation caches latest result" {
     const second = area.validationState().?;
     try std.testing.expect(second.*.isValid());
 }
+
+test "text area setText resets cursor and scroll" {
+    const alloc = std.testing.allocator;
+    var area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("hello\nworld");
+    area.scroll_row = 2;
+    area.scroll_col = 1;
+    area.selection = TextArea.Selection{ .start = 0, .end = 2 };
+
+    try area.setText("new");
+
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
+    try std.testing.expectEqual(@as(usize, 0), area.scroll_row);
+    try std.testing.expectEqual(@as(usize, 0), area.scroll_col);
+    try std.testing.expectEqual(@as(?TextArea.Selection, null), area.selection);
+}

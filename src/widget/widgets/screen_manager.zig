@@ -231,7 +231,13 @@ pub const ScreenManager = struct {
                     try self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit);
                 }
                 if (active_trans.entering) |idx| {
-                    self.screens.items[idx].state = .steady;
+                    var entering_idx = idx;
+                    if (active_trans.exiting) |exiting_idx| {
+                        if (exiting_idx < entering_idx) entering_idx -= 1;
+                    }
+                    if (entering_idx < self.screens.items.len) {
+                        self.screens.items[entering_idx].state = .steady;
+                    }
                 }
             },
         }
@@ -394,4 +400,27 @@ test "screen manager runs lifecycle hooks on push/pop" {
     try manager.tick(500);
 
     try std.testing.expect(order.items.len >= 4);
+}
+
+test "screen manager replace updates active screen" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    try manager.replace(.{ .widget = &block_b.widget, .label = "b" });
+
+    const active_before = manager.active().?;
+    try std.testing.expectEqual(&block_b.widget, active_before.widget);
+
+    try manager.tick(1000);
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+
+    const active_after = manager.active().?;
+    try std.testing.expectEqual(&block_b.widget, active_after.widget);
 }

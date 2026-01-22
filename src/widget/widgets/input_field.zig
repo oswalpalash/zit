@@ -854,3 +854,13 @@ test "input field clamps cursor beyond bounds during edits" {
     try std.testing.expectEqual(@as(usize, 2), field.cursor);
     try std.testing.expectEqualStrings("ab", field.getText());
 }
+
+test "input field setText clamps to max length" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 4);
+    defer field.deinit();
+
+    field.setText("abcdef");
+    try std.testing.expectEqualStrings("abcd", field.getText());
+    try std.testing.expectEqual(@as(usize, 4), field.cursor);
+}
