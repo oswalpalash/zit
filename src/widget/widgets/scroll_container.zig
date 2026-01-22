@@ -69,10 +69,10 @@ pub const ScrollContainer = struct {
 
         // Create scrollbars
         const h_scrollbar_widget = try scrollbar.Scrollbar.init(allocator, .horizontal);
-        h_scrollbar_widget.setOnValueChanged(onHorizontalScroll);
+        h_scrollbar_widget.setOnValueChange(onHorizontalScroll);
 
         const v_scrollbar_widget = try scrollbar.Scrollbar.init(allocator, .vertical);
-        v_scrollbar_widget.setOnValueChanged(onVerticalScroll);
+        v_scrollbar_widget.setOnValueChange(onVerticalScroll);
 
         self.* = ScrollContainer{
             .widget = base.Widget.init(&vtable),

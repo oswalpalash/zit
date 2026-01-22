@@ -1,7 +1,7 @@
 # Style Guide
 
 ## Callback naming
-- Use `setOnX` for callback setters (examples: `setOnClose`, `setOnValueChanged`).
+- Use `setOnX` for callback setters (examples: `setOnClose`, `setOnValueChange`).
 - Keep callback fields named `on_x` or `on_xxx` to match the setter name.
 
 ## String ownership
