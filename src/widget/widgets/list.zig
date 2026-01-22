@@ -48,10 +48,10 @@ pub const List = struct {
     focused_fg: render.Color = render.Color{ .named_color = render.NamedColor.black },
     /// Focused background color
     focused_bg: render.Color = render.Color{ .named_color = render.NamedColor.white },
-    /// On selection changed callback
-    on_selection_changed: ?*const fn (usize, []const u8) void = null,
-    /// On item activated callback
-    on_item_activated: ?*const fn (usize) void = null,
+    /// On selection callback
+    on_select: ?*const fn (usize, []const u8) void = null,
+    /// On item activate callback
+    on_item_activate: ?*const fn (usize) void = null,
     /// Allocator for list operations
     allocator: std.mem.Allocator,
     /// Border style
@@ -184,8 +184,8 @@ pub const List = struct {
         self.ensureItemVisible(self.selected_index);
 
         // Call the selection changed callback
-        if (old_index != self.selected_index and self.on_selection_changed != null) {
-            self.on_selection_changed.?(self.selected_index, self.getSelectedItem() orelse "");
+        if (old_index != self.selected_index and self.on_select != null) {
+            self.on_select.?(self.selected_index, self.getSelectedItem() orelse "");
         }
     }
 
@@ -219,14 +219,14 @@ pub const List = struct {
         self.selected_bg = selected_bg;
     }
 
-    /// Set the on-selection-changed callback
+    /// Set the on-select callback
     pub fn setOnSelect(self: *List, callback: *const fn (usize, []const u8) void) void {
-        self.on_selection_changed = callback;
+        self.on_select = callback;
     }
 
-    /// Set the on-item-activated callback
-    pub fn setOnItemActivated(self: *List, callback: *const fn (usize) void) void {
-        self.on_item_activated = callback;
+    /// Set the on-item-activate callback
+    pub fn setOnItemActivate(self: *List, callback: *const fn (usize) void) void {
+        self.on_item_activate = callback;
     }
 
     /// Set the border style
@@ -591,8 +591,8 @@ pub const List = struct {
                         if (self.enable_reorder) {
                             self.startDrag(item_index);
                         }
-                        if (self.on_item_activated != null and !self.dragging) {
-                            self.on_item_activated.?(self.selected_index);
+                        if (self.on_item_activate != null and !self.dragging) {
+                            self.on_item_activate.?(self.selected_index);
                         }
                         return true;
                     }
@@ -689,8 +689,8 @@ pub const List = struct {
             }
 
             if (key_event.key == '\r' or key_event.key == '\n') { // Enter
-                if (self.on_item_activated != null) {
-                    self.on_item_activated.?(self.selected_index);
+                if (self.on_item_activate != null) {
+                    self.on_item_activate.?(self.selected_index);
                 }
                 self.resetTypeahead();
                 return true;
