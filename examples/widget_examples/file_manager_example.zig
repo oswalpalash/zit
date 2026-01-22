@@ -143,7 +143,7 @@ pub fn main() !void {
     try ctx_menu.addItem("Mark favorite", true, null);
     ctx_menu.setMaxVisible(6);
     try ctx_menu.setTheme(theme.Theme.highContrast());
-    ctx_menu.setOnSelect(menuSelect, &status);
+    ctx_menu.setOnSelectWithContext(menuSelect, &status);
     const menu_pref = try ctx_menu.widget.getPreferredSize();
     try ctx_menu.widget.layout(layout.Rect.init(0, 0, menu_pref.width, menu_pref.height));
 

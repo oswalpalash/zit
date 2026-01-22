@@ -21,7 +21,8 @@ pub const ContextMenu = struct {
     open: bool = false,
     selected: usize = 0,
     max_visible: usize = 8,
-    on_select: ?*const fn (usize, MenuItem, ?*anyopaque) void = null,
+    on_select: ?*const fn (usize, MenuItem) void = null,
+    on_select_with_ctx: ?*const fn (usize, MenuItem, ?*anyopaque) void = null,
     on_select_ctx: ?*anyopaque = null,
 
     pub const vtable = base.Widget.VTable{
@@ -66,9 +67,16 @@ pub const ContextMenu = struct {
         self.theme_value = t;
     }
 
-    pub fn setOnSelect(self: *ContextMenu, callback: *const fn (usize, MenuItem, ?*anyopaque) void, ctx: ?*anyopaque) void {
+    pub fn setOnSelect(self: *ContextMenu, callback: *const fn (usize, MenuItem) void) void {
         self.on_select = callback;
+        self.on_select_with_ctx = null;
+        self.on_select_ctx = null;
+    }
+
+    pub fn setOnSelectWithContext(self: *ContextMenu, callback: *const fn (usize, MenuItem, ?*anyopaque) void, ctx: ?*anyopaque) void {
+        self.on_select_with_ctx = callback;
         self.on_select_ctx = ctx;
+        self.on_select = null;
     }
 
     pub fn setMaxVisible(self: *ContextMenu, count: usize) void {
@@ -211,6 +219,9 @@ pub const ContextMenu = struct {
         const item = self.items.items[self.selected];
         if (!item.enabled) return false;
         if (self.on_select) |cb| {
+            cb(self.selected, item);
+        }
+        if (self.on_select_with_ctx) |cb| {
             cb(self.selected, item, self.on_select_ctx);
         }
         self.close();
@@ -239,7 +250,7 @@ test "context menu selection via keyboard" {
             }
         }
     };
-    menu.setOnSelect(Callbacks.onSelect, &selection);
+    menu.setOnSelectWithContext(Callbacks.onSelect, &selection);
 
     const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
     try std.testing.expect(try menu.widget.handleEvent(down));
