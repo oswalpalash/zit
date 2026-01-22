@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
 const input_mask = @import("../input_mask.zig");
@@ -470,39 +471,17 @@ pub const InputField = struct {
 
         // Draw placeholder if no text
         if (content.len == 0 and self.placeholder.len > 0 and inner_width > 0) {
-            if (self.placeholder.len <= inner_width) {
-                renderer.drawStr(inner_x, inner_y, self.placeholder, fg, bg, self.style);
-            } else if (inner_width > 3) {
-                var truncated: [256]u8 = undefined;
-                const copy_len: usize = @min(@as(usize, inner_width - 3), self.placeholder.len);
-                const safe_len = @min(copy_len, truncated.len - 3);
-                @memcpy(truncated[0..safe_len], self.placeholder[0..safe_len]);
-                @memcpy(truncated[safe_len .. safe_len + 3], "...");
-                renderer.drawStr(inner_x, inner_y, truncated[0 .. safe_len + 3], fg, bg, style);
-            } else {
-                const slice_len: usize = @intCast(inner_width);
-                renderer.drawStr(inner_x, inner_y, self.placeholder[0..slice_len], fg, bg, style);
-            }
+            var truncated: [256]u8 = undefined;
+            const draw_text = text_metrics.truncateToWidth(self.placeholder, inner_width, &truncated, true);
+            renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
         }
         // Otherwise draw text
         else if (content.len > 0 and inner_width > 0) {
             var rendered_len: usize = 0;
-            if (content.len <= inner_width) {
-                renderer.drawStr(inner_x, inner_y, content, fg, bg, style);
-                rendered_len = content.len;
-            } else if (inner_width > 3) {
-                var truncated: [256]u8 = undefined;
-                const copy_len: usize = @min(@as(usize, inner_width - 3), content.len);
-                const safe_len = @min(copy_len, truncated.len - 3);
-                @memcpy(truncated[0..safe_len], content[0..safe_len]);
-                @memcpy(truncated[safe_len .. safe_len + 3], "...");
-                rendered_len = safe_len + 3;
-                renderer.drawStr(inner_x, inner_y, truncated[0..rendered_len], fg, bg, style);
-            } else {
-                const slice_len: usize = @intCast(inner_width);
-                rendered_len = slice_len;
-                renderer.drawStr(inner_x, inner_y, content[0..slice_len], fg, bg, style);
-            }
+            var truncated: [256]u8 = undefined;
+            const draw_text = text_metrics.truncateToWidth(content, inner_width, &truncated, true);
+            renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
+            rendered_len = draw_text.len;
 
             // Draw cursor if focused
             if (self.widget.focused and self.cursor <= rendered_len) {
