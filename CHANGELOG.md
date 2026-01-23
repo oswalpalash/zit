@@ -16,6 +16,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - CI matrix expanded to Linux/macOS/Windows plus tag-triggered release publishing.
 
 ### Fixed
+- Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
 - Robust terminal state management (raw mode, cursor restore, resize handling) to avoid leaving sessions in a broken state.
 - Hardened input parsing for mouse, drag payloads, and bracketed paste across terminals.
 - Platform reliability improvements for Windows alongside POSIX terminals.

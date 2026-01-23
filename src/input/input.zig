@@ -881,9 +881,16 @@ pub const FocusManager = struct {
     }
 };
 
+fn isNonBlockingError(err: anyerror) bool {
+    return err == error.WouldBlock or err == error.Again;
+}
+
 fn readFileByte(file: std.fs.File) !u8 {
     var buf: [1]u8 = undefined;
-    const bytes_read = try file.read(&buf);
+    const bytes_read = file.read(&buf) catch |err| {
+        if (isNonBlockingError(err)) return error.WouldBlock;
+        return err;
+    };
     if (bytes_read == 0) return error.EndOfStream;
     return buf[0];
 }
@@ -916,7 +923,10 @@ const PosixByteReader = struct {
 
     fn readByte(self: *PosixByteReader) !u8 {
         var buf: [1]u8 = undefined;
-        const amount = std.posix.read(self.fd, buf[0..1]) catch |err| return err;
+        const amount = std.posix.read(self.fd, buf[0..1]) catch |err| {
+            if (isNonBlockingError(err)) return error.WouldBlock;
+            return err;
+        };
         if (amount == 0) return error.WouldBlock;
         return buf[0];
     }
@@ -1094,7 +1104,7 @@ pub const InputHandler = struct {
         // Read a single byte
         const byte = reader.readByte() catch |err| {
             // Handle all possible non-blocking errors consistently
-            if (err == error.WouldBlock or err == error.Again or
+            if (isNonBlockingError(err) or
                 err == error.InputOutput or err == error.NotOpenForReading)
             {
                 return error.WouldBlock; // Normalize all non-blocking errors
@@ -1216,7 +1226,7 @@ pub const InputHandler = struct {
         };
 
         const next_byte = reader.readByte() catch |err| {
-            if (err == error.WouldBlock or err == error.Again or err == error.InputOutput or err == error.EndOfStream) {
+            if (isNonBlockingError(err) or err == error.InputOutput or err == error.EndOfStream) {
                 return escape_event;
             }
             return err;
@@ -1254,7 +1264,7 @@ pub const InputHandler = struct {
             }
 
             return self.readEvent() catch |err| {
-                if (err == error.WouldBlock) {
+                if (isNonBlockingError(err)) {
                     return null;
                 }
                 return err;
@@ -1281,7 +1291,7 @@ pub const InputHandler = struct {
 
             // Try to read an event - being careful with error handling
             return self.readEvent() catch |err| {
-                if (err == error.WouldBlock) {
+                if (isNonBlockingError(err)) {
                     // This can happen if the terminal state changes between poll and read
                     std.Thread.sleep(std.time.ns_per_ms); // Small pause
                     return null;
@@ -1311,7 +1321,7 @@ pub const InputHandler = struct {
 
             // Try to read an event
             return self.readEvent() catch |err| {
-                if (err == error.WouldBlock) {
+                if (isNonBlockingError(err)) {
                     return null;
                 }
                 return err;
@@ -1427,7 +1437,7 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
 
     while (true) {
         const next_byte = reader.readByte() catch |err| {
-            if (err == error.WouldBlock or err == error.EndOfStream) {
+            if (isNonBlockingError(err) or err == error.EndOfStream) {
                 return Event{ .unknown = {} };
             }
             return err;
@@ -1481,7 +1491,7 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
 
     while (idx < bytes.len) : (idx += 1) {
         const b = reader.readByte() catch |err| {
-            if (err == error.WouldBlock or err == error.EndOfStream) {
+            if (isNonBlockingError(err) or err == error.EndOfStream) {
                 return Event{ .unknown = {} };
             }
             return err;
@@ -1546,7 +1556,7 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
     // Parse parameters
     while (param_index < 3) {
         const c = reader.readByte() catch |err| {
-            if (err == error.WouldBlock or err == error.EndOfStream) {
+            if (isNonBlockingError(err) or err == error.EndOfStream) {
                 return Event{ .unknown = {} };
             }
             return err;
