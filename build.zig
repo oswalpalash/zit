@@ -325,6 +325,10 @@ pub fn build(b: *std.Build) void {
     const memory_cleanup_step = b.step("memory-cleanup", "Check DebugAllocator users assert clean deinit");
     memory_cleanup_step.dependOn(&memory_cleanup_cmd.step);
 
+    const release_check_cmd = b.addSystemCommand(&.{ "python3", "scripts/release_verify.py" });
+    const release_check_step = b.step("release-check", "Run the full public release verification gate");
+    release_check_step.dependOn(&release_check_cmd.step);
+
     const quality_step = b.step("quality", "Run the public quality gate: smoke, tests, and benchmarks");
     quality_step.dependOn(smoke_step);
     quality_step.dependOn(test_step);

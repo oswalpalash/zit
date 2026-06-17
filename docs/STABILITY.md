@@ -35,6 +35,10 @@ Before a feature is promoted as stable, it needs:
 
 ## Release Checklist
 
+- `zig build release-check`
+
+`zig build release-check` is the authoritative aggregate gate. It runs the checks below and writes generated API docs under `zig-out/docs-release` plus visual captures under `zig-out/visual-repeat`.
+
 - `zig build quality`
 - `zig fmt --check src/ examples/ build.zig`
 - `zig build smoke`
