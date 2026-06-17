@@ -1,7 +1,8 @@
-// Real-world demo: deterministic widget gallery for visual regression review.
+// Real-world demo: interactive widget gallery with deterministic snapshot mode.
 
 const std = @import("std");
 const zit = @import("zit");
+const interactive = @import("interactive_snapshot.zig");
 
 const Rect = zit.layout.Rect;
 const Color = zit.render.Color;
@@ -16,8 +17,8 @@ fn drawHeading(mock: *zit.testing.MockTerminal, x: u16, y: u16, text: []const u8
     drawText(mock, x, y, text, .bright_white, Style{ .bold = true });
 }
 
-/// Render a broad widget sample in one static frame.
-pub fn main() !void {
+/// Render a broad widget sample for an interactive terminal or snapshot capture.
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -26,7 +27,7 @@ pub fn main() !void {
     defer mock.deinit();
 
     drawHeading(&mock, 2, 0, "Zit widget gallery");
-    drawText(&mock, 22, 0, "deterministic screenshot target", .bright_black, Style{});
+    drawText(&mock, 22, 0, "interactive + snapshot target", .bright_black, Style{});
 
     var toolbar = try zit.widget.Toolbar.init(allocator, &[_][]const u8{ "Browse", "Edit", "Preview", "Ship" });
     defer toolbar.deinit();
@@ -162,5 +163,5 @@ pub fn main() !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    std.debug.print("{s}", .{snap.text()});
+    try interactive.finish(init, allocator, "widget-gallery", snap.text());
 }

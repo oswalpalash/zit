@@ -1,0 +1,65 @@
+const std = @import("std");
+const zit = @import("zit");
+
+pub fn finish(init: std.process.Init, allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
+    if (try isSnapshotMode(init, allocator)) {
+        std.debug.print("{s}", .{text});
+        return;
+    }
+
+    try runText(allocator, example_name, text);
+}
+
+fn isSnapshotMode(init: std.process.Init, allocator: std.mem.Allocator) !bool {
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+    defer args.deinit();
+
+    _ = args.skip();
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--snapshot")) return true;
+    }
+    return false;
+}
+
+fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
+    var term = (try zit.terminal.initInteractive(allocator, example_name)) orelse return;
+    defer term.deinit() catch {};
+
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
+
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
+
+    try term.enableRawMode();
+    defer term.disableRawMode() catch {};
+
+    try term.hideCursor();
+    defer term.showCursor() catch {};
+
+    var running = true;
+    var dirty = true;
+    while (running) {
+        if (try term.takeResize()) |_| {
+            dirty = true;
+        }
+
+        if (dirty) {
+            try term.clear();
+            try term.moveCursor(0, 0);
+            try term.writeUtf8(text);
+            dirty = false;
+        }
+
+        if (try input_handler.pollEvent(100)) |event| {
+            switch (event) {
+                .key => |key| {
+                    if (key.key == 'q' or key.key == 'Q' or key.key == zit.input.KeyCode.ESCAPE) {
+                        running = false;
+                    }
+                },
+                .resize => dirty = true,
+                else => {},
+            }
+        }
+    }
+}

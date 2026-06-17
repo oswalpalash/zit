@@ -2,9 +2,10 @@
 
 const std = @import("std");
 const zit = @import("zit");
+const interactive = @import("interactive_snapshot.zig");
 
-/// A static file manager screen with breadcrumbs, toolbar, and directory table.
-pub fn main() !void {
+/// File manager screen rendered interactively by default and as a deterministic snapshot with --snapshot.
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -51,5 +52,5 @@ pub fn main() !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    std.debug.print("{s}", .{snap.text()});
+    try interactive.finish(init, allocator, "file-manager", snap.text());
 }

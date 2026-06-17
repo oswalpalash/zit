@@ -189,7 +189,7 @@ pub fn main() !void {
 ```
 
 ## Examples, Docs, and Benchmarks
-Run everything from the repo root. Interactive example steps launch when a TTY is available and exit cleanly under non-TTY automation; deterministic real-world snapshot and benchmark steps execute directly.
+Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message instead of a stack trace. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
 
 Quick starts
 - `zig build hello-world` (`examples/hello_world.zig`): five-line alternate-screen loop with raw-mode input and a centered label.
@@ -213,13 +213,14 @@ Widget gallery
 - `zig build system-monitor-example` (`examples/widget_examples/system_monitor_example.zig`): live metrics dashboard with charts and gauges.
 - `zig build widget-showcase` (`examples/widget_examples/showcase_demo.zig`): everything-in-one widget showcase.
 
-Real-world snapshots
-- `zig build htop-clone` (`examples/realworld/htop_clone.zig`): htop-inspired dashboard rendering.
-- `zig build file-manager` (`examples/realworld/file_manager.zig`): single-shot render of a file manager layout.
-- `zig build text-editor` (`examples/realworld/text_editor.zig`): text editor frame with status bars and gutters.
-- `zig build dashboard-demo` (`examples/realworld/dashboard_demo.zig`): compact monitoring dashboard composed of core widgets.
-- `zig build widget-gallery` (`examples/realworld/widget_gallery.zig`): deterministic screenshot target covering core widgets and advanced controls.
-- `zig build widget-gallery-extended` (`examples/realworld/widget_gallery_extended.zig`): deterministic screenshot target covering text entry, structured text, charts, menus, logs, indicators, and drawing primitives.
+Real-world interactive examples
+- `zig build htop-clone` (`examples/realworld/htop_clone.zig`): htop-inspired dashboard rendering, open until `q`.
+- `zig build file-manager` (`examples/realworld/file_manager.zig`): file manager layout, open until `q`.
+- `zig build text-editor` (`examples/realworld/text_editor.zig`): text editor frame with status bars and gutters, open until `q`.
+- `zig build dashboard-demo` (`examples/realworld/dashboard_demo.zig`): compact monitoring dashboard composed of core widgets, open until `q`.
+- `zig build widget-gallery` (`examples/realworld/widget_gallery.zig`): interactive gallery covering core widgets and advanced controls, open until `q`.
+- `zig build widget-gallery-extended` (`examples/realworld/widget_gallery_extended.zig`): interactive gallery covering text entry, structured text, charts, menus, logs, indicators, and drawing primitives, open until `q`.
+- `zig build widget-gallery-layouts` (`examples/realworld/widget_gallery_layouts.zig`): interactive gallery covering layout, navigation, overlay, date/time, image, toast, accordion, and wizard widgets, open until `q`.
 
 Benchmarks
 - `zig build render-bench` (`examples/benchmarks/render_bench.zig`): micro-benchmark for renderer throughput.
@@ -231,4 +232,4 @@ Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, 
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
 - Use `zig fmt --check src/ examples/ build.zig` and `zig build quality` locally before opening a PR.
 - Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, and docs generation.
-- For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4` and inspect the generated contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift across all real-world and widget-gallery targets.
+- For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4`; it executes real-world and gallery binaries in `--snapshot` mode and writes a contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift.

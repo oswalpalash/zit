@@ -2,9 +2,10 @@
 
 const std = @import("std");
 const zit = @import("zit");
+const interactive = @import("interactive_snapshot.zig");
 
 /// Minimal text editor screen with status bar and command palette preview.
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -69,5 +70,5 @@ pub fn main() !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    std.debug.print("{s}", .{snap.text()});
+    try interactive.finish(init, allocator, "text-editor", snap.text());
 }

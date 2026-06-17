@@ -246,12 +246,13 @@ pub fn build(b: *std.Build) void {
         path: []const u8,
         step_name: []const u8,
     }{
-        .{ .name = "htop_clone", .description = "Render an htop-inspired dashboard snapshot", .path = "examples/realworld/htop_clone.zig", .step_name = "htop-clone" },
-        .{ .name = "file_manager", .description = "Render a file manager snapshot", .path = "examples/realworld/file_manager.zig", .step_name = "file-manager" },
-        .{ .name = "text_editor", .description = "Render a text editor snapshot", .path = "examples/realworld/text_editor.zig", .step_name = "text-editor" },
-        .{ .name = "dashboard_demo", .description = "Render a compact dashboard demo", .path = "examples/realworld/dashboard_demo.zig", .step_name = "dashboard-demo" },
-        .{ .name = "widget_gallery", .description = "Render a deterministic widget gallery snapshot", .path = "examples/realworld/widget_gallery.zig", .step_name = "widget-gallery" },
-        .{ .name = "widget_gallery_extended", .description = "Render an extended deterministic widget gallery snapshot", .path = "examples/realworld/widget_gallery_extended.zig", .step_name = "widget-gallery-extended" },
+        .{ .name = "htop_clone", .description = "Run an interactive htop-inspired dashboard example", .path = "examples/realworld/htop_clone.zig", .step_name = "htop-clone" },
+        .{ .name = "file_manager", .description = "Run an interactive file manager layout example", .path = "examples/realworld/file_manager.zig", .step_name = "file-manager" },
+        .{ .name = "text_editor", .description = "Run an interactive text editor frame example", .path = "examples/realworld/text_editor.zig", .step_name = "text-editor" },
+        .{ .name = "dashboard_demo", .description = "Run an interactive compact dashboard example", .path = "examples/realworld/dashboard_demo.zig", .step_name = "dashboard-demo" },
+        .{ .name = "widget_gallery", .description = "Run an interactive core widget gallery example", .path = "examples/realworld/widget_gallery.zig", .step_name = "widget-gallery" },
+        .{ .name = "widget_gallery_extended", .description = "Run an interactive extended widget gallery example", .path = "examples/realworld/widget_gallery_extended.zig", .step_name = "widget-gallery-extended" },
+        .{ .name = "widget_gallery_layouts", .description = "Run an interactive layout, navigation, and overlay widget gallery example", .path = "examples/realworld/widget_gallery_layouts.zig", .step_name = "widget-gallery-layouts" },
     };
 
     for (real_examples) |example| {
@@ -316,8 +317,13 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmark suite");
     bench_step.dependOn(&run_bench_suite.step);
 
+    const widget_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_coverage.py" });
+    const widget_coverage_step = b.step("widget-coverage", "Check public widget visual and snapshot coverage declarations");
+    widget_coverage_step.dependOn(&widget_coverage_cmd.step);
+
     const quality_step = b.step("quality", "Run the public quality gate: smoke, tests, and benchmarks");
     quality_step.dependOn(smoke_step);
     quality_step.dependOn(test_step);
     quality_step.dependOn(bench_step);
+    quality_step.dependOn(widget_coverage_step);
 }

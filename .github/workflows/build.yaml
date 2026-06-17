@@ -26,6 +26,9 @@ jobs:
       - name: Check public build steps
         run: python3 scripts/check_build_steps.py --skip quality
 
+      - name: Check widget coverage declarations
+        run: python3 scripts/check_widget_coverage.py
+
   cross-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +66,7 @@ jobs:
         run: zig fmt --check src/ examples/ build.zig
       
       - name: Check scripts compile
-        run: python3 -m py_compile scripts/check_build_steps.py scripts/visual_repeat_check.py
+        run: python3 -m py_compile scripts/check_build_steps.py scripts/check_widget_coverage.py scripts/visual_repeat_check.py
 
   docs:
     runs-on: ubuntu-latest

@@ -2,9 +2,10 @@
 
 const std = @import("std");
 const zit = @import("zit");
+const interactive = @import("interactive_snapshot.zig");
 
-/// A lightweight, non-interactive htop style snapshot rendered into a mock terminal.
-pub fn main() !void {
+/// Htop-style screen rendered interactively by default and as a deterministic snapshot with --snapshot.
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -90,5 +91,5 @@ pub fn main() !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    std.debug.print("{s}", .{snap.text()});
+    try interactive.finish(init, allocator, "htop-clone", snap.text());
 }

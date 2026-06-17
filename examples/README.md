@@ -1,6 +1,6 @@
 # Examples Index
 
-Run everything from the repo root. Interactive example steps launch when a TTY is available and exit cleanly under non-TTY automation; deterministic real-world snapshot and benchmark steps execute directly.
+Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
 
 Quick starts
 - `examples/hello_world.zig` (`zig build hello-world`): five-line alternate-screen loop with raw-mode input and a centered label.
@@ -24,11 +24,14 @@ Widget gallery
 - `examples/widget_examples/system_monitor_example.zig` (`zig build system-monitor-example`): live metrics dashboard with charts and gauges.
 - `examples/widget_examples/showcase_demo.zig` (`zig build widget-showcase`): everything-in-one showcase to explore most widgets in one place.
 
-Real-world snapshots
-- `examples/realworld/htop_clone.zig` (`zig build htop-clone`): htop-inspired dashboard rendering.
-- `examples/realworld/file_manager.zig` (`zig build file-manager`): single-shot render of a file manager layout.
-- `examples/realworld/text_editor.zig` (`zig build text-editor`): text editor frame with status bars and gutters.
-- `examples/realworld/dashboard_demo.zig` (`zig build dashboard-demo`): compact monitoring dashboard composed of core widgets.
+Real-world interactive examples
+- `examples/realworld/htop_clone.zig` (`zig build htop-clone`): htop-inspired dashboard rendering, open until `q`.
+- `examples/realworld/file_manager.zig` (`zig build file-manager`): file manager layout, open until `q`.
+- `examples/realworld/text_editor.zig` (`zig build text-editor`): text editor frame with status bars and gutters, open until `q`.
+- `examples/realworld/dashboard_demo.zig` (`zig build dashboard-demo`): compact monitoring dashboard composed of core widgets, open until `q`.
+- `examples/realworld/widget_gallery.zig` (`zig build widget-gallery`): core widgets and advanced controls, open until `q`.
+- `examples/realworld/widget_gallery_extended.zig` (`zig build widget-gallery-extended`): text entry, structured text, charts, menus, logs, indicators, and drawing primitives, open until `q`.
+- `examples/realworld/widget_gallery_layouts.zig` (`zig build widget-gallery-layouts`): layout, navigation, overlay, date/time, image, toast, accordion, and wizard widgets, open until `q`.
 
 Benchmarks
 - `examples/benchmarks/render_bench.zig` (`zig build render-bench`): micro-benchmark for renderer throughput.

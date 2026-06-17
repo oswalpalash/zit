@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const zit = @import("zit");
+const interactive = @import("interactive_snapshot.zig");
 
 const Rect = zit.layout.Rect;
 const Color = zit.render.Color;
@@ -16,8 +17,8 @@ fn drawHeading(mock: *zit.testing.MockTerminal, x: u16, y: u16, text: []const u8
     drawText(mock, x, y, text, .bright_white, Style{ .bold = true });
 }
 
-/// Render advanced and composition-heavy widgets in one static frame.
-pub fn main() !void {
+/// Render advanced and composition-heavy widgets for an interactive terminal or snapshot capture.
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -254,5 +255,5 @@ pub fn main() !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    std.debug.print("{s}", .{snap.text()});
+    try interactive.finish(init, allocator, "widget-gallery-extended", snap.text());
 }

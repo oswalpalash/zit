@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Repeat deterministic visual captures and build an SVG contact sheet.
 
-The real-world examples and widget gallery render one deterministic frame. This
-script runs each target multiple times, compares the raw frame output, and writes
-all captures to a contact sheet so visual review can catch layout drift.
+The real-world examples and widget galleries are interactive by default. This
+script runs each target in explicit ``--snapshot`` mode multiple times, compares
+the raw frame output, and writes all captures to a contact sheet so visual review
+can catch layout drift.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ DEFAULT_TARGETS = [
     "dashboard-demo",
     "widget-gallery",
     "widget-gallery-extended",
+    "widget-gallery-layouts",
 ]
 
 
@@ -45,12 +47,17 @@ def safe_name(target: str) -> str:
     return target.replace("/", "-").replace(" ", "-")
 
 
-def capture_target(root: Path, target: str) -> bytes:
+def binary_name(target: str) -> str:
+    suffix = ".exe" if os.name == "nt" else ""
+    return target.replace("-", "_") + suffix
+
+
+def ensure_binaries(root: Path) -> None:
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
     env.setdefault("COLORTERM", "truecolor")
     proc = subprocess.run(
-        ["zig", "build", target],
+        ["zig", "build"],
         cwd=root,
         env=env,
         stdout=subprocess.PIPE,
@@ -59,7 +66,25 @@ def capture_target(root: Path, target: str) -> bytes:
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
-        raise RuntimeError(f"`zig build {target}` failed with exit code {proc.returncode}")
+        raise RuntimeError(f"`zig build` failed with exit code {proc.returncode}")
+
+
+def capture_target(root: Path, target: str) -> bytes:
+    env = os.environ.copy()
+    env.setdefault("TERM", "xterm-256color")
+    env.setdefault("COLORTERM", "truecolor")
+    binary = root / "zig-out" / "bin" / binary_name(target)
+    proc = subprocess.run(
+        [str(binary), "--snapshot"],
+        cwd=root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
+        raise RuntimeError(f"`{binary} --snapshot` failed with exit code {proc.returncode}")
     return proc.stdout
 
 
@@ -211,6 +236,8 @@ def main() -> int:
 
     captures: dict[str, list[bytes]] = {}
     manifest: dict[str, object] = {"count": args.count, "targets": {}}
+
+    ensure_binaries(root)
 
     for target in targets:
         target_captures: list[bytes] = []
