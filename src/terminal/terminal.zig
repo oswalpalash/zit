@@ -233,31 +233,6 @@ pub const Terminal = struct {
     pub fn enableRawMode(self: *Terminal) !void {
         if (self.is_raw_mode) return;
 
-        // For macOS, use a much simpler approach that's more reliable
-        if (@import("builtin").os.tag == .macos) {
-            // Save original terminal settings first (so we can restore them later)
-            self.original_termios = .{ .unix = try std.posix.tcgetattr(self.stdin_fd) };
-
-            // On macOS, directly use the system command which is more reliable
-            const darwin = struct {
-                extern "c" fn system(command: [*:0]const u8) c_int;
-            };
-
-            _ = darwin.system("stty -echo -icanon -isig -iexten -ixon raw");
-
-            // Also set the terminal to non-blocking mode
-            try setNonBlocking(self.stdin_fd);
-
-            // Enable Kitty keyboard protocol
-            if (self.capabilities.kitty_keyboard) {
-                self.enableKittyKeyboardProtocol() catch {};
-            }
-
-            self.is_raw_mode = true;
-            return;
-        }
-
-        // Normal implementation for other platforms
         const is_windows = builtin.os.tag == .windows;
 
         if (is_windows) {
@@ -299,47 +274,18 @@ pub const Terminal = struct {
                 .unix => |orig| {
                     var raw = orig;
 
-                    // Disable canonical mode, echo, signals, and extended input
-                    // Use hardcoded values since std.posix.system constants are not available
-                    const ECHO: u64 = 0x00000008;
-                    const ICANON: u64 = 0x00000002;
-                    const IEXTEN: u64 = 0x00000400;
+                    raw.lflag.ECHO = false;
+                    raw.lflag.ICANON = false;
+                    raw.lflag.IEXTEN = false;
 
-                    // Create a copy in a regular integer (use u32 for 32-bit Linux)
-                    var lflag = @as(u32, @bitCast(raw.lflag));
+                    raw.iflag.IXON = false;
+                    raw.iflag.ICRNL = false;
+                    raw.iflag.BRKINT = false;
+                    raw.iflag.INPCK = false;
+                    raw.iflag.ISTRIP = false;
 
-                    // Perform operations on the regular integer
-                    const mask: u32 = ECHO | ICANON | IEXTEN;
-                    lflag &= ~mask;
-
-                    // Assign back to the packed struct
-                    raw.lflag = @bitCast(lflag);
-
-                    // Turn off software flow control
-                    const IXON: u32 = 0x00000200;
-                    const ICRNL: u32 = 0x00000100;
-                    const BRKINT: u32 = 0x00000002;
-                    const INPCK: u32 = 0x00000010;
-                    const ISTRIP: u32 = 0x00000020;
-
-                    var iflag = @as(u32, @bitCast(raw.iflag));
-                    const iflag_mask: u32 = IXON | ICRNL | BRKINT | INPCK | ISTRIP;
-                    iflag &= ~iflag_mask;
-                    raw.iflag = @bitCast(iflag);
-
-                    // Disable output processing
-                    const OPOST: u32 = 0x00000001;
-
-                    var oflag = @as(u32, @bitCast(raw.oflag));
-                    oflag &= ~OPOST;
-                    raw.oflag = @bitCast(oflag);
-
-                    // Set character size to 8 bits
-                    const CS8: u32 = 0x00000300;
-
-                    var cflag = @as(u32, @bitCast(raw.cflag));
-                    cflag |= CS8;
-                    raw.cflag = @bitCast(cflag);
+                    raw.oflag.OPOST = false;
+                    raw.cflag.CSIZE = .CS8;
 
                     // Set read timeout and minimum input to 0 for non-blocking reads
                     const v_time: usize = @intFromEnum(std.posix.V.TIME);
@@ -377,36 +323,6 @@ pub const Terminal = struct {
             self.disableKittyKeyboardProtocol() catch {};
         }
 
-        // For macOS, ensure terminal output is flushed and use a reliable method to restore
-        if (@import("builtin").os.tag == .macos) {
-            // Flush any pending output
-            try compat.stdoutWriteAll("\r\n"); // Add newline to flush
-
-            // Restore original terminal settings if we have them
-            switch (self.original_termios) {
-                .unix => |orig| {
-                    // Restore original terminal settings
-                    std.posix.tcsetattr(self.stdin_fd, .FLUSH, orig) catch {};
-                },
-                else => {}, // Do nothing for .none
-            }
-
-            // Use stty sane as a reliable way to restore a sane terminal state
-            const darwin = struct {
-                extern "c" fn system(command: [*:0]const u8) c_int;
-            };
-            _ = darwin.system("stty sane");
-
-            // Small delay to ensure terminal state is fully restored
-            compat.sleepMillis(20);
-
-            // Explicitly reset formatting
-            try self.resetFormatting();
-
-            self.is_raw_mode = false;
-            return;
-        }
-
         const is_windows = builtin.os.tag == .windows;
 
         if (is_windows) {
@@ -433,7 +349,7 @@ pub const Terminal = struct {
             switch (self.original_termios) {
                 .unix => |orig| {
                     // Restore original terminal settings
-                    try std.posix.tcsetattr(self.stdin_fd, .FLUSH, orig);
+                    try std.posix.tcsetattr(self.stdin_fd, .NOW, orig);
                 },
                 else => {}, // Do nothing for .none
             }

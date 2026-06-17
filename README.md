@@ -189,7 +189,7 @@ pub fn main() !void {
 ```
 
 ## Examples, Docs, and Benchmarks
-Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message instead of a stack trace. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
+Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message instead of a stack trace. `python3 scripts/interactive_example_smoke.py` runs every interactive example inside a pseudo-terminal, waits for visible content, sends `q`, and fails on allocator or panic diagnostics. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
 
 Quick starts
 - `zig build hello-world` (`examples/hello_world.zig`): five-line alternate-screen loop with raw-mode input and a centered label.
@@ -231,5 +231,5 @@ Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
 - Use `zig fmt --check src/ examples/ build.zig` and `zig build quality` locally before opening a PR.
-- Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, and docs generation.
+- Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, `python3 scripts/interactive_example_smoke.py`, and docs generation.
 - For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4`; it executes real-world and gallery binaries in `--snapshot` mode and writes a contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift.

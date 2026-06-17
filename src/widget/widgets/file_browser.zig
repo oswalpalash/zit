@@ -178,7 +178,8 @@ pub const FileBrowser = struct {
         const io = std.Io.Threaded.global_single_threaded.io();
         const cwd = std.Io.Dir.cwd();
         const real = cwd.realPathFileAlloc(io, path, allocator) catch return try allocator.dupe(u8, path);
-        return real[0..real.len :0];
+        defer allocator.free(real);
+        return try allocator.dupe(u8, real);
     }
 
     fn parentPath(self: *FileBrowser) ![]u8 {

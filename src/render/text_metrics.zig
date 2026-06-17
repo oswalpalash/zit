@@ -14,11 +14,11 @@ pub const Grapheme = struct {
     has_rtl: bool = false,
     has_emoji: bool = false,
 
-    pub fn slice(self: Grapheme) []const u8 {
+    pub fn slice(self: *const Grapheme) []const u8 {
         return self.bytes[0..self.len];
     }
 
-    pub fn firstCodepoint(self: Grapheme) u21 {
+    pub fn firstCodepoint(self: *const Grapheme) u21 {
         if (self.len == 0) return 0;
         return std.unicode.utf8Decode(self.bytes[0..self.len]) catch 0;
     }

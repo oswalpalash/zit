@@ -56,6 +56,7 @@ pub fn main() !void {
     // Enable chord mode
     input_handler.chord_mode = true;
     try writer.writeAll("  Chord mode: enabled\n");
+    try stdout_writer.flush();
 
     // Event counters
     var key_count: u32 = 0;
@@ -142,6 +143,7 @@ pub fn main() !void {
             try writer.print("  Mouse events: {d}    ", .{mouse_count});
             try term.moveCursor(0, 10);
             try writer.print("  Resize events: {d}    ", .{resize_count});
+            try stdout_writer.flush();
         }
     }
 

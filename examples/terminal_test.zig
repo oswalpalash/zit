@@ -82,6 +82,7 @@ pub fn main() !void {
     // Move cursor to bottom for input prompt
     try term.moveCursor(0, term.height - 2);
     try writer.writeAll("Press any key to see its ASCII value (press 'q' to quit)");
+    try stdout_writer.flush();
 
     // Input loop
     var stdin_file = std.Io.File.stdin();
@@ -93,6 +94,7 @@ pub fn main() !void {
 
         try term.moveCursor(0, term.height - 1);
         try writer.print("Key pressed: '{c}' (ASCII: {d})   ", .{ byte, byte });
+        try stdout_writer.flush();
 
         if (byte == 'q') break;
     }

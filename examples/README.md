@@ -1,6 +1,6 @@
 # Examples Index
 
-Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
+Run everything from the repo root. Example steps launch an interactive alternate-screen TUI when a TTY is available, render their UI, and quit on `q`; under non-TTY automation they exit cleanly with a short message. `python3 scripts/interactive_example_smoke.py` runs every interactive example inside a pseudo-terminal, waits for visible content, sends `q`, and fails on allocator or panic diagnostics. Visual regression uses explicit snapshot mode through `python3 scripts/visual_repeat_check.py`.
 
 Quick starts
 - `examples/hello_world.zig` (`zig build hello-world`): five-line alternate-screen loop with raw-mode input and a centered label.

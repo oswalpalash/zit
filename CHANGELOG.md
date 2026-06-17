@@ -19,6 +19,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Layout/navigation widget gallery target for container, tab, split-pane, screen-manager, overlay, date/time, image, toast, accordion, and wizard coverage.
 - Public widget coverage checker (`scripts/check_widget_coverage.py`) fails when an exported widget lacks declared visual or snapshot coverage.
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
+- Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
 - Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
@@ -37,6 +38,9 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.
 - Real-world and widget-gallery examples now default to interactive terminal sessions that render their UI until `q`; automation uses explicit `--snapshot` mode.
+- Terminal and input diagnostics now flush their initial frames before waiting for raw-mode input.
+- Grapheme rendering no longer returns slices into by-value temporaries, fixing corrupted terminal frames and invalid borrowed memory during render output assembly.
+- File browser path normalization now frees realpath sentinel allocations with the correct allocation shape.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

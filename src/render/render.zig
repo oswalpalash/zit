@@ -1745,6 +1745,29 @@ test "renderer handles double width glyphs" {
     try std.testing.expect(trail);
 }
 
+test "renderer preserves ASCII glyph bytes" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 8, 2);
+    defer renderer.deinit();
+
+    const fg = Color.named(NamedColor.white);
+    const bg = Color.named(NamedColor.black);
+
+    renderer.fillRect(0, 0, 8, 2, ' ', fg, bg, Style{});
+    renderer.drawStr(1, 1, "Hi", fg, bg, Style{});
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'H'), renderer.back.getCell(1, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).codepoint());
+
+    var output = std.Io.Writer.Allocating.init(alloc);
+    defer output.deinit();
+    try renderer.renderToWriter(&output.writer);
+
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "Hi") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, output.written(), 0x01) == null);
+}
+
 test "renderer bounds checks skip off-screen writes" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 2, 2);
