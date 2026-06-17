@@ -44,6 +44,7 @@ Before a feature is promoted as stable, it needs:
 - `zig build smoke -Dtarget=x86_64-linux`
 - `zig build smoke -Dtarget=x86_64-windows`
 - `python3 scripts/check_build_steps.py`
+- `python3 scripts/check_debug_allocator_cleanup.py`
 - `python3 scripts/check_widget_coverage.py`
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/visual_repeat_check.py --count 4`

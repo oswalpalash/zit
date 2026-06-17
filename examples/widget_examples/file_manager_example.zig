@@ -64,7 +64,7 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);

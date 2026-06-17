@@ -40,7 +40,7 @@ test "WeakRef operations" {
 
 test "WidgetNode tree operations" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     // Create root node
@@ -77,7 +77,7 @@ test "WidgetNode tree operations" {
 
 test "WidgetNode weak references" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var node = try WidgetNode.init(allocator);
@@ -103,7 +103,7 @@ test "WidgetNode weak references" {
 
 test "WidgetNode thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var root = try WidgetNode.init(allocator);

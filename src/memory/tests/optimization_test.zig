@@ -4,7 +4,7 @@ const MemoryOptimizer = @import("../optimization.zig").MemoryOptimizer;
 
 test "MemoryOptimizer basic operations" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var optimizer = try MemoryOptimizer.init(allocator);
@@ -34,7 +34,7 @@ test "MemoryOptimizer basic operations" {
 
 test "MemoryOptimizer cache hits" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var optimizer = try MemoryOptimizer.init(allocator);
@@ -57,7 +57,7 @@ test "MemoryOptimizer cache hits" {
 
 test "MemoryOptimizer resize" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var optimizer = try MemoryOptimizer.init(allocator);
@@ -79,7 +79,7 @@ test "MemoryOptimizer resize" {
 
 test "MemoryOptimizer thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var optimizer = try MemoryOptimizer.init(allocator);
@@ -112,7 +112,7 @@ test "MemoryOptimizer thread safety" {
 
 test "MemoryOptimizer pre-allocation" {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var optimizer = try MemoryOptimizer.init(allocator);

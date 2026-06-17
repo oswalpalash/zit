@@ -231,5 +231,5 @@ Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
 - Use `zig fmt --check src/ examples/ build.zig` and `zig build quality` locally before opening a PR.
-- Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, `python3 scripts/interactive_example_smoke.py`, and docs generation.
+- Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, `python3 scripts/check_debug_allocator_cleanup.py`, `python3 scripts/interactive_example_smoke.py`, and docs generation.
 - For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4`; it executes real-world and gallery binaries in `--snapshot` mode and writes a contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift.

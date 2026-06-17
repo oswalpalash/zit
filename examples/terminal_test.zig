@@ -6,7 +6,7 @@ const zit = @import("zit");
 pub fn main() !void {
     // Initialize allocator
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     // Initialize terminal

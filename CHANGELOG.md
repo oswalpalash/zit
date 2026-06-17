@@ -18,6 +18,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Extended deterministic widget gallery snapshot target for text entry, structured text, charting, menus, logs, indicators, and drawing primitives.
 - Layout/navigation widget gallery target for container, tab, split-pane, screen-manager, overlay, date/time, image, toast, accordion, and wizard coverage.
 - Public widget coverage checker (`scripts/check_widget_coverage.py`) fails when an exported widget lacks declared visual or snapshot coverage.
+- DebugAllocator cleanup checker (`scripts/check_debug_allocator_cleanup.py`) fails when public examples or memory tests ignore allocator deinit status.
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
@@ -41,6 +42,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Terminal and input diagnostics now flush their initial frames before waiting for raw-mode input.
 - Grapheme rendering no longer returns slices into by-value temporaries, fixing corrupted terminal frames and invalid borrowed memory during render output assembly.
 - File browser path normalization now frees realpath sentinel allocations with the correct allocation shape.
+- Examples and memory tests now assert `DebugAllocator.deinit() == .ok` so leaks and allocator misuse fail deterministically.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

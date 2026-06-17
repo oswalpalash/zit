@@ -71,7 +71,7 @@ const LayoutWidget = struct {
 pub fn main() !void {
     // Create an allocator
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     // Initialize memory manager

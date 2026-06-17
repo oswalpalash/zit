@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Require DebugAllocator users to assert clean deinit.
+
+DebugAllocator reports leaks and invalid frees, but examples commonly run as
+standalone programs where stderr can be missed. Public examples and memory tests
+must make those diagnostics fatal by checking ``deinit() == .ok``.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+CHECK_ROOTS = (
+    Path("examples"),
+    Path("src/memory/tests"),
+    Path("src/quickstart.zig"),
+)
+
+FORBIDDEN = (
+    "defer _ = gpa.deinit();",
+    "_ = gpa.deinit();",
+)
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def iter_zig_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for check_root in CHECK_ROOTS:
+        path = root / check_root
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(sorted(path.rglob("*.zig")))
+    return sorted(files)
+
+
+def main() -> int:
+    root = repo_root()
+    failures: list[str] = []
+    checked = 0
+
+    for path in iter_zig_files(root):
+        text = path.read_text(encoding="utf-8")
+        if "std.heap.DebugAllocator" not in text:
+            continue
+        checked += 1
+        rel = path.relative_to(root)
+        for forbidden in FORBIDDEN:
+            if forbidden in text:
+                failures.append(f"{rel}: ignores DebugAllocator deinit with `{forbidden}`")
+        if "deinit() == .ok" not in text:
+            failures.append(f"{rel}: DebugAllocator cleanup does not assert `.ok`")
+
+    if failures:
+        for failure in failures:
+            sys.stderr.write(failure + "\n")
+        return 1
+
+    print(f"checked DebugAllocator cleanup in {checked} file(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

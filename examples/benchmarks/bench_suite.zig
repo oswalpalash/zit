@@ -24,7 +24,7 @@ const CountingWriter = struct {
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     const render_result = try benchmarkRenderThroughput(allocator);

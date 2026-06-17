@@ -63,7 +63,7 @@ pub fn withRenderer(
 /// ```
 pub fn renderText(text: []const u8, options: FrameOptions) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var renderer = try render.Renderer.init(allocator, options.width, options.height);

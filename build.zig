@@ -321,9 +321,14 @@ pub fn build(b: *std.Build) void {
     const widget_coverage_step = b.step("widget-coverage", "Check public widget visual and snapshot coverage declarations");
     widget_coverage_step.dependOn(&widget_coverage_cmd.step);
 
+    const memory_cleanup_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_debug_allocator_cleanup.py" });
+    const memory_cleanup_step = b.step("memory-cleanup", "Check DebugAllocator users assert clean deinit");
+    memory_cleanup_step.dependOn(&memory_cleanup_cmd.step);
+
     const quality_step = b.step("quality", "Run the public quality gate: smoke, tests, and benchmarks");
     quality_step.dependOn(smoke_step);
     quality_step.dependOn(test_step);
     quality_step.dependOn(bench_step);
     quality_step.dependOn(widget_coverage_step);
+    quality_step.dependOn(memory_cleanup_step);
 }

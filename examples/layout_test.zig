@@ -7,7 +7,7 @@ const memory = zit.memory;
 pub fn main() !void {
     // Initialize memory manager
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);

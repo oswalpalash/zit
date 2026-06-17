@@ -20,7 +20,7 @@ fn drawHeading(mock: *zit.testing.MockTerminal, x: u16, y: u16, text: []const u8
 /// Render advanced and composition-heavy widgets for an interactive terminal or snapshot capture.
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var mock = try zit.testing.MockTerminal.init(allocator, 120, 50);

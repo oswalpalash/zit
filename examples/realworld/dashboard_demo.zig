@@ -7,7 +7,7 @@ const interactive = @import("interactive_snapshot.zig");
 /// Dashboard demo rendered interactively by default and as a deterministic snapshot with --snapshot.
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var mock = try zit.testing.MockTerminal.init(allocator, 80, 22);

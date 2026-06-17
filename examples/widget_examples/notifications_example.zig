@@ -10,7 +10,7 @@ const theme = zit.widget.theme;
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 256 * 1024, 64);

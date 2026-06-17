@@ -17,7 +17,7 @@ fn onRowSelect(idx: usize) void {
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var term = (try zit.terminal.initInteractive(allocator, "table-example")) orelse return;
