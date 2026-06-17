@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// Minimal text editor screen with status bar and command palette preview.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

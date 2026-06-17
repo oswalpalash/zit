@@ -1,5 +1,6 @@
 const std = @import("std");
 const event = @import("event.zig");
+const compat = @import("../compat.zig");
 
 const file_watch_poll_ms: u64 = 100;
 const network_read_buffer_bytes: usize = 4096;
@@ -151,7 +152,9 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
 
     while (ctx.running) {
         // Check if file exists and get its modification time
-        if (std.fs.cwd().statFile(ctx.path)) |stat| {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const cwd = std.Io.Dir.cwd();
+        if (cwd.statFile(io, ctx.path)) |stat| {
             const modified = stat.mtime;
 
             // If file was modified since the last check
@@ -181,7 +184,7 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
         }
 
         // Sleep for a bit to avoid high CPU usage
-        std.Thread.sleep(std.time.ns_per_ms * file_watch_poll_ms);
+        compat.sleepMillis(file_watch_poll_ms);
     }
 }
 
@@ -208,7 +211,11 @@ fn ioEventDataCleanup(data: *anyopaque) void {
     io_data.allocator.destroy(io_data);
 }
 
-/// Network connection context
+/// Network connection context.
+///
+/// Transport is currently unsupported on the Zig 0.16 baseline. Connecting starts a worker
+/// that emits `.network_error`; the type remains available so callers can handle this
+/// capability explicitly while the transport is rebuilt.
 pub const NetworkContext = struct {
     /// Server address
     address: []const u8,
@@ -226,8 +233,8 @@ pub const NetworkContext = struct {
     thread: ?std.Thread = null,
     /// Allocator
     allocator: std.mem.Allocator,
-    /// Socket
-    socket: ?std.net.Stream = null,
+    /// Whether a transport is connected.
+    socket_connected: bool = false,
     /// Buffer for receiving data
     buffer: []u8,
 
@@ -298,10 +305,7 @@ pub const NetworkContext = struct {
         if (!self.running) return;
 
         self.running = false;
-        if (self.socket) |*socket| {
-            socket.close();
-            self.socket = null;
-        }
+        self.socket_connected = false;
 
         if (self.thread) |thread| {
             thread.join();
@@ -317,54 +321,15 @@ pub const NetworkContext = struct {
     /// Returns: success when the write succeeds.
     /// Errors: `error.NotConnected` if the socket is not established, or any socket write error.
     pub fn send(self: *NetworkContext, data: []const u8) !void {
-        if (!self.running or self.socket == null) return error.NotConnected;
-
-        _ = try self.socket.?.write(data);
+        _ = data;
+        if (!self.running or !self.socket_connected) return error.NotConnected;
+        return error.Unsupported;
     }
 };
 
 /// Thread function for network connection
 fn connectThreadFn(ctx: *NetworkContext) void {
-    // Try to connect to the server
-    const address = std.net.Address.parseIp(ctx.address, ctx.port) catch {
-        sendNetworkEvent(ctx, .network_error, .error_, "Invalid address or port", null, 0);
-        return;
-    };
-
-    ctx.socket = std.net.tcpConnectToAddress(address) catch {
-        sendNetworkEvent(ctx, .network_error, .error_, "Connection failed", null, 0);
-        return;
-    };
-
-    // Send connect event
-    sendNetworkEvent(ctx, .network_connect, .success, null, null, 0);
-
-    // Read loop
-    while (ctx.running) {
-        const bytes_read = ctx.socket.?.read(ctx.buffer) catch {
-            sendNetworkEvent(ctx, .network_error, .error_, "Read error", null, 0);
-            break;
-        };
-
-        if (bytes_read == 0) {
-            // Connection closed
-            sendNetworkEvent(ctx, .network_disconnect, .success, null, null, 0);
-            break;
-        }
-
-        // Copy the data for the event
-        const data = ctx.allocator.dupe(u8, ctx.buffer[0..bytes_read]) catch continue;
-
-        // Send data event
-        sendNetworkEvent(ctx, .network_data, .success, null, data, bytes_read);
-    }
-
-    // Close socket if still open
-    if (ctx.socket) |*socket| {
-        socket.close();
-        ctx.socket = null;
-    }
-
+    sendNetworkEvent(ctx, .network_error, .error_, "Network I/O is unsupported on this Zig baseline", null, 0);
     ctx.running = false;
 }
 
@@ -467,7 +432,10 @@ pub const IoEventManager = struct {
         return watcher;
     }
 
-    /// Create a network connection
+    /// Create a network connection context.
+    ///
+    /// Current behavior: starts a worker that emits `.network_error` because network
+    /// transport is not yet implemented for the Zig 0.16 baseline.
     ///
     /// Parameters:
     /// - `self`: manager used to allocate and track the connection.

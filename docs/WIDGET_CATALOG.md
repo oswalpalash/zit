@@ -71,4 +71,4 @@ A quick index of Zit widgets with their roles, related examples, and snapshot re
 ## Notes
 - Snapshots live under `src/testing/golden/` and are exercised by widget unit tests.
 - Layout examples under `examples/layout_test.zig` show how to wire Flex/Grid layouts without a full app loop.
-- For a one-stop tour of the catalog, run `zig build widget-showcase`.
+- For a one-stop tour of the catalog, run `zig build widget-showcase` from a real terminal.

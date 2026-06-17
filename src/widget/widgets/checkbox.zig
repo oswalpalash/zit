@@ -147,8 +147,9 @@ pub const Checkbox = struct {
         if (self.label.len > 0 and rect.width > 3) {
             const available_width: u16 = rect.width - 3;
             var truncated_text: [256]u8 = undefined;
-            const draw_text = text_metrics.truncateToWidth(self.label, available_width, &truncated_text, true);
-            renderer.drawStr(rect.x + 3, rect.y, draw_text, fg, bg, render.Style{});
+            const label_width = available_width;
+            const clipped = text_metrics.clipWithEllipsis(self.label, label_width, &truncated_text);
+            renderer.drawStr(rect.x + 3, rect.y, clipped.text, fg, bg, render.Style{});
         }
     }
 
@@ -191,9 +192,8 @@ pub const Checkbox = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
 
-        const label_width = text_metrics.measureWidth(self.label).width;
-        const raw_width: u16 = label_width + 4;
-        return layout_module.Size.init(@min(raw_width, @as(u16, 40)), // Cap width at 40 chars
+        const label_width: usize = text_metrics.measureWidth(self.label).width;
+        return layout_module.Size.init(@as(u16, @intCast(@min(label_width + 4, 40))), // Cap width at 40 cells
             1 // Height is 1 row
         );
     }
@@ -237,6 +237,23 @@ test "checkbox toggles and fires callback" {
     try std.testing.expect(checkbox.checked);
     try std.testing.expectEqual(@as(usize, 1), test_checkbox_calls);
     try std.testing.expectEqual(true, test_checkbox_state.?);
+}
+
+test "checkbox does not ellipsize label that exactly fits preferred width" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Safe mode");
+    defer checkbox.deinit();
+
+    try checkbox.widget.layout(layout_module.Rect.init(1, 0, 13, 1));
+
+    var renderer = try render.Renderer.init(alloc, 14, 1);
+    defer renderer.deinit();
+    try checkbox.widget.draw(&renderer);
+
+    const expected = "Safe mode";
+    for (expected, 0..) |char, idx| {
+        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 4)), 0).*.codepoint());
+    }
 }
 
 test "checkbox ignores presses when bounds are zero" {

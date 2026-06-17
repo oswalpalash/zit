@@ -530,8 +530,8 @@ pub const FlexLayout = struct {
             .padding_insets = EdgeInsets.all(0),
             .gap_size = 0,
             .cache = .{},
-            .naturals_scratch = .{},
-            .assigned_scratch = .{},
+            .naturals_scratch = .empty,
+            .assigned_scratch = .empty,
         };
         return layout;
     }

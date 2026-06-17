@@ -3,7 +3,7 @@ const testing = std.testing;
 const MemorySafety = @import("../safety.zig").MemorySafety;
 
 test "MemorySafety basic operations" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -28,7 +28,7 @@ test "MemorySafety basic operations" {
 }
 
 test "MemorySafety buffer overflow detection" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -47,7 +47,7 @@ test "MemorySafety buffer overflow detection" {
 }
 
 test "MemorySafety resize" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -69,7 +69,7 @@ test "MemorySafety resize" {
 }
 
 test "MemorySafety thread safety" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -101,7 +101,7 @@ test "MemorySafety thread safety" {
 }
 
 test "MemorySafety zero memory bounds" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

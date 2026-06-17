@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const compat = @import("../compat.zig");
 
 pub const PoolAllocator = struct {
     const Self = @This();
@@ -24,7 +25,7 @@ pub const PoolAllocator = struct {
     allocated_count: usize,
     total_count: usize,
     in_use: std.AutoHashMap([*]u8, *Node),
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
     stats: struct {
         allocations: usize,
         deallocations: usize,
@@ -45,7 +46,7 @@ pub const PoolAllocator = struct {
             .allocated_count = 0,
             .total_count = 0,
             .in_use = std.AutoHashMap([*]u8, *Node).init(parent_allocator),
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
             .stats = .{
                 .allocations = 0,
                 .deallocations = 0,

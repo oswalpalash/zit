@@ -115,7 +115,7 @@ pub fn formatNumber(allocator: std.mem.Allocator, value: anytype, opts: NumberFo
     const int_part = if (dot) |idx| raw[0..idx] else raw;
     const frac_part = if (dot) |idx| raw[idx + 1 ..] else raw[0..0];
 
-    var out = std.ArrayListUnmanaged(u8){};
+    var out = std.ArrayListUnmanaged(u8).empty;
     errdefer out.deinit(allocator);
 
     const negative = int_part.len > 0 and int_part[0] == '-';

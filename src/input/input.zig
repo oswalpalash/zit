@@ -1,6 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const terminal = @import("../terminal/terminal.zig");
+const compat = @import("../compat.zig");
+
+const windows_sync = struct {
+    const WAIT_OBJECT_0: std.os.windows.DWORD = 0x00000000;
+    const WAIT_TIMEOUT: std.os.windows.DWORD = 0x00000102;
+
+    extern "kernel32" fn WaitForSingleObject(hHandle: std.os.windows.HANDLE, dwMilliseconds: std.os.windows.DWORD) std.os.windows.DWORD;
+};
 
 /// Input handling module
 ///
@@ -229,8 +237,7 @@ pub const Event = union(EventType) {
 pub fn decodeEventFromBytes(bytes: []const u8) !?Event {
     if (bytes.len == 0) return null;
 
-    var stream = std.io.fixedBufferStream(bytes);
-    var reader = stream.reader();
+    var reader = SliceByteReader{ .data = bytes };
     var sink = ByteSink{};
 
     const first = reader.readByte() catch return null;
@@ -243,7 +250,7 @@ pub fn decodeEventFromBytes(bytes: []const u8) !?Event {
         sink.put(maybe_next);
 
         if (maybe_next == '[') {
-            return try parseCSISequence(reader, &sink);
+            return try parseCSISequence(&reader, &sink);
         }
 
         return Event{ .key = KeyEvent.init(maybe_next, KeyModifiers{ .alt = true }) };
@@ -573,40 +580,21 @@ pub const Clipboard = struct {
     }
 
     fn pipeToCommand(self: *Clipboard, argv: []const []const u8, data: []const u8) bool {
-        var child = std.process.Child.init(argv, self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-
-        child.spawn() catch return false;
-
-        const stdin = child.stdin orelse return false;
-        stdin.writeAll(data) catch {
-            _ = child.kill() catch {};
-            return false;
-        };
-        stdin.close();
-
-        _ = child.wait() catch return false;
-        return true;
+        _ = self;
+        _ = argv;
+        _ = data;
+        return false;
     }
 
     fn readFromCommand(self: *Clipboard, argv: []const []const u8) ![]u8 {
-        var child = std.process.Child.init(argv, self.allocator);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-
-        try child.spawn();
-
-        const stdout = child.stdout orelse return error.NoStdout;
-        const data = stdout.readToEndAlloc(self.allocator, self.max_bytes) catch |err| {
-            _ = child.kill() catch {};
-            return err;
-        };
-
-        _ = child.wait() catch {};
-        return data;
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const result = try std.process.run(self.allocator, io, .{
+            .argv = argv,
+            .stdout_limit = .limited(self.max_bytes),
+            .stderr_limit = .limited(0),
+        });
+        self.allocator.free(result.stderr);
+        return result.stdout;
     }
 };
 
@@ -885,9 +873,10 @@ fn isNonBlockingError(err: anyerror) bool {
     return err == error.WouldBlock or err == error.Again;
 }
 
-fn readFileByte(file: std.fs.File) !u8 {
+fn readFileByte(file: std.Io.File) !u8 {
+    const io = std.Io.Threaded.global_single_threaded.io();
     var buf: [1]u8 = undefined;
-    const bytes_read = file.read(&buf) catch |err| {
+    const bytes_read = file.readStreaming(io, &.{buf[0..]}) catch |err| {
         if (isNonBlockingError(err)) return error.WouldBlock;
         return err;
     };
@@ -911,7 +900,7 @@ const NullSink = struct {
 };
 
 const FileByteReader = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     fn readByte(self: *FileByteReader) !u8 {
         return readFileByte(self.file);
@@ -922,6 +911,7 @@ const PosixByteReader = struct {
     fd: std.posix.fd_t,
 
     fn readByte(self: *PosixByteReader) !u8 {
+        if (builtin.os.tag == .windows) return error.Unsupported;
         var buf: [1]u8 = undefined;
         const amount = std.posix.read(self.fd, buf[0..1]) catch |err| {
             if (isNonBlockingError(err)) return error.WouldBlock;
@@ -987,10 +977,9 @@ pub const InputHandler = struct {
     pub fn enableMouse(self: *InputHandler) !void {
         if (self.mouse_enabled) return;
 
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1000h"); // Enable mouse clicks
-        try stdout.writeAll("\x1b[?1002h"); // Enable mouse movement
-        try stdout.writeAll("\x1b[?1006h"); // Enable SGR extended mode
+        try compat.stdoutWriteAll("\x1b[?1000h"); // Enable mouse clicks
+        try compat.stdoutWriteAll("\x1b[?1002h"); // Enable mouse movement
+        try compat.stdoutWriteAll("\x1b[?1006h"); // Enable SGR extended mode
         self.mouse_enabled = true;
     }
 
@@ -998,10 +987,9 @@ pub const InputHandler = struct {
     pub fn disableMouse(self: *InputHandler) !void {
         if (!self.mouse_enabled) return;
 
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1006l"); // Disable SGR extended mode
-        try stdout.writeAll("\x1b[?1002l"); // Disable mouse movement
-        try stdout.writeAll("\x1b[?1000l"); // Disable mouse clicks
+        try compat.stdoutWriteAll("\x1b[?1006l"); // Disable SGR extended mode
+        try compat.stdoutWriteAll("\x1b[?1002l"); // Disable mouse movement
+        try compat.stdoutWriteAll("\x1b[?1000l"); // Disable mouse clicks
         self.mouse_enabled = false;
     }
 
@@ -1098,7 +1086,7 @@ pub const InputHandler = struct {
             };
         }
 
-        const stdin = std.fs.File.stdin();
+        const stdin = std.Io.File.stdin();
         var reader = FileByteReader{ .file = stdin };
 
         // Read a single byte
@@ -1255,11 +1243,11 @@ pub const InputHandler = struct {
         if (builtin.os.tag == .windows) {
             const max_wait_ms: u64 = std.math.maxInt(std.os.windows.DWORD);
             const wait_ms: std.os.windows.DWORD = @intCast(@min(timeout_ms, max_wait_ms));
-            const wait_result = std.os.windows.kernel32.WaitForSingleObject(self.term.stdin_fd, wait_ms);
+            const wait_result = windows_sync.WaitForSingleObject(self.term.stdin_fd, wait_ms);
 
             switch (wait_result) {
-                std.os.windows.WAIT_OBJECT_0 => {},
-                std.os.windows.WAIT_TIMEOUT => return null,
+                windows_sync.WAIT_OBJECT_0 => {},
+                windows_sync.WAIT_TIMEOUT => return null,
                 else => return null,
             }
 
@@ -1293,7 +1281,7 @@ pub const InputHandler = struct {
             return self.readEvent() catch |err| {
                 if (isNonBlockingError(err)) {
                     // This can happen if the terminal state changes between poll and read
-                    std.Thread.sleep(std.time.ns_per_ms); // Small pause
+                    compat.sleepMillis(1); // Small pause
                     return null;
                 }
                 // Pass through other errors

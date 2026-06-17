@@ -138,7 +138,7 @@ pub const RadioGroup = struct {
         const self = try allocator.create(RadioGroup);
         self.* = RadioGroup{
             .widget = base.Widget.init(&vtable),
-            .options = .{},
+            .options = .empty,
             .allocator = allocator,
         };
 
@@ -565,7 +565,7 @@ pub const Toolbar = struct {
         const self = try allocator.create(Toolbar);
         self.* = Toolbar{
             .widget = base.Widget.init(&vtable),
-            .items = .{},
+            .items = .empty,
             .allocator = allocator,
         };
         for (labels) |lbl| {
@@ -681,7 +681,7 @@ pub const Breadcrumbs = struct {
         const self = try allocator.create(Breadcrumbs);
         self.* = Breadcrumbs{
             .widget = base.Widget.init(&vtable),
-            .parts = .{},
+            .parts = .empty,
             .allocator = allocator,
         };
         for (parts) |part| {
@@ -756,7 +756,7 @@ pub const Breadcrumbs = struct {
         const self = @as(*Breadcrumbs, @ptrCast(@alignCast(widget_ptr)));
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        var segments = std.ArrayListUnmanaged(VisibleSegment){};
+        var segments = std.ArrayListUnmanaged(VisibleSegment).empty;
         defer segments.deinit(self.allocator);
         try self.computeVisible(rect.width, &segments);
 
@@ -806,7 +806,7 @@ pub const Breadcrumbs = struct {
         const my = mouse.y;
         if (my != self.widget.rect.y) return false;
 
-        var segments = std.ArrayListUnmanaged(VisibleSegment){};
+        var segments = std.ArrayListUnmanaged(VisibleSegment).empty;
         defer segments.deinit(self.allocator);
         try self.computeVisible(self.widget.rect.width, &segments);
 
@@ -985,7 +985,7 @@ pub const CommandPalette = struct {
         const self = try allocator.create(CommandPalette);
         self.* = CommandPalette{
             .widget = base.Widget.init(&vtable),
-            .commands = .{},
+            .commands = .empty,
             .allocator = allocator,
         };
         for (commands) |cmd| {
@@ -1096,7 +1096,7 @@ pub const NotificationCenter = struct {
         const self = try allocator.create(NotificationCenter);
         self.* = NotificationCenter{
             .widget = base.Widget.init(&vtable),
-            .notifications = .{},
+            .notifications = .empty,
             .allocator = allocator,
         };
         return self;
@@ -1210,7 +1210,7 @@ pub const Accordion = struct {
         const self = try allocator.create(Accordion);
         self.* = Accordion{
             .widget = base.Widget.init(&vtable),
-            .sections = .{},
+            .sections = .empty,
             .allocator = allocator,
         };
         for (sections) |section| {
@@ -1324,7 +1324,7 @@ pub const WizardStepper = struct {
         const self = try allocator.create(WizardStepper);
         self.* = WizardStepper{
             .widget = base.Widget.init(&vtable),
-            .steps = .{},
+            .steps = .empty,
             .allocator = allocator,
         };
         for (steps) |step| {
@@ -1424,7 +1424,7 @@ test "toggle switch renders state" {
 
     var snap = try testing.renderWidget(alloc, &toggle.widget, layout_module.Size.init(16, 1));
     defer snap.deinit(alloc);
-    try snap.expectEqual("[ ON ] Turbo\n");
+    try snap.expectEqual("[ ON ] Turbo    \n");
 }
 
 test "radio group updates selection" {
@@ -1436,12 +1436,7 @@ test "radio group updates selection" {
 
     var snap = try testing.renderWidget(alloc, &radio.widget, layout_module.Size.init(6, 3));
     defer snap.deinit(alloc);
-    try snap.expectEqual(
-        \\( ) A
-        \\( ) B
-        \\(*) C
-        \\
-    );
+    try snap.expectEqual("( ) A \n( ) B \n(*) C \n");
 }
 
 test "slider clamps values" {

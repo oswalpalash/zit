@@ -91,7 +91,7 @@ pub const Markdown = struct {
 
     fn parse(self: *Markdown) !void {
         var in_code_block = false;
-        var it = std.mem.split(u8, self.content, "\n");
+        var it = std.mem.splitScalar(u8, self.content, '\n');
         while (it.next()) |raw_line| {
             if (std.mem.startsWith(u8, raw_line, "```")) {
                 in_code_block = !in_code_block;

@@ -7,6 +7,7 @@ const memory = @import("../../memory/memory.zig");
 const animation = @import("../animation.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const compat = @import("../../compat.zig");
 
 /// TableCell structure
 pub const TableCell = struct {
@@ -102,7 +103,7 @@ pub const Table = struct {
     /// How long to keep appending to the search buffer (in milliseconds)
     search_timeout_ms: u64 = 900,
     /// Clock source (primarily overridden in tests)
-    clock: *const fn () i64 = std.time.milliTimestamp,
+    clock: *const fn () i64 = compat.nowMillis,
     /// Optional animator for smooth scrolling
     animator: ?*animation.Animator = null,
     /// Scroll easing driver
@@ -164,7 +165,7 @@ pub const Table = struct {
             .visible_order = std.ArrayList(usize).empty,
             .view_rows = std.ArrayList(ViewRow).empty,
             .view_dirty = true,
-            .edit_buffer = .{},
+            .edit_buffer = .empty,
         };
         self.setTheme(theme.Theme.dark());
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Table", "");
@@ -530,8 +531,15 @@ pub const Table = struct {
     fn getVisibleRowCount(self: *Table) usize {
         var height = @as(usize, @intCast(self.widget.rect.height));
 
+        if (self.border != .none and height > 2) {
+            height -= 2;
+        }
+
         if (self.show_headers) {
             height = if (height > 0) height - 1 else 0;
+            if (self.show_grid) {
+                height = if (height > 0) height - 1 else 0;
+            }
         }
 
         return height;
@@ -858,15 +866,27 @@ pub const Table = struct {
             self.first_visible_row = new_first;
         }
 
-        var y = rect.y;
-        var x = rect.x;
+        const has_border = self.border != .none and rect.width > 2 and rect.height > 2;
+        if (has_border) {
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, self.fg, self.bg, render.Style{});
+        }
+
+        const content_x = rect.x + @as(u16, if (has_border) 1 else 0);
+        const content_y = rect.y + @as(u16, if (has_border) 1 else 0);
+        const content_width = if (has_border) rect.width - 2 else rect.width;
+        const content_height = if (has_border) rect.height - 2 else rect.height;
+        if (content_width == 0 or content_height == 0) return;
+        const content_right = content_x + content_width;
+
+        var y = content_y;
+        var x = content_x;
 
         // Draw headers if enabled
         if (self.show_headers) {
-            x = rect.x;
+            x = content_x;
 
             for (self.columns.items, 0..) |column, col_idx| {
-                if (@as(u16, @intCast(x)) + column.width > rect.x + rect.width) {
+                if (@as(u16, @intCast(x)) + column.width > content_right) {
                     break;
                 }
 
@@ -895,7 +915,7 @@ pub const Table = struct {
                 }
 
                 // Draw grid if enabled
-                if (self.show_grid and x > rect.x) {
+                if (self.show_grid and x > content_x) {
                     renderer.drawChar(x, y, '│', self.grid_fg, self.header_bg, render.Style{});
                 }
 
@@ -905,20 +925,24 @@ pub const Table = struct {
             y += 1;
 
             // Draw horizontal grid line under headers if enabled
-            if (self.show_grid) {
-                x = rect.x;
+            if (self.show_grid and y < content_y + content_height) {
+                x = content_x;
                 for (self.columns.items) |column| {
-                    if (@as(u16, @intCast(x)) + column.width > rect.x + rect.width) {
+                    if (@as(u16, @intCast(x)) + column.width > content_right) {
                         break;
                     }
 
                     for (0..@as(usize, @intCast(column.width))) |i| {
-                        const char: u21 = if (x > rect.x and i == 0) '┼' else '─';
-                        renderer.drawChar(x + @as(u16, @intCast(i)), y - 1, char, self.grid_fg, bg, render.Style{});
+                        const char: u21 = if (x > content_x and i == 0) '┼' else '─';
+                        renderer.drawChar(x + @as(u16, @intCast(i)), y, char, self.grid_fg, bg, render.Style{});
                     }
 
                     x += column.width;
                 }
+                while (x < content_right) : (x += 1) {
+                    renderer.drawChar(x, y, '─', self.grid_fg, bg, render.Style{});
+                }
+                y += 1;
             }
         }
 
@@ -930,11 +954,11 @@ pub const Table = struct {
             if (view_idx >= self.view_rows.items.len) break;
             const view_row = self.view_rows.items[view_idx];
             if (view_row == .group) {
-                x = rect.x;
-                renderer.fillRect(x, y, rect.width, 1, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
+                x = content_x;
+                renderer.fillRect(x, y, content_width, 1, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
                 const group_text = view_row.group;
-                if (group_text.len > 0 and rect.width > 2) {
-                    renderer.drawStr(x + 1, y, group_text[0..@min(group_text.len, @as(usize, @intCast(rect.width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
+                if (group_text.len > 0 and content_width > 2) {
+                    renderer.drawStr(x + 1, y, group_text[0..@min(group_text.len, @as(usize, @intCast(content_width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
                 }
                 y += 1;
                 continue;
@@ -943,7 +967,7 @@ pub const Table = struct {
             const row_idx = view_row.data;
             const is_selected = self.selected_row != null and row_idx == self.selected_row.?;
 
-            x = rect.x;
+            x = content_x;
 
             // Choose row colors based on selection and focus
             const row_fg = if (is_selected)
@@ -958,7 +982,7 @@ pub const Table = struct {
 
             // Draw each cell in the row
             for (self.columns.items, 0..) |column, col_idx| {
-                if (@as(u16, @intCast(x)) + column.width > rect.x + rect.width) {
+                if (@as(u16, @intCast(x)) + column.width > content_right) {
                     break;
                 }
 
@@ -991,7 +1015,7 @@ pub const Table = struct {
                     }
 
                     // Draw grid if enabled
-                    if (self.show_grid and x > rect.x) {
+                    if (self.show_grid and x > content_x) {
                         renderer.drawChar(x, y, '│', self.grid_fg, cell_bg, render.Style{});
                     }
                 } else {
@@ -999,7 +1023,7 @@ pub const Table = struct {
                     renderer.fillRect(x, y, column.width, 1, ' ', row_fg, row_bg, render.Style{});
 
                     // Draw grid if enabled
-                    if (self.show_grid and x > rect.x) {
+                    if (self.show_grid and x > content_x) {
                         renderer.drawChar(x, y, '│', self.grid_fg, row_bg, render.Style{});
                     }
                 }
@@ -1008,11 +1032,6 @@ pub const Table = struct {
             }
 
             y += 1;
-        }
-
-        // Draw border if enabled
-        if (self.border != .none) {
-            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, self.fg, self.bg, render.Style{});
         }
     }
 
@@ -1438,6 +1457,27 @@ test "table typeahead search finds matching rows" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try table.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), table.selected_row.?); // Zeta
+}
+
+test "table border preserves header and row content" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 5, true);
+    try table.addColumn("B", 5, true);
+    try table.addRow(&.{ "x", "y" });
+    table.border = .single;
+    try table.widget.layout(layout_module.Rect.init(0, 0, 14, 6));
+
+    var renderer = try render.Renderer.init(alloc, 14, 6);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, '┌'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '─'), renderer.back.getCell(2, 2).codepoint());
+    try std.testing.expectEqual(@as(u21, 'x'), renderer.back.getCell(2, 3).codepoint());
 }
 
 test "table preferred size clamps large widths" {

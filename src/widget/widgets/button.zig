@@ -153,14 +153,13 @@ pub const Button = struct {
         if (self.button_text.len > 0 and rect.width > 2 and rect.height > 2) {
             const inner_width = rect.width - 2;
             var truncated_text: [256]u8 = undefined;
-            const draw_text = text_metrics.truncateToWidth(self.button_text, inner_width, &truncated_text, true);
-            const text_width = text_metrics.measureWidth(draw_text).width;
-            const text_x = if (inner_width > text_width)
-                rect.x + 1 + (inner_width - text_width) / 2
+            const clipped = text_metrics.clipWithEllipsis(self.button_text, inner_width, &truncated_text);
+            const text_x = if (inner_width > clipped.width)
+                rect.x + 1 + (inner_width - clipped.width) / 2
             else
                 rect.x + 1;
             const text_y = rect.y + rect.height / 2;
-            renderer.drawStr(text_x, text_y, draw_text, fg, bg, style);
+            renderer.drawStr(text_x, text_y, clipped.text, fg, bg, style);
         }
     }
 
@@ -213,8 +212,7 @@ pub const Button = struct {
         const height: u16 = if (text_width > 30) 5 else 3; // Use taller button for longer text
 
         // Button size should accommodate text plus borders
-        const raw_width: u16 = text_width + 4;
-        return layout_module.Size.init(@min(raw_width, @as(u16, 40)), // Cap width at 40 chars
+        return layout_module.Size.init(@as(u16, @intCast(@min(text_width + 4, 40))), // Cap width at 40 cells
             height // Adjustable height
         );
     }
@@ -258,6 +256,23 @@ test "button triggers callback on press" {
     const key_event = input.Event{ .key = input.KeyEvent.init(' ', input.KeyModifiers{}) };
     try std.testing.expect(try button.widget.handleEvent(key_event));
     try std.testing.expectEqual(@as(usize, 2), test_button_presses);
+}
+
+test "button does not ellipsize text that exactly fits inner width" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Deploy");
+    defer button.deinit();
+
+    try button.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    try button.widget.draw(&renderer);
+
+    const expected = "Deploy";
+    for (expected, 0..) |char, idx| {
+        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 1)), 1).*.codepoint());
+    }
 }
 
 test "button ignores presses when bounds are zero" {

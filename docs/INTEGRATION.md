@@ -4,7 +4,7 @@ Zit is designed to drop cleanly into existing Zig projects, whether you use the 
 
 ## Adding Zit via the Zig package manager
 
-1. Fetch and record the dependency (Zig 0.15+):
+1. Fetch and record the dependency (Zig 0.16+):
 ```bash
 zig fetch --save git+https://github.com/oswalpalash/zit
 ```

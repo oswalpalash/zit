@@ -9,14 +9,14 @@ const theme = zit.widget.theme;
 const memory = zit.memory;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(allocator);
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "dashboard-example")) orelse return;
     defer term.deinit() catch {};
 
     var renderer = try render.Renderer.init(allocator, term.width, term.height);
@@ -78,7 +78,7 @@ pub fn main() !void {
     main_split.setFirst(&tree.widget);
     main_split.setSecond(&metrics_split.widget);
 
-    const seed: u64 = @bitCast(std.time.timestamp());
+    const seed: u64 = 0x5a17_da5b_0a11_d001;
     var prng = std.Random.DefaultPrng.init(seed);
     var running = true;
     var phase: f64 = 0;

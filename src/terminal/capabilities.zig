@@ -1,5 +1,6 @@
 const std = @import("std");
 const unicode_width = @import("unicode_width.zig");
+const compat = @import("../compat.zig");
 
 pub const ColorLevel = enum {
     ansi16,
@@ -37,16 +38,11 @@ pub const Environment = struct {
     wt_session: ?[]const u8 = null,
     konsole_profile: ?[]const u8 = null,
 
-    pub fn fromMap(env: *const std.process.EnvMap) Environment {
-        return Environment{
-            .term = env.get("TERM"),
-            .colorterm = env.get("COLORTERM"),
-            .term_program = env.get("TERM_PROGRAM"),
-            .term_program_version = env.get("TERM_PROGRAM_VERSION"),
-            .vte_version = env.get("VTE_VERSION"),
-            .wt_session = env.get("WT_SESSION"),
-            .konsole_profile = env.get("KONSOLE_PROFILE_NAME"),
-        };
+    owned: []const []u8 = &.{},
+
+    pub fn deinit(self: Environment, allocator: std.mem.Allocator) void {
+        for (self.owned) |value| allocator.free(value);
+        allocator.free(self.owned);
     }
 };
 
@@ -76,12 +72,46 @@ pub fn detect() CapabilityFlags {
 }
 
 pub fn detectWithAllocator(allocator: std.mem.Allocator) CapabilityFlags {
-    var env_map = std.process.getEnvMap(allocator) catch {
+    const env = loadEnvironment(allocator) catch {
         return CapabilityFlags{};
     };
-    defer env_map.deinit();
+    defer env.deinit(allocator);
 
-    return detectFrom(Environment.fromMap(&env_map));
+    return detectFrom(env);
+}
+
+fn loadEnvironment(allocator: std.mem.Allocator) !Environment {
+    var owned = std.ArrayList([]u8).empty;
+    errdefer {
+        for (owned.items) |value| allocator.free(value);
+        owned.deinit(allocator);
+    }
+
+    const term = try loadEnvValue(allocator, &owned, "TERM");
+    const colorterm = try loadEnvValue(allocator, &owned, "COLORTERM");
+    const term_program = try loadEnvValue(allocator, &owned, "TERM_PROGRAM");
+    const term_program_version = try loadEnvValue(allocator, &owned, "TERM_PROGRAM_VERSION");
+    const vte_version = try loadEnvValue(allocator, &owned, "VTE_VERSION");
+    const wt_session = try loadEnvValue(allocator, &owned, "WT_SESSION");
+    const konsole_profile = try loadEnvValue(allocator, &owned, "KONSOLE_PROFILE_NAME");
+
+    return .{
+        .term = term,
+        .colorterm = colorterm,
+        .term_program = term_program,
+        .term_program_version = term_program_version,
+        .vte_version = vte_version,
+        .wt_session = wt_session,
+        .konsole_profile = konsole_profile,
+        .owned = try owned.toOwnedSlice(allocator),
+    };
+}
+
+fn loadEnvValue(allocator: std.mem.Allocator, owned: *std.ArrayList([]u8), key: []const u8) !?[]const u8 {
+    const value = try compat.getEnv(allocator, key) orelse return null;
+    errdefer allocator.free(value);
+    try owned.append(allocator, value);
+    return value;
 }
 
 pub fn detectFrom(env: Environment) CapabilityFlags {

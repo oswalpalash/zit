@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// A lightweight, non-interactive htop style snapshot rendered into a mock terminal.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

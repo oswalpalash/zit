@@ -123,25 +123,23 @@ pub const Label = struct {
 
             const line = self.text[start..i];
             const y = rect.y + line_idx;
-
             var truncated_text: [256]u8 = undefined;
-            const draw_text = text_metrics.truncateToWidth(line, rect.width, &truncated_text, true);
-            const draw_width = text_metrics.measureWidth(draw_text).width;
+            const clipped = text_metrics.clipWithEllipsis(line, rect.width, &truncated_text);
 
             // Calculate x position based on alignment
             var x: u16 = rect.x;
             if (self.alignment == .center) {
-                if (draw_width < rect.width) {
-                    x = rect.x + (rect.width - draw_width) / 2;
+                if (clipped.width < rect.width) {
+                    x = rect.x + (rect.width - clipped.width) / 2;
                 }
             } else if (self.alignment == .right) {
-                if (draw_width < rect.width) {
-                    x = rect.x + rect.width - draw_width;
+                if (clipped.width < rect.width) {
+                    x = rect.x + rect.width - clipped.width;
                 }
             }
 
             // Draw the line
-            renderer.drawStr(x, y, draw_text, fg, bg, style);
+            renderer.drawStr(x, y, clipped.text, fg, bg, style);
 
             line_idx += 1;
             if (!at_end) {
@@ -214,6 +212,22 @@ test "label setText updates preferred size" {
     const size = try label.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 5), size.width);
     try std.testing.expectEqual(@as(u16, 2), size.height);
+}
+
+test "label does not ellipsize text that exactly fits" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "abcdefghijklmnopqrst");
+    defer label.deinit();
+
+    try label.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try label.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, 'r'), renderer.back.getCell(17, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, 's'), renderer.back.getCell(18, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, 't'), renderer.back.getCell(19, 0).*.codepoint());
 }
 
 test "label handles empty text" {

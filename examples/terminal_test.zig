@@ -5,21 +5,24 @@ const zit = @import("zit");
 
 pub fn main() !void {
     // Initialize allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Initialize terminal
-    var term = try zit.terminal.init(allocator);
+    var term = (try zit.terminal.initInteractive(allocator, "terminal-test")) orelse return;
     defer term.deinit() catch {};
 
     // Clear screen
     try term.clear();
 
     // Display terminal information
-    var stdout_file = std.fs.File.stdout();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var stdout_file = std.Io.File.stdout();
     var stdout_buffer: [512]u8 = undefined;
-    var writer = stdout_file.writer(&stdout_buffer).interface;
+    var stdout_writer = stdout_file.writerStreaming(io, &stdout_buffer);
+    var writer = &stdout_writer.interface;
+    defer stdout_writer.flush() catch {};
     try writer.print("Terminal size: {d}x{d}\n", .{ term.width, term.height });
     try writer.print("256 colors support: {}\n", .{term.supports256Colors()});
     try writer.print("True color support: {}\n\n", .{term.supportsTrueColor()});
@@ -81,13 +84,12 @@ pub fn main() !void {
     try writer.writeAll("Press any key to see its ASCII value (press 'q' to quit)");
 
     // Input loop
-    const stdin_file = std.fs.File.stdin();
+    var stdin_file = std.Io.File.stdin();
+    var stdin_buffer: [32]u8 = undefined;
+    var stdin_reader = stdin_file.readerStreaming(io, &stdin_buffer);
 
     while (true) {
-        var byte_buf: [1]u8 = undefined;
-        const read = stdin_file.read(&byte_buf) catch continue;
-        if (read == 0) continue;
-        const byte = byte_buf[0];
+        const byte = stdin_reader.interface.takeByte() catch continue;
 
         try term.moveCursor(0, term.height - 1);
         try writer.print("Key pressed: '{c}' (ASCII: {d})   ", .{ byte, byte });

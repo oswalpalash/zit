@@ -7,6 +7,7 @@ const animation = @import("../animation.zig");
 const event_module = @import("../../event/event.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const compat = @import("../../compat.zig");
 
 const ActiveDrag = struct {
     source: *List,
@@ -67,7 +68,7 @@ pub const List = struct {
     /// How long to keep appending to the search buffer (in milliseconds)
     search_timeout_ms: u64 = 900,
     /// Clock source (primarily overridden in tests)
-    clock: *const fn () i64 = std.time.milliTimestamp,
+    clock: *const fn () i64 = compat.nowMillis,
     /// Optional shared animator for smooth scrolling
     animator: ?*animation.Animator = null,
     /// Smooth scroll driver
@@ -468,6 +469,19 @@ pub const List = struct {
         active_drag = null;
     }
 
+    fn hasDrawableBorder(self: *const List) bool {
+        const rect = self.widget.rect;
+        return self.border != .none and rect.width >= 2 and rect.height >= 2;
+    }
+
+    fn contentRect(self: *const List) layout_module.Rect {
+        const rect = self.widget.rect;
+        if (self.hasDrawableBorder() and rect.width > 2 and rect.height > 2) {
+            return layout_module.Rect.init(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+        }
+        return rect;
+    }
+
     /// Draw implementation for List
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = fromWidgetPtr(widget_ptr);
@@ -488,12 +502,19 @@ pub const List = struct {
         const bg = styled.bg;
         const style = styled.style;
 
+        const has_border = self.hasDrawableBorder();
+        const content_rect = self.contentRect();
+
         // Fill list background
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
+        if (has_border) {
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, fg, bg, style);
+        }
 
         // Calculate visible items
-        self.visible_items_count = @intCast(@as(usize, rect.height));
-        if (self.visible_items_count == 0 or rect.height == 0 or rect.width == 0) {
+        self.visible_items_count = @intCast(@as(usize, content_rect.height));
+        if (self.visible_items_count == 0 or content_rect.height == 0 or content_rect.width == 0) {
+            self.widget.drawFocusRing(renderer);
             return;
         }
 
@@ -512,7 +533,7 @@ pub const List = struct {
         // Draw visible items
         const last_visible_index = @min(self.first_visible_index + self.visible_items_count, total_items);
 
-        var y = rect.y;
+        var y = content_rect.y;
         var i = self.first_visible_index;
         while (i < last_visible_index) : (i += 1) {
             const item = self.itemAt(i);
@@ -530,12 +551,12 @@ pub const List = struct {
                 bg;
 
             // Draw item background
-            renderer.fillRect(rect.x, y, rect.width, 1, ' ', item_fg, item_bg, style);
+            renderer.fillRect(content_rect.x, y, content_rect.width, 1, ' ', item_fg, item_bg, style);
 
             // Draw item text
-            var x = rect.x;
+            var x = content_rect.x;
             for (item) |char| {
-                if (x - rect.x >= rect.width) {
+                if (x - content_rect.x >= content_rect.width) {
                     break;
                 }
 
@@ -549,8 +570,8 @@ pub const List = struct {
         // Draw drop preview indicator for reorder/drops
         if (self.drag_hover_index) |hover| {
             const clamped_hover = @min(hover, total_items);
-            const indicator_y: u16 = rect.y + @as(u16, @intCast(clamped_hover - self.first_visible_index));
-            if (indicator_y >= rect.y and indicator_y < rect.y + rect.height) {
+            const indicator_y: u16 = content_rect.y + @as(u16, @intCast(clamped_hover - self.first_visible_index));
+            if (indicator_y >= content_rect.y and indicator_y < content_rect.y + content_rect.height) {
                 const state = if (active_drag != null and active_drag.?.source != self)
                     event_module.DropVisuals.State.valid
                 else
@@ -563,9 +584,9 @@ pub const List = struct {
                     .text = fg,
                 };
                 event_module.DropVisuals.outline(renderer, layout_module.Rect{
-                    .x = rect.x,
+                    .x = content_rect.x,
                     .y = indicator_y,
-                    .width = rect.width,
+                    .width = content_rect.width,
                     .height = 1,
                 }, state, colors);
             }
@@ -587,13 +608,15 @@ pub const List = struct {
         if (event == .mouse) {
             const mouse_event = event.mouse;
             const rect = self.widget.rect;
+            const content_rect = self.contentRect();
             const inside = rect.contains(mouse_event.x, mouse_event.y);
+            const inside_content = content_rect.contains(mouse_event.x, mouse_event.y);
 
             // External drag hover/drop
             if (active_drag) |drag| {
-                if (inside and self.accept_external_drops and (drag.source != self or self.enable_reorder)) {
-                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(rect.y));
-                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(rect.height)))));
+                if (inside_content and self.accept_external_drops and (drag.source != self or self.enable_reorder)) {
+                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(content_rect.y));
+                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(content_rect.height)))));
                     self.drag_hover_index = @min(drop_index, total_items);
 
                     if (mouse_event.action == .release) {
@@ -614,8 +637,23 @@ pub const List = struct {
 
             // Check if mouse is within list bounds
             if (inside and total_items > 0) {
+                // Mouse wheel scrolls list even when the pointer is on the border.
+                if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
+                    const scroll_step: i16 = if (mouse_event.scroll_delta != 0)
+                        mouse_event.scroll_delta
+                    else if (mouse_event.action == .scroll_up)
+                        -1
+                    else
+                        1;
+
+                    self.scrollBy(@as(f32, @floatFromInt(scroll_step)));
+                    return true;
+                }
+
+                if (!inside_content) return true;
+
                 // Convert y position to item index
-                const item_index = self.first_visible_index + @as(usize, @intCast(mouse_event.y - rect.y));
+                const item_index = self.first_visible_index + @as(usize, @intCast(mouse_event.y - content_rect.y));
 
                 if (item_index < total_items) {
                     // Mouse click selects item
@@ -631,23 +669,10 @@ pub const List = struct {
                     }
                 }
 
-                // Mouse wheel scrolls list
-                if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
-                    const scroll_step: i16 = if (mouse_event.scroll_delta != 0)
-                        mouse_event.scroll_delta
-                    else if (mouse_event.action == .scroll_up)
-                        -1
-                    else
-                        1;
-
-                    self.scrollBy(@as(f32, @floatFromInt(scroll_step)));
-                    return true;
-                }
-
                 // Drag updates
                 if (mouse_event.action == .move and self.dragging) {
-                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(rect.y));
-                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(rect.height)))));
+                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(content_rect.y));
+                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(content_rect.height)))));
                     self.drag_hover_index = @min(drop_index, total_items);
                     return true;
                 }
@@ -800,7 +825,8 @@ pub const List = struct {
         self.widget.rect = rect;
 
         // Update visible items count
-        self.visible_items_count = @intCast(@as(usize, rect.height));
+        const content_rect = self.contentRect();
+        self.visible_items_count = @intCast(@as(usize, content_rect.height));
 
         self.clampScroll();
         // Ensure selected item is visible
@@ -823,7 +849,8 @@ pub const List = struct {
         // Preferred height depends on number of items, with a minimum of 1
         const preferred_height = @as(u16, @intCast(@max(1, @min(10, @as(i16, @intCast(total))))));
 
-        return layout_module.Size.init(max_width, preferred_height);
+        const border_extra: u16 = if (self.border == .none) 0 else 2;
+        return layout_module.Size.init(max_width + border_extra, preferred_height + border_extra);
     }
 
     /// Can focus implementation for List
@@ -882,6 +909,27 @@ test "list clears selection and ignores events when empty" {
     try list.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
     const handled = try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
+}
+
+test "list border draws around content without consuming first row" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.setBorder(.rounded);
+    try list.addItem("alpha");
+    try list.addItem("beta");
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 10, 4));
+
+    var renderer = try render.Renderer.init(alloc, 10, 4);
+    defer renderer.deinit();
+    try list.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, '╭'), renderer.back.getCell(0, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, '╯'), renderer.back.getCell(9, 3).*.codepoint());
+    try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(1, 1).*.codepoint());
+    try std.testing.expectEqual(@as(usize, 2), list.visible_items_count);
 }
 
 test "list drag reorder updates item order and selection" {

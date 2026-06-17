@@ -1,13 +1,14 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const compat = @import("../compat.zig");
 
 pub const ArenaAllocator = struct {
     fallback_allocator: Allocator,
     buffer: []u8,
     end_index: usize,
     is_thread_safe: bool,
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
 
     pub fn init(parent_alloc: Allocator, size: usize, is_thread_safe: bool) !*ArenaAllocator {
         const self = try parent_alloc.create(ArenaAllocator);
@@ -16,7 +17,7 @@ pub const ArenaAllocator = struct {
             .buffer = try parent_alloc.alloc(u8, size),
             .end_index = 0,
             .is_thread_safe = is_thread_safe,
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
         };
         return self;
     }

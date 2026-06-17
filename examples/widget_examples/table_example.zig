@@ -16,11 +16,11 @@ fn onRowSelect(idx: usize) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var term = try zit.terminal.init(allocator);
+    var term = (try zit.terminal.initInteractive(allocator, "table-example")) orelse return;
     defer term.deinit() catch {};
 
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);

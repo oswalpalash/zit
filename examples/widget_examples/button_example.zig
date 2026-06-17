@@ -70,7 +70,7 @@ const LayoutWidget = struct {
 
 pub fn main() !void {
     // Create an allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -78,8 +78,8 @@ pub fn main() !void {
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 100);
     defer memory_manager.deinit();
 
-    // Initialize terminal with the parent allocator
-    var terminal = try zit.terminal.init(allocator);
+    // Initialize terminal with memory manager
+    var terminal = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "button-example")) orelse return;
     defer terminal.deinit() catch {};
 
     // Initialize input handler with the parent allocator

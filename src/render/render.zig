@@ -2,6 +2,7 @@ const std = @import("std");
 const text_metrics = @import("text_metrics.zig");
 const term_caps = @import("../terminal/capabilities.zig");
 const base_widget = @import("../widget/widgets/base_widget.zig");
+const compat = @import("../compat.zig");
 
 pub const TextDirection = text_metrics.TextDirection;
 
@@ -969,9 +970,9 @@ pub const Renderer = struct {
     /// Terminal capabilities
     capabilities: TerminalCapabilities,
     /// Reusable scratch buffers to minimize per-frame allocations
-    style_scratch: std.ArrayListUnmanaged(u8) = .{},
-    output_batch: std.ArrayListUnmanaged(u8) = .{},
-    grapheme_scratch: std.ArrayListUnmanaged(text_metrics.Grapheme) = .{},
+    style_scratch: std.ArrayListUnmanaged(u8) = .empty,
+    output_batch: std.ArrayListUnmanaged(u8) = .empty,
+    grapheme_scratch: std.ArrayListUnmanaged(text_metrics.Grapheme) = .empty,
     text_direction: TextDirection = .auto,
     viewport: ?Viewport = null,
 
@@ -1510,8 +1511,12 @@ pub const Renderer = struct {
 
     /// Render the back buffer to the terminal
     pub fn render(self: *Renderer) !void {
-        const stdout = std.fs.File.stdout();
-        try self.renderToWriter(stdout);
+        if (!self.has_dirty and !self.cursor_dirty) return;
+
+        var output = std.Io.Writer.Allocating.init(self.allocator);
+        defer output.deinit();
+        try self.renderToWriter(&output.writer);
+        try compat.stdoutWriteAll(output.written());
     }
 
     /// Render the back buffer to a provided writer (useful for tests)

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const compat = @import("../compat.zig");
 
 pub const MemoryOptimizer = struct {
     const Self = @This();
@@ -10,7 +11,7 @@ pub const MemoryOptimizer = struct {
 
     parent_allocator: Allocator,
     cache_lines: ?*CacheLine,
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
     stats: struct {
         cache_hits: usize,
         cache_misses: usize,
@@ -22,7 +23,7 @@ pub const MemoryOptimizer = struct {
         return Self{
             .parent_allocator = parent_allocator,
             .cache_lines = null,
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
             .stats = .{
                 .cache_hits = 0,
                 .cache_misses = 0,
