@@ -2,7 +2,9 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
+const compat = @import("../../compat.zig");
 
 /// File browser widget with basic directory navigation and selection.
 pub const FileBrowser = struct {
@@ -27,7 +29,7 @@ pub const FileBrowser = struct {
     search_len: usize = 0,
     last_search_ms: ?i64 = null,
     search_timeout_ms: u64 = 900,
-    clock: *const fn () i64 = std.time.milliTimestamp,
+    clock: *const fn () i64 = compat.nowMillis,
 
     pub const Entry = struct {
         name: []u8,
@@ -129,11 +131,13 @@ pub const FileBrowser = struct {
             });
         }
 
-        var dir = try std.fs.cwd().openDir(self.current_path, .{ .iterate = true });
-        defer dir.close();
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const cwd = std.Io.Dir.cwd();
+        var dir = try cwd.openDir(io, self.current_path, .{ .iterate = true });
+        defer dir.close(io);
 
         var it = dir.iterate();
-        while (try it.next()) |entry| {
+        while (try it.next(io)) |entry| {
             if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
             const name_copy = try self.allocator.dupe(u8, entry.name);
             try self.entries.append(self.allocator, .{
@@ -171,7 +175,10 @@ pub const FileBrowser = struct {
         if (path.len == 0) {
             return try allocator.dupe(u8, ".");
         }
-        return std.fs.cwd().realpathAlloc(allocator, path) catch try allocator.dupe(u8, path);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const cwd = std.Io.Dir.cwd();
+        const real = cwd.realPathFileAlloc(io, path, allocator) catch return try allocator.dupe(u8, path);
+        return real[0..real.len :0];
     }
 
     fn parentPath(self: *FileBrowser) ![]u8 {
@@ -247,8 +254,7 @@ pub const FileBrowser = struct {
 
         var header_buf: [256]u8 = undefined;
         if (header_width > 0) {
-            const max_chars: usize = @intCast(@min(header_width, @as(u16, @intCast(header_buf.len))));
-            const header_slice = truncateIntoBuffer(self.current_path, max_chars, header_buf[0..]);
+            const header_slice = text_metrics.clipWithEllipsis(self.current_path, header_width, header_buf[0..]).text;
             renderer.drawStr(header_x, header_y, header_slice, self.fg, self.bg, self.header_style);
         }
 
@@ -275,39 +281,14 @@ pub const FileBrowser = struct {
 
                 const available = header_width - @as(u16, @intCast(prefix_buf.len));
                 if (available > 0) {
-                    const max_chars: usize = @intCast(@min(available, @as(u16, @intCast(header_buf.len))));
-                    const name_slice = truncateIntoBuffer(entry.name, max_chars, header_buf[0..]);
+                    const name_slice = text_metrics.clipWithEllipsis(entry.name, available, header_buf[0..]).text;
                     renderer.drawStr(header_x + @as(u16, @intCast(prefix_buf.len)), line_y, name_slice, line_fg, line_bg, render.Style{ .italic = entry.is_parent });
                 }
             } else {
-                const max_chars: usize = @intCast(header_width);
-                const tag_slice = truncateIntoBuffer(tag[0..], max_chars, header_buf[0..]);
+                const tag_slice = text_metrics.clipWithEllipsis(tag[0..], header_width, header_buf[0..]).text;
                 renderer.drawStr(header_x, line_y, tag_slice, line_fg, line_bg, render.Style{});
             }
         }
-    }
-
-    fn truncateIntoBuffer(text: []const u8, max_chars: usize, buffer: []u8) []const u8 {
-        if (max_chars == 0) return buffer[0..0];
-
-        const available = @min(max_chars, buffer.len);
-        if (text.len <= available) {
-            @memcpy(buffer[0..text.len], text);
-            return buffer[0..text.len];
-        }
-
-        if (available <= 3) {
-            const len = @min(available, text.len);
-            @memcpy(buffer[0..len], text[0..len]);
-            return buffer[0..len];
-        }
-
-        const cut = available - 3;
-        @memcpy(buffer[0..cut], text[0..cut]);
-        buffer[cut] = '.';
-        buffer[cut + 1] = '.';
-        buffer[cut + 2] = '.';
-        return buffer[0..available];
     }
 
     fn handleTypeaheadKey(self: *FileBrowser, byte: u8) bool {
@@ -549,4 +530,29 @@ test "file browser typeahead selects entries" {
     TestClock.now = 2_000;
     _ = try browser.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
+}
+
+test "file browser clips entry names without splitting wide utf8 glyphs" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "界abc.txt"),
+        .is_dir = false,
+    });
+    browser.selected = 0;
+    browser.border = .none;
+    try browser.widget.layout(layout_module.Rect.init(0, 0, 10, 3));
+
+    var renderer = try render.Renderer.init(alloc, 10, 3);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    try browser.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(4, 1).*.codepoint());
+    try std.testing.expect(renderer.back.getCell(5, 1).*.continuation);
+    try std.testing.expectEqual(@as(u21, '.'), renderer.back.getCell(8, 1).*.codepoint());
 }

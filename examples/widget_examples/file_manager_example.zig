@@ -62,16 +62,15 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     }
 }
 
-
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "file-manager-example")) orelse return;
     defer term.deinit() catch {};
 
     var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);

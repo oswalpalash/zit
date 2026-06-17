@@ -39,7 +39,7 @@ test "WeakRef operations" {
 }
 
 test "WidgetNode tree operations" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -76,7 +76,7 @@ test "WidgetNode tree operations" {
 }
 
 test "WidgetNode weak references" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -102,7 +102,7 @@ test "WidgetNode weak references" {
 }
 
 test "WidgetNode thread safety" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

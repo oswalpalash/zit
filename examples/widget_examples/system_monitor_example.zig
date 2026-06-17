@@ -93,7 +93,6 @@ fn pickAccentForeground(accent: render.Color, palette: theme.Palette) render.Col
     return best;
 }
 
-
 fn jitter(random: std.Random, value: f32, min: f32, max: f32, spread: f32) f32 {
     const delta = (random.float(f32) - 0.5) * spread;
     return std.math.clamp(value + delta, min, max);
@@ -111,14 +110,14 @@ fn refreshTable(table: *widget.Table, procs: []const Process) !void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "system-monitor-example")) orelse return;
     defer term.deinit() catch {};
 
     // Use the general allocator so per-frame renderer scratch buffers can be freed.
@@ -188,7 +187,7 @@ pub fn main() !void {
     };
     var theme_idx: usize = 0;
 
-    const seed: u64 = @bitCast(std.time.timestamp());
+    const seed: u64 = 0x5a17_5a11_c0de_2026;
     var prng = std.Random.DefaultPrng.init(seed);
     var running = true;
     var paused = false;

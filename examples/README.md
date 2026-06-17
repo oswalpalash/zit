@@ -1,6 +1,6 @@
 # Examples Index
 
-Run everything from the repo root. Each entry lists the `zig build` step that launches it so you get module wiring and defaults without extra flags.
+Run everything from the repo root. Interactive example steps launch when a TTY is available and exit cleanly under non-TTY automation; deterministic real-world snapshot and benchmark steps execute directly.
 
 Quick starts
 - `examples/hello_world.zig` (`zig build hello-world`): five-line alternate-screen loop with raw-mode input and a centered label.
@@ -19,7 +19,7 @@ Widget gallery
 - `examples/widget_examples/notifications_example.zig` (`zig build notifications-example`): toast and notification manager behavior.
 - `examples/widget_examples/table_example.zig` (`zig build table-example`): sortable/searchable table with keyboard navigation.
 - `examples/widget_examples/file_browser_example.zig` (`zig build file-browser-example`): tree-backed file browser with preview.
-- `examples/widget_examples/file_manager_example.zig` (`zig build file-manager-example`): split-pane file manager (tree + list) interactions.
+- `examples/widget_examples/file_manager_example.zig` (`zig build file-manager-example`): split-pane file manager interactions.
 - `examples/widget_examples/form_wizard_example.zig` (`zig build form-wizard-example`): multi-step form with validation feedback.
 - `examples/widget_examples/system_monitor_example.zig` (`zig build system-monitor-example`): live metrics dashboard with charts and gauges.
 - `examples/widget_examples/showcase_demo.zig` (`zig build widget-showcase`): everything-in-one showcase to explore most widgets in one place.

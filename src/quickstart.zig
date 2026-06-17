@@ -62,7 +62,7 @@ pub fn withRenderer(
 /// try zit.quickstart.renderText("Hi from Zit", .{ .width = 40, .height = 4, .render_frame = false });
 /// ```
 pub fn renderText(text: []const u8, options: FrameOptions) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

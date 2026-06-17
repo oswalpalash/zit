@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// A lightweight, non-interactive htop style snapshot rendered into a mock terminal.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -16,12 +16,14 @@ pub fn main() !void {
     var cpu = try zit.widget.Gauge.init(allocator);
     defer cpu.deinit();
     cpu.setValue(72);
+    try cpu.setLabel("CPU 72%");
     try cpu.widget.layout(zit.layout.Rect.init(1, 1, 30, 3));
     try cpu.widget.draw(&mock.renderer);
 
     var mem = try zit.widget.Gauge.init(allocator);
     defer mem.deinit();
     mem.setValue(48);
+    try mem.setLabel("MEM 48%");
     mem.fill = zit.render.Color.named(.magenta);
     try mem.widget.layout(zit.layout.Rect.init(35, 1, 30, 3));
     try mem.widget.draw(&mock.renderer);

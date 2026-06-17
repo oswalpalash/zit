@@ -5,7 +5,7 @@ const MemoryManager = @import("../memory.zig").MemoryManager;
 const PoolAllocator = @import("../pool.zig").PoolAllocator;
 
 test "MemoryManager initialization and cleanup" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -27,7 +27,7 @@ test "MemoryManager initialization and cleanup" {
 }
 
 test "MemoryManager statistics" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -53,7 +53,7 @@ test "MemoryManager statistics" {
 }
 
 test "MemoryManager arena reset" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -70,7 +70,7 @@ test "MemoryManager arena reset" {
 }
 
 test "MemoryManager thread safety" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -107,7 +107,7 @@ test "MemoryManager thread safety" {
 }
 
 test "PoolAllocator tracks pooled ownership and falls back for foreign frees" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

@@ -655,7 +655,7 @@ pub const ProgressBarBuilder = struct {
 /// Fluent builder for tables with optional string interning.
 pub const TableBuilder = struct {
     allocator: std.mem.Allocator,
-    columns: std.ArrayListUnmanaged(TableColumnSpec) = .{},
+    columns: std.ArrayListUnmanaged(TableColumnSpec) = .empty,
     show_headers: bool = true,
     show_grid: bool = true,
     border: BorderStyle = .none,

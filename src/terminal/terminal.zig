@@ -1,8 +1,24 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const capabilities = @import("capabilities.zig");
+const compat = @import("../compat.zig");
 
 const windows_console = struct {
+    const SmallRect = extern struct {
+        Left: i16,
+        Top: i16,
+        Right: i16,
+        Bottom: i16,
+    };
+
+    const ScreenBufferInfo = extern struct {
+        dwSize: std.os.windows.COORD,
+        dwCursorPosition: std.os.windows.COORD,
+        wAttributes: std.os.windows.WORD,
+        srWindow: SmallRect,
+        dwMaximumWindowSize: std.os.windows.COORD,
+    };
+
     const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
     const ENABLE_LINE_INPUT: u32 = 0x0002;
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
@@ -14,6 +30,15 @@ const windows_console = struct {
     const ENABLE_PROCESSED_OUTPUT: u32 = 0x0001;
     const ENABLE_WRAP_AT_EOL_OUTPUT: u32 = 0x0002;
     const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+
+    extern "kernel32" fn GetConsoleMode(hConsoleHandle: std.os.windows.HANDLE, lpMode: *std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn SetConsoleMode(hConsoleHandle: std.os.windows.HANDLE, dwMode: std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn SetConsoleOutputCP(wCodePageID: c_uint) std.os.windows.BOOL;
+    extern "kernel32" fn GetConsoleScreenBufferInfo(hConsoleOutput: std.os.windows.HANDLE, lpConsoleScreenBufferInfo: *ScreenBufferInfo) std.os.windows.BOOL;
+    extern "kernel32" fn FillConsoleOutputCharacterW(hConsoleOutput: std.os.windows.HANDLE, cCharacter: std.os.windows.WCHAR, nLength: std.os.windows.DWORD, dwWriteCoord: std.os.windows.COORD, lpNumberOfCharsWritten: *std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn FillConsoleOutputAttribute(hConsoleOutput: std.os.windows.HANDLE, wAttribute: std.os.windows.WORD, nLength: std.os.windows.DWORD, dwWriteCoord: std.os.windows.COORD, lpNumberOfAttrsWritten: *std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn SetConsoleCursorPosition(hConsoleOutput: std.os.windows.HANDLE, dwCursorPosition: std.os.windows.COORD) std.os.windows.BOOL;
+    extern "kernel32" fn SetConsoleTextAttribute(hConsoleOutput: std.os.windows.HANDLE, wAttributes: std.os.windows.WORD) std.os.windows.BOOL;
 };
 
 const windows_cursor = struct {
@@ -28,8 +53,28 @@ const windows_cursor = struct {
 
 var winch_signal_flag = std.atomic.Value(u8).init(0);
 
-fn handleSigwinch(_: c_int) callconv(.c) void {
+fn handleSigwinch(_: std.posix.SIG) callconv(.c) void {
     winch_signal_flag.store(1, .monotonic);
+}
+
+fn setNonBlocking(fd: std.posix.fd_t) !void {
+    switch (builtin.os.tag) {
+        .linux => {
+            const flags_rc = std.os.linux.fcntl(fd, std.os.linux.F.GETFL, 0);
+            if (std.os.linux.errno(flags_rc) != .SUCCESS) return error.FcntlFailure;
+            const O_NONBLOCK: usize = 0o4000;
+            const set_rc = std.os.linux.fcntl(fd, std.os.linux.F.SETFL, flags_rc | O_NONBLOCK);
+            if (std.os.linux.errno(set_rc) != .SUCCESS) return error.FcntlFailure;
+        },
+        .windows => {},
+        else => {
+            if (!builtin.link_libc) return;
+            const flags = std.c.fcntl(fd, std.c.F.GETFL, @as(c_int, 0));
+            if (flags < 0) return error.FcntlFailure;
+            const O_NONBLOCK: c_int = 0x00000004;
+            if (std.c.fcntl(fd, std.c.F.SETFL, flags | O_NONBLOCK) < 0) return error.FcntlFailure;
+        },
+    }
 }
 
 /// Terminal abstraction layer
@@ -86,8 +131,8 @@ pub const Terminal = struct {
 
     /// Initialize a new terminal instance
     pub fn init(allocator: std.mem.Allocator) !Terminal {
-        const stdin_fd = std.fs.File.stdin().handle;
-        const stdout_fd = std.fs.File.stdout().handle;
+        const stdin_fd = std.Io.File.stdin().handle;
+        const stdout_fd = std.Io.File.stdout().handle;
 
         var original_termios: OriginalTermAttrs = .none;
         const is_windows = builtin.os.tag == .windows;
@@ -97,8 +142,8 @@ pub const Terminal = struct {
             ensureWindowsUnicodeSupport();
             var in_mode: std.os.windows.DWORD = undefined;
             var out_mode: std.os.windows.DWORD = undefined;
-            if (std.os.windows.kernel32.GetConsoleMode(stdin_fd, @ptrCast(&in_mode)) != 0 and
-                std.os.windows.kernel32.GetConsoleMode(stdout_fd, @ptrCast(&out_mode)) != 0)
+            if (windows_console.GetConsoleMode(stdin_fd, &in_mode).toBool() and
+                windows_console.GetConsoleMode(stdout_fd, &out_mode).toBool())
             {
                 original_termios = .{ .windows = .{ .in_mode = in_mode, .out_mode = out_mode } };
                 windows_vt_enabled = enableWindowsVirtualTerminal(stdout_fd);
@@ -107,6 +152,14 @@ pub const Terminal = struct {
             }
         } else {
             // Unix systems
+            switch (builtin.os.tag) {
+                .macos, .ios, .tvos, .watchos, .visionos => {
+                    if (std.posix.system.isatty(stdin_fd) == 0 or std.posix.system.isatty(stdout_fd) == 0) {
+                        return error.NotATerminal;
+                    }
+                },
+                else => {},
+            }
             original_termios = .{ .unix = try std.posix.tcgetattr(stdin_fd) };
         }
 
@@ -193,14 +246,7 @@ pub const Terminal = struct {
             _ = darwin.system("stty -echo -icanon -isig -iexten -ixon raw");
 
             // Also set the terminal to non-blocking mode
-            const flags = std.posix.fcntl(self.stdin_fd, std.posix.F.GETFL, 0) catch |err| {
-                return err;
-            };
-
-            const O_NONBLOCK: u32 = 0x00000004; // macOS value
-            _ = std.posix.fcntl(self.stdin_fd, std.posix.F.SETFL, flags | O_NONBLOCK) catch |err| {
-                return err;
-            };
+            try setNonBlocking(self.stdin_fd);
 
             // Enable Kitty keyboard protocol
             if (self.capabilities.kitty_keyboard) {
@@ -226,20 +272,20 @@ pub const Terminal = struct {
                             windows_console.ENABLE_INSERT_MODE);
 
                     const vt_input_mode = sanitized_in_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT;
-                    if (std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, vt_input_mode) == 0) {
-                        if (std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, sanitized_in_mode) == 0) {
+                    if (!windows_console.SetConsoleMode(self.stdin_fd, vt_input_mode).toBool()) {
+                        if (!windows_console.SetConsoleMode(self.stdin_fd, sanitized_in_mode).toBool()) {
                             return error.SetConsoleModeFailure;
                         }
                     }
 
                     // Try to enable VT processing but gracefully fall back to console attributes when unavailable.
                     const base_out_mode: u32 = info.out_mode | windows_console.ENABLE_PROCESSED_OUTPUT | windows_console.ENABLE_WRAP_AT_EOL_OUTPUT;
-                    if (std.os.windows.kernel32.SetConsoleMode(self.stdout_fd, base_out_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) {
+                    if (windows_console.SetConsoleMode(self.stdout_fd, base_out_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING).toBool()) {
                         self.windows_vt_enabled = true;
                     } else {
                         self.windows_vt_enabled = false;
-                        if (std.os.windows.kernel32.SetConsoleMode(self.stdout_fd, base_out_mode) == 0) {
-                            _ = std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, info.in_mode);
+                        if (!windows_console.SetConsoleMode(self.stdout_fd, base_out_mode).toBool()) {
+                            _ = windows_console.SetConsoleMode(self.stdin_fd, info.in_mode);
                             return error.SetConsoleModeFailure;
                         }
                         self.capabilities = downgradeWindowsCapabilities(self.capabilities);
@@ -311,23 +357,7 @@ pub const Terminal = struct {
 
         // Set stdin to non-blocking mode for non-macOS Unix
         if (@import("builtin").os.tag != .windows and @import("builtin").os.tag != .macos) {
-            // Get current flags
-            const flags = std.posix.fcntl(self.stdin_fd, std.posix.F.GETFL, 0) catch |err| {
-                // Silently handle error - don't pollute stdout
-                return err;
-            };
-
-            // Set non-blocking flag - use platform-specific constant
-            const O_NONBLOCK: u32 = switch (@import("builtin").os.tag) {
-                .linux => 0o4000, // Linux O_NONBLOCK value
-                .freebsd, .netbsd => 0x4, // BSD O_NONBLOCK value
-                else => 0x00000004, // Default to macOS value
-            };
-
-            _ = std.posix.fcntl(self.stdin_fd, std.posix.F.SETFL, flags | O_NONBLOCK) catch |err| {
-                // Silently handle error - don't pollute stdout
-                return err;
-            };
+            try setNonBlocking(self.stdin_fd);
         }
 
         // Try to enable the Kitty keyboard protocol for better key handling
@@ -350,8 +380,7 @@ pub const Terminal = struct {
         // For macOS, ensure terminal output is flushed and use a reliable method to restore
         if (@import("builtin").os.tag == .macos) {
             // Flush any pending output
-            var stdout = std.fs.File.stdout();
-            try stdout.writeAll("\r\n"); // Add newline to flush
+            try compat.stdoutWriteAll("\r\n"); // Add newline to flush
 
             // Restore original terminal settings if we have them
             switch (self.original_termios) {
@@ -369,7 +398,7 @@ pub const Terminal = struct {
             _ = darwin.system("stty sane");
 
             // Small delay to ensure terminal state is fully restored
-            std.Thread.sleep(std.time.ns_per_ms * 20);
+            compat.sleepMillis(20);
 
             // Explicitly reset formatting
             try self.resetFormatting();
@@ -384,11 +413,11 @@ pub const Terminal = struct {
             switch (self.original_termios) {
                 .windows => |info| {
                     // Restore original console modes
-                    if (std.os.windows.kernel32.SetConsoleMode(self.stdin_fd, info.in_mode) == 0) {
+                    if (!windows_console.SetConsoleMode(self.stdin_fd, info.in_mode).toBool()) {
                         return error.SetConsoleModeFailure;
                     }
 
-                    if (std.os.windows.kernel32.SetConsoleMode(self.stdout_fd, info.out_mode) == 0) {
+                    if (!windows_console.SetConsoleMode(self.stdout_fd, info.out_mode).toBool()) {
                         return error.SetConsoleModeFailure;
                     }
 
@@ -422,9 +451,9 @@ pub const Terminal = struct {
 
         if (is_windows) {
             // Windows implementation
-            var console_screen_buffer_info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+            var console_screen_buffer_info: windows_console.ScreenBufferInfo = undefined;
 
-            if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(self.stdout_fd, &console_screen_buffer_info) != 0) {
+            if (windows_console.GetConsoleScreenBufferInfo(self.stdout_fd, &console_screen_buffer_info).toBool()) {
                 self.width = @intCast(console_screen_buffer_info.srWindow.Right - console_screen_buffer_info.srWindow.Left + 1);
                 self.height = @intCast(console_screen_buffer_info.srWindow.Bottom - console_screen_buffer_info.srWindow.Top + 1);
                 return;
@@ -471,14 +500,16 @@ pub const Terminal = struct {
         }
 
         // Fallback: try to get size from environment variables
-        var env = try std.process.getEnvMap(self.allocator);
-        defer env.deinit();
+        const cols_owned = try compat.getEnv(self.allocator, "COLUMNS");
+        defer if (cols_owned) |cols| self.allocator.free(cols);
+        const lines_owned = try compat.getEnv(self.allocator, "LINES");
+        defer if (lines_owned) |lines| self.allocator.free(lines);
 
-        if (env.get("COLUMNS")) |cols| {
+        if (cols_owned) |cols| {
             self.width = std.fmt.parseInt(u16, cols, 10) catch 80;
         }
 
-        if (env.get("LINES")) |lines| {
+        if (lines_owned) |lines| {
             self.height = std.fmt.parseInt(u16, lines, 10) catch 24;
         }
 
@@ -492,9 +523,8 @@ pub const Terminal = struct {
         if (self.is_mouse_enabled) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
 
-        var stdout = std.fs.File.stdout();
         // Enable normal tracking, motion tracking, and SGR encoding
-        try stdout.writeAll("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        try compat.stdoutWriteAll("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         self.is_mouse_enabled = true;
     }
 
@@ -506,8 +536,7 @@ pub const Terminal = struct {
             return;
         }
 
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+        try compat.stdoutWriteAll("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
         self.is_mouse_enabled = false;
     }
 
@@ -516,8 +545,7 @@ pub const Terminal = struct {
         if (self.is_sync_output or !self.capabilities.synchronized_output) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
 
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?2026h");
+        try compat.stdoutWriteAll("\x1b[?2026h");
         self.is_sync_output = true;
     }
 
@@ -529,8 +557,7 @@ pub const Terminal = struct {
             return;
         }
 
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?2026l");
+        try compat.stdoutWriteAll("\x1b[?2026l");
         self.is_sync_output = false;
     }
 
@@ -538,8 +565,7 @@ pub const Terminal = struct {
     pub fn enableBracketedPaste(self: *Terminal) !void {
         if (self.is_bracketed_paste or !self.capabilities.bracketed_paste) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?2004h");
+        try compat.stdoutWriteAll("\x1b[?2004h");
         self.is_bracketed_paste = true;
     }
 
@@ -550,8 +576,7 @@ pub const Terminal = struct {
             self.is_bracketed_paste = false;
             return;
         }
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?2004l");
+        try compat.stdoutWriteAll("\x1b[?2004l");
         self.is_bracketed_paste = false;
     }
 
@@ -559,8 +584,7 @@ pub const Terminal = struct {
     pub fn enterAlternateScreen(self: *Terminal) !void {
         if (self.is_alt_screen) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1049h");
+        try compat.stdoutWriteAll("\x1b[?1049h");
         self.is_alt_screen = true;
     }
 
@@ -571,8 +595,7 @@ pub const Terminal = struct {
             self.is_alt_screen = false;
             return;
         }
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[?1049l");
+        try compat.stdoutWriteAll("\x1b[?1049l");
         self.is_alt_screen = false;
     }
 
@@ -583,8 +606,7 @@ pub const Terminal = struct {
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
             windowsSetCursorVisibility(self.stdout_fd, false);
         } else {
-            var stdout = std.fs.File.stdout();
-            try stdout.writeAll("\x1b[?25l");
+            try compat.stdoutWriteAll("\x1b[?25l");
         }
         self.is_cursor_visible = false;
     }
@@ -596,8 +618,7 @@ pub const Terminal = struct {
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
             windowsSetCursorVisibility(self.stdout_fd, true);
         } else {
-            var stdout = std.fs.File.stdout();
-            try stdout.writeAll("\x1b[?25h");
+            try compat.stdoutWriteAll("\x1b[?25h");
         }
         self.is_cursor_visible = true;
     }
@@ -608,9 +629,8 @@ pub const Terminal = struct {
             windowsClearConsole(self.stdout_fd);
             return;
         }
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[2J"); // Clear entire screen
-        try stdout.writeAll("\x1b[H"); // Move cursor to top-left corner
+        try compat.stdoutWriteAll("\x1b[2J"); // Clear entire screen
+        try compat.stdoutWriteAll("\x1b[H"); // Move cursor to top-left corner
     }
 
     /// Move cursor to specified position
@@ -619,10 +639,9 @@ pub const Terminal = struct {
             windowsMoveCursor(self.stdout_fd, x, y);
             return;
         }
-        var stdout = std.fs.File.stdout();
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 });
-        try stdout.writeAll(seq);
+        try compat.stdoutWriteAll(seq);
     }
 
     /// Set text color
@@ -631,10 +650,9 @@ pub const Terminal = struct {
             windowsApplyColor(self.stdout_fd, color, false);
             return;
         }
-        var stdout = std.fs.File.stdout();
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{color});
-        try stdout.writeAll(seq);
+        try compat.stdoutWriteAll(seq);
     }
 
     /// Set background color
@@ -643,10 +661,9 @@ pub const Terminal = struct {
             windowsApplyColor(self.stdout_fd, color, true);
             return;
         }
-        var stdout = std.fs.File.stdout();
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{color});
-        try stdout.writeAll(seq);
+        try compat.stdoutWriteAll(seq);
     }
 
     /// Reset text formatting
@@ -655,8 +672,7 @@ pub const Terminal = struct {
             windowsResetFormatting(self.stdout_fd);
             return;
         }
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll("\x1b[0m");
+        try compat.stdoutWriteAll("\x1b[0m");
     }
 
     /// Set text style (bold, italic, underline)
@@ -665,18 +681,16 @@ pub const Terminal = struct {
             windowsSetStyleFallback(self.stdout_fd, bold);
             return;
         }
-        var stdout = std.fs.File.stdout();
-
         if (bold) {
-            try stdout.writeAll("\x1b[1m");
+            try compat.stdoutWriteAll("\x1b[1m");
         }
 
         if (italic and self.capabilities.italic) {
-            try stdout.writeAll("\x1b[3m");
+            try compat.stdoutWriteAll("\x1b[3m");
         }
 
         if (underline and self.capabilities.underline) {
-            try stdout.writeAll("\x1b[4m");
+            try compat.stdoutWriteAll("\x1b[4m");
         }
     }
 
@@ -696,39 +710,33 @@ pub const Terminal = struct {
             windowsApplyColor(self.stdout_fd, approximateAnsiFromRgb(r, g, b), !is_foreground);
             return;
         }
-        var stdout = std.fs.File.stdout();
         const code: u8 = if (is_foreground) 38 else 48;
 
         var buf: [48]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};2;{d};{d};{d}m", .{ code, r, g, b });
-        try stdout.writeAll(seq);
+        try compat.stdoutWriteAll(seq);
     }
 
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
         if (!self.capabilities.kitty_keyboard) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        var stdout = std.fs.File.stdout();
-
         // Enable Kitty keyboard protocol (if the terminal supports it)
-        try stdout.writeAll("\x1b[>1u");
+        try compat.stdoutWriteAll("\x1b[>1u");
     }
 
     /// Disable Kitty keyboard protocol
     pub fn disableKittyKeyboardProtocol(self: *Terminal) !void {
         if (!self.capabilities.kitty_keyboard) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        var stdout = std.fs.File.stdout();
-
         // Disable Kitty keyboard protocol
-        try stdout.writeAll("\x1b[<1u");
+        try compat.stdoutWriteAll("\x1b[<1u");
     }
 
     /// Handle Unicode output
     pub fn writeUtf8(self: *Terminal, str: []const u8) !void {
         _ = self; // Unused parameter
-        var stdout = std.fs.File.stdout();
-        try stdout.writeAll(str);
+        try compat.stdoutWriteAll(str);
     }
 
     /// Consume a pending SIGWINCH and refresh cached size.
@@ -742,26 +750,26 @@ pub const Terminal = struct {
 fn ensureWindowsUnicodeSupport() void {
     if (builtin.os.tag != .windows) return;
     const CP_UTF8: c_uint = 65001;
-    _ = std.os.windows.kernel32.SetConsoleOutputCP(CP_UTF8);
+    _ = windows_console.SetConsoleOutputCP(CP_UTF8);
 }
 
 fn enableWindowsVirtualTerminal(handle: std.posix.fd_t) bool {
     if (builtin.os.tag != .windows) return true;
-    var mode: u32 = 0;
-    if (std.os.windows.kernel32.GetConsoleMode(handle, @ptrCast(&mode)) == 0) return false;
+    var mode: std.os.windows.DWORD = 0;
+    if (!windows_console.GetConsoleMode(handle, &mode).toBool()) return false;
     if ((mode & windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) return true;
 
     const desired = mode |
         windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING |
         windows_console.ENABLE_PROCESSED_OUTPUT |
         windows_console.ENABLE_WRAP_AT_EOL_OUTPUT;
-    return std.os.windows.kernel32.SetConsoleMode(handle, desired) != 0;
+    return windows_console.SetConsoleMode(handle, desired).toBool();
 }
 
 fn detectWindowsVirtualTerminal(handle: std.posix.fd_t) bool {
     if (builtin.os.tag != .windows) return true;
-    var mode: u32 = 0;
-    if (std.os.windows.kernel32.GetConsoleMode(handle, @ptrCast(&mode)) == 0) return false;
+    var mode: std.os.windows.DWORD = 0;
+    if (!windows_console.GetConsoleMode(handle, &mode).toBool()) return false;
     return (mode & windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
 }
 
@@ -779,19 +787,19 @@ fn downgradeWindowsCapabilities(flags: capabilities.CapabilityFlags) capabilitie
 
 fn windowsClearConsole(handle: std.posix.fd_t) void {
     if (builtin.os.tag != .windows) return;
-    var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(handle, &info) == 0) return;
+    var info: windows_console.ScreenBufferInfo = undefined;
+    if (!windows_console.GetConsoleScreenBufferInfo(handle, &info).toBool()) return;
 
     const cells: u32 = @intCast(@as(i32, info.dwSize.X) * @as(i32, info.dwSize.Y));
     var written: u32 = 0;
-    _ = std.os.windows.kernel32.FillConsoleOutputCharacterW(handle, ' ', cells, info.dwCursorPosition, &written);
-    _ = std.os.windows.kernel32.FillConsoleOutputAttribute(handle, info.wAttributes, cells, info.dwCursorPosition, &written);
-    _ = std.os.windows.kernel32.SetConsoleCursorPosition(handle, .{ .X = 0, .Y = 0 });
+    _ = windows_console.FillConsoleOutputCharacterW(handle, @as(std.os.windows.WCHAR, ' '), cells, info.dwCursorPosition, &written);
+    _ = windows_console.FillConsoleOutputAttribute(handle, info.wAttributes, cells, info.dwCursorPosition, &written);
+    _ = windows_console.SetConsoleCursorPosition(handle, .{ .X = 0, .Y = 0 });
 }
 
 fn windowsMoveCursor(handle: std.posix.fd_t, x: u16, y: u16) void {
     if (builtin.os.tag != .windows) return;
-    _ = std.os.windows.kernel32.SetConsoleCursorPosition(handle, .{
+    _ = windows_console.SetConsoleCursorPosition(handle, .{
         .X = @intCast(x),
         .Y = @intCast(y),
     });
@@ -800,27 +808,27 @@ fn windowsMoveCursor(handle: std.posix.fd_t, x: u16, y: u16) void {
 fn windowsSetCursorVisibility(handle: std.posix.fd_t, visible: bool) void {
     if (builtin.os.tag != .windows) return;
     var cursor_info: windows_cursor.Info = undefined;
-    if (windows_cursor.GetConsoleCursorInfo(handle, &cursor_info) == 0) return;
-    cursor_info.bVisible = if (visible) 1 else 0;
+    if (!windows_cursor.GetConsoleCursorInfo(handle, &cursor_info).toBool()) return;
+    cursor_info.bVisible = std.os.windows.BOOL.fromBool(visible);
     _ = windows_cursor.SetConsoleCursorInfo(handle, &cursor_info);
 }
 
 fn windowsResetFormatting(handle: std.posix.fd_t) void {
     if (builtin.os.tag != .windows) return;
     const default_attributes: u16 = 0x0007; // Gray on black
-    _ = std.os.windows.kernel32.SetConsoleTextAttribute(handle, default_attributes);
+    _ = windows_console.SetConsoleTextAttribute(handle, default_attributes);
 }
 
 fn windowsApplyColor(handle: std.posix.fd_t, color: u8, is_bg: bool) void {
     if (builtin.os.tag != .windows) return;
-    var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(handle, &info) == 0) return;
+    var info: windows_console.ScreenBufferInfo = undefined;
+    if (!windows_console.GetConsoleScreenBufferInfo(handle, &info).toBool()) return;
     var attrs = info.wAttributes;
 
     const mask: u16 = if (is_bg) 0x00F0 else 0x000F;
     attrs &= ~mask;
     attrs |= windowsColorAttribute(color, is_bg);
-    _ = std.os.windows.kernel32.SetConsoleTextAttribute(handle, attrs);
+    _ = windows_console.SetConsoleTextAttribute(handle, attrs);
 }
 
 fn windowsColorAttribute(color: u8, is_bg: bool) u16 {
@@ -842,15 +850,15 @@ fn windowsColorAttribute(color: u8, is_bg: bool) u16 {
 
 fn windowsSetStyleFallback(handle: std.posix.fd_t, bold: bool) void {
     if (builtin.os.tag != .windows) return;
-    var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(handle, &info) == 0) return;
+    var info: windows_console.ScreenBufferInfo = undefined;
+    if (!windows_console.GetConsoleScreenBufferInfo(handle, &info).toBool()) return;
     var attrs = info.wAttributes;
     if (bold) {
         attrs |= 0x08 | 0x80; // foreground/background intensity
     } else {
         attrs &= ~@as(u16, 0x88);
     }
-    _ = std.os.windows.kernel32.SetConsoleTextAttribute(handle, attrs);
+    _ = windows_console.SetConsoleTextAttribute(handle, attrs);
 }
 
 fn approximateAnsiFromRgb(r: u8, g: u8, b: u8) u8 {
@@ -876,6 +884,22 @@ fn approximateAnsiFromRgb(r: u8, g: u8, b: u8) u8 {
 
 // Export the init function directly
 pub const init = Terminal.init;
+
+/// Initialize a terminal for an interactive example.
+///
+/// Returns `null` when launched without a real TTY so public `zig build`
+/// example steps can stay automation-safe while still launching normally from
+/// an interactive terminal.
+pub fn initInteractive(allocator: std.mem.Allocator, example_name: []const u8) anyerror!?Terminal {
+    return Terminal.init(allocator) catch |err| {
+        const any_err: anyerror = err;
+        if (any_err == error.NotATerminal) {
+            std.debug.print("{s}: interactive terminal required; run this command from a real terminal or launch the installed binary in zig-out/bin.\n", .{example_name});
+            return null;
+        }
+        return any_err;
+    };
+}
 
 test "terminal initialization" {
     const allocator = std.testing.allocator;

@@ -49,6 +49,9 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
 
+    const smoke_step = b.step("smoke", "Compile all examples and benchmarks without running them");
+    smoke_step.dependOn(&lib.step);
+
     // Add terminal test example
     const terminal_test_module = b.createModule(.{
         .root_source_file = b.path("examples/terminal_test.zig"),
@@ -64,12 +67,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(terminal_test);
+    smoke_step.dependOn(&terminal_test.step);
 
-    // Create a run step for the terminal test
     const run_terminal_test = b.addRunArtifact(terminal_test);
-    run_terminal_test.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the terminal test
     const terminal_test_step = b.step("terminal-test", "Run the terminal test example");
     terminal_test_step.dependOn(&run_terminal_test.step);
 
@@ -88,12 +88,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(input_test);
+    smoke_step.dependOn(&input_test.step);
 
-    // Create a run step for the input test
     const run_input_test = b.addRunArtifact(input_test);
-    run_input_test.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the input test
     const input_test_step = b.step("input-test", "Run the input handling test example");
     input_test_step.dependOn(&run_input_test.step);
 
@@ -112,12 +109,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(render_test);
+    smoke_step.dependOn(&render_test.step);
 
-    // Create a run step for the render test
     const run_render_test = b.addRunArtifact(render_test);
-    run_render_test.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the render test
     const render_test_step = b.step("render-test", "Run the rendering test example");
     render_test_step.dependOn(&run_render_test.step);
 
@@ -136,12 +130,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(layout_test);
+    smoke_step.dependOn(&layout_test.step);
 
-    // Create a run step for the layout test
     const run_layout_test = b.addRunArtifact(layout_test);
-    run_layout_test.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the layout test
     const layout_test_step = b.step("layout-test", "Run the layout system test example");
     layout_test_step.dependOn(&run_layout_test.step);
 
@@ -160,12 +151,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(demo);
+    smoke_step.dependOn(&demo.step);
 
-    // Create a run step for the demo
     const run_demo = b.addRunArtifact(demo);
-    run_demo.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the demo
     const demo_step = b.step("demo", "Run the comprehensive demo example");
     demo_step.dependOn(&run_demo.step);
 
@@ -184,12 +172,9 @@ pub fn build(b: *std.Build) void {
 
     // Install the example binary
     b.installArtifact(widget_test);
+    smoke_step.dependOn(&widget_test.step);
 
-    // Create a run step for the widget test
     const run_widget_test = b.addRunArtifact(widget_test);
-    run_widget_test.step.dependOn(b.getInstallStep());
-
-    // Add a separate step to run the widget test
     const widget_test_step = b.step("widget-test", "Run the widget test example");
     widget_test_step.dependOn(&run_widget_test.step);
 
@@ -207,6 +192,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(hello_exe);
+    smoke_step.dependOn(&hello_exe.step);
 
     const run_hello = b.addRunArtifact(hello_exe);
     const hello_step = b.step("hello-world", "Run the 5-line hello world example");
@@ -245,12 +231,11 @@ pub fn build(b: *std.Build) void {
 
         // Install the example binary
         b.installArtifact(exe);
+        smoke_step.dependOn(&exe.step);
 
-        // Create a run step for the example
         const run_exe = b.addRunArtifact(exe);
-        run_exe.step.dependOn(b.getInstallStep());
 
-        // Add a separate step to run the example
+        // Add a separate step to run the interactive example.
         const exe_step = b.step(example.step_name, example.description);
         exe_step.dependOn(&run_exe.step);
     }
@@ -265,6 +250,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "file_manager", .description = "Render a file manager snapshot", .path = "examples/realworld/file_manager.zig", .step_name = "file-manager" },
         .{ .name = "text_editor", .description = "Render a text editor snapshot", .path = "examples/realworld/text_editor.zig", .step_name = "text-editor" },
         .{ .name = "dashboard_demo", .description = "Render a compact dashboard demo", .path = "examples/realworld/dashboard_demo.zig", .step_name = "dashboard-demo" },
+        .{ .name = "widget_gallery", .description = "Render a deterministic widget gallery snapshot", .path = "examples/realworld/widget_gallery.zig", .step_name = "widget-gallery" },
+        .{ .name = "widget_gallery_extended", .description = "Render an extended deterministic widget gallery snapshot", .path = "examples/realworld/widget_gallery_extended.zig", .step_name = "widget-gallery-extended" },
     };
 
     for (real_examples) |example| {
@@ -281,6 +268,7 @@ pub fn build(b: *std.Build) void {
         });
 
         b.installArtifact(exe);
+        smoke_step.dependOn(&exe.step);
 
         const run_exe = b.addRunArtifact(exe);
         run_exe.step.dependOn(b.getInstallStep());
@@ -303,6 +291,7 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(render_bench);
+    smoke_step.dependOn(&render_bench.step);
 
     const run_render_bench = b.addRunArtifact(render_bench);
     const render_bench_step = b.step("render-bench", "Run rendering micro-benchmark");
@@ -321,8 +310,14 @@ pub fn build(b: *std.Build) void {
         .root_module = bench_suite_module,
     });
     b.installArtifact(bench_suite);
+    smoke_step.dependOn(&bench_suite.step);
 
     const run_bench_suite = b.addRunArtifact(bench_suite);
     const bench_step = b.step("bench", "Run benchmark suite");
     bench_step.dependOn(&run_bench_suite.step);
+
+    const quality_step = b.step("quality", "Run the public quality gate: smoke, tests, and benchmarks");
+    quality_step.dependOn(smoke_step);
+    quality_step.dependOn(test_step);
+    quality_step.dependOn(bench_step);
 }

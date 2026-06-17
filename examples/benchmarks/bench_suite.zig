@@ -8,6 +8,11 @@ const widget = zit.widget;
 const layout = zit.layout;
 const input = zit.input;
 
+fn nowNanos() i96 {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    return std.Io.Clock.awake.now(io).toNanoseconds();
+}
+
 const CountingWriter = struct {
     bytes: usize = 0,
 
@@ -18,7 +23,7 @@ const CountingWriter = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -65,7 +70,7 @@ fn benchmarkRenderThroughput(allocator: std.mem.Allocator) !RenderBench {
     var sink = CountingWriter{};
     const iterations: usize = 400;
 
-    var timer = try std.time.Timer.start();
+    const start_ns = nowNanos();
     for (0..iterations) |_| {
         renderer.fillRect(0, 0, 120, 40, ' ', render.Color.named(.white), render.Color.named(.black), render.Style{});
         renderer.drawStyledBox(1, 1, 80, 10, render.BoxStyle{
@@ -78,7 +83,7 @@ fn benchmarkRenderThroughput(allocator: std.mem.Allocator) !RenderBench {
         try renderer.renderToWriter(&sink);
     }
 
-    const total_ns = timer.read();
+    const total_ns: u64 = @intCast(nowNanos() - start_ns);
     const fps = (@as(f64, @floatFromInt(iterations)) * @as(f64, @floatFromInt(std.time.ns_per_s))) /
         @as(f64, @floatFromInt(total_ns));
 
@@ -130,7 +135,7 @@ fn benchmarkTableScroll(allocator: std.mem.Allocator) !TableBench {
     var sink = CountingWriter{};
 
     const iterations: usize = 400;
-    var timer = try std.time.Timer.start();
+    const start_ns = nowNanos();
     for (0..iterations) |iter| {
         const start = if (max_start == 0) 0 else (iter * 32) % max_start;
         table.first_visible_row = start;
@@ -139,7 +144,7 @@ fn benchmarkTableScroll(allocator: std.mem.Allocator) !TableBench {
         try renderer.renderToWriter(&sink);
     }
 
-    const total_ns = timer.read();
+    const total_ns: u64 = @intCast(nowNanos() - start_ns);
     return .{
         .iterations = iterations,
         .total_ns = total_ns,
@@ -163,12 +168,12 @@ fn benchmarkInputLatency() !InputBench {
     };
 
     const iterations: usize = 50_000;
-    var timer = try std.time.Timer.start();
+    const start_ns = nowNanos();
     for (0..iterations) |idx| {
         const seq = sequences[idx % sequences.len];
         _ = try input.decodeEventFromBytes(seq);
     }
-    const total_ns = timer.read();
+    const total_ns: u64 = @intCast(nowNanos() - start_ns);
     return .{
         .decoded = iterations,
         .avg_ns = total_ns / iterations,
@@ -188,7 +193,7 @@ fn benchmarkMemoryUsage(allocator: std.mem.Allocator) !MemoryBench {
     var plain_table = try widget.Table.init(arena_plain.allocator());
     defer plain_table.deinit();
     try seedTable(plain_table, row_count);
-    const plain_bytes = arena_plain.state.end_index;
+    const plain_bytes = estimateTablePayloadBytes(plain_table);
 
     var arena_intern = std.heap.ArenaAllocator.init(allocator);
     defer arena_intern.deinit();
@@ -196,12 +201,24 @@ fn benchmarkMemoryUsage(allocator: std.mem.Allocator) !MemoryBench {
     defer intern_table.deinit();
     try intern_table.enableStringInterning();
     try seedTable(intern_table, row_count);
-    const intern_bytes = arena_intern.state.end_index;
+    const intern_bytes = if (intern_table.stringInternStats()) |stats|
+        stats.pooled_bytes
+    else
+        estimateTablePayloadBytes(intern_table);
 
     return .{
         .plain_bytes = plain_bytes,
         .interned_bytes = intern_bytes,
     };
+}
+
+fn estimateTablePayloadBytes(table: *widget.Table) usize {
+    var total: usize = 0;
+    for (table.columns.items) |column| total += column.header.len;
+    for (table.rows.items) |row| {
+        for (row.items) |cell| total += cell.text.len;
+    }
+    return total;
 }
 
 fn seedTable(table: *widget.Table, rows: usize) !void {

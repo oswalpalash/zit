@@ -10,7 +10,6 @@ const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
 
-
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
 const MenuAction = enum {
@@ -338,14 +337,14 @@ fn handleAutocompleteSelection(choice: []const u8) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 128);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "widget-showcase")) orelse return;
     defer term.deinit() catch {};
 
     var renderer = try render.Renderer.init(memory_manager.getArenaAllocator(), term.width, term.height);

@@ -579,10 +579,9 @@ pub fn loadFromConfig(config: []const u8, fallback: Theme) !Theme {
 
 /// Load a theme from a config file on disk, falling back when the file is missing.
 pub fn loadFromFile(allocator: std.mem.Allocator, path: []const u8, fallback: Theme) !Theme {
-    const file = std.fs.cwd().openFile(path, .{}) catch return fallback;
-    defer file.close();
-
-    const contents = file.readToEndAlloc(allocator, 16 * 1024) catch return fallback;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    const contents = cwd.readFileAlloc(io, path, allocator, .limited(16 * 1024)) catch return fallback;
     defer allocator.free(contents);
 
     return loadFromConfig(contents, fallback) catch fallback;

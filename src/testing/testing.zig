@@ -3,9 +3,18 @@ const render = @import("../render/render.zig");
 const layout = @import("../layout/layout.zig");
 const widget = @import("../widget/widget.zig");
 const input = @import("../input/input.zig");
+const compat = @import("../compat.zig");
 
 /// Errors emitted by snapshot helpers.
-pub const SnapshotError = error{GoldenMissing};
+pub const SnapshotError = error{
+    GoldenMissing,
+    InvalidSnapshotUtf8,
+    InvalidSnapshotControlCode,
+    InvalidSnapshotWidth,
+    InvalidSnapshotHeight,
+    MissingSnapshotTrailingNewline,
+    SnapshotTextMissing,
+};
 
 /// Options for comparing a snapshot against a golden file.
 pub const SnapshotOptions = struct {
@@ -21,30 +30,28 @@ fn shouldUpdateGolden(opts: SnapshotOptions) bool {
     if (opts.update) return true;
     if (opts.env_var) |name| {
         const allocator = std.heap.page_allocator;
-        const value = std.process.getEnvVarOwned(allocator, name) catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => return false,
-            else => return false,
-        };
-        defer allocator.free(value);
+        const value = compat.getEnv(allocator, name) catch return false;
+        const actual = value orelse return false;
+        defer allocator.free(actual);
         return true;
     }
     return false;
 }
 
 fn writeGolden(path: []const u8, contents: []const u8) !void {
-    const cwd = std.fs.cwd();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const cwd = std.Io.Dir.cwd();
     if (std.fs.path.dirname(path)) |dir| {
-        try cwd.makePath(dir);
+        try cwd.createDirPath(io, dir);
     }
 
-    var file = try cwd.createFile(path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(contents);
+    try cwd.writeFile(io, .{ .sub_path = path, .data = contents, .flags = .{ .truncate = true } });
 }
 
 fn readGolden(allocator: std.mem.Allocator, golden_path: []const u8) !?[]u8 {
-    const cwd = std.fs.cwd();
-    return cwd.readFileAlloc(allocator, golden_path, 4 * 1024 * 1024) catch |err| switch (err) {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    return cwd.readFileAlloc(io, golden_path, allocator, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
@@ -190,6 +197,44 @@ pub const Snapshot = struct {
         try std.testing.expectEqualStrings(expected, self.text());
     }
 
+    /// Assert that a snapshot contains expected text.
+    pub fn expectContains(self: Snapshot, needle: []const u8) !void {
+        if (std.mem.indexOf(u8, self.text(), needle) == null) {
+            std.debug.print("Snapshot did not contain expected text: {s}\n", .{needle});
+            return SnapshotError.SnapshotTextMissing;
+        }
+    }
+
+    /// Assert that a text snapshot is deterministic renderer output.
+    ///
+    /// The invariant intentionally checks visible-cell shape rather than byte width:
+    /// UTF-8 glyphs may use multiple bytes, but each rendered cell should contribute
+    /// exactly one codepoint and each row should end with a newline.
+    pub fn expectWellFormed(self: Snapshot) !void {
+        const text_value = self.text();
+        if (!std.unicode.utf8ValidateSlice(text_value)) return SnapshotError.InvalidSnapshotUtf8;
+
+        var rows = std.mem.splitScalar(u8, text_value, '\n');
+        var row_count: usize = 0;
+        while (rows.next()) |row| {
+            if (row.len == 0 and row_count == self.height) break;
+            if (row_count >= self.height) return SnapshotError.InvalidSnapshotHeight;
+
+            var visible_cells: usize = 0;
+            var utf8 = (std.unicode.Utf8View.init(row) catch return SnapshotError.InvalidSnapshotUtf8).iterator();
+            while (utf8.nextCodepoint()) |cp| {
+                if (cp < 0x20 or cp == 0x7f) return SnapshotError.InvalidSnapshotControlCode;
+                visible_cells += 1;
+            }
+
+            if (visible_cells != self.width) return SnapshotError.InvalidSnapshotWidth;
+            row_count += 1;
+        }
+
+        if (row_count != self.height) return SnapshotError.InvalidSnapshotHeight;
+        if (text_value.len > 0 and text_value[text_value.len - 1] != '\n') return SnapshotError.MissingSnapshotTrailingNewline;
+    }
+
     /// Assert that this snapshot matches a golden file.
     ///
     /// Parameters:
@@ -243,9 +288,9 @@ pub const MockTerminal = struct {
     renderer: render.Renderer,
     allocator: std.mem.Allocator,
     size: layout.Size,
-    input_queue: std.ArrayListUnmanaged(input.Event) = .{},
+    input_queue: std.ArrayListUnmanaged(input.Event) = .empty,
     input_cursor: usize = 0,
-    output_log: std.ArrayListUnmanaged(u8) = .{},
+    output_log: std.ArrayListUnmanaged(u8) = .empty,
 
     /// Initialize a deterministic renderer for tests.
     ///
@@ -340,8 +385,10 @@ pub const MockTerminal = struct {
     /// Capture the renderer's ANSI output for the current back buffer.
     pub fn captureOutput(self: *MockTerminal) ![]const u8 {
         self.output_log.clearRetainingCapacity();
-        const writer = self.output_log.writer(self.allocator);
-        try self.renderer.renderToWriter(writer);
+        var writer = std.Io.Writer.Allocating.init(self.allocator);
+        defer writer.deinit();
+        try self.renderer.renderToWriter(&writer.writer);
+        try self.output_log.appendSlice(self.allocator, writer.written());
         return self.output_log.items;
     }
 };
@@ -501,6 +548,7 @@ test "mock terminal captures widget output" {
 
     var snap = try renderWidget(alloc, &btn.widget, layout.Size.init(12, 3));
     defer snap.deinit(alloc);
+    try snap.expectWellFormed();
 
     try snap.expectEqual(
         \\╭──────────╮
@@ -521,6 +569,7 @@ test "snapshot helper respects text styling choices" {
 
     var snap = try renderWidget(alloc, &label.widget, layout.Size.init(12, 1));
     defer snap.deinit(alloc);
+    try snap.expectWellFormed();
 
     try snap.expectEqual("Zit Rocks   \n");
 }
@@ -533,7 +582,26 @@ test "renderWidget tolerates zero-sized targets" {
 
     var snap = try renderWidget(alloc, &label.widget, layout.Size.init(0, 0));
     defer snap.deinit(alloc);
+    try snap.expectWellFormed();
     try std.testing.expectEqual(@as(usize, 0), snap.text().len);
+}
+
+test "snapshot well formed check rejects malformed output" {
+    var invalid_width = Snapshot{
+        .buffer = @constCast("ab\n"),
+        .len = 3,
+        .width = 3,
+        .height = 1,
+    };
+    try std.testing.expectError(SnapshotError.InvalidSnapshotWidth, invalid_width.expectWellFormed());
+
+    var control_code = Snapshot{
+        .buffer = @constCast("a\x1b\n"),
+        .len = 3,
+        .width = 2,
+        .height = 1,
+    };
+    try std.testing.expectError(error.InvalidSnapshotControlCode, control_code.expectWellFormed());
 }
 
 test "snapshot comparison uses golden files" {
@@ -546,6 +614,197 @@ test "snapshot comparison uses golden files" {
     defer snap.deinit(alloc);
 
     try snap.expectGolden(alloc, "src/testing/golden/button_basic.snap", .{});
+}
+
+test "real-world htop snapshot remains well formed" {
+    const alloc = std.testing.allocator;
+    var mock = try MockTerminal.init(alloc, 80, 24);
+    defer mock.deinit();
+
+    var cpu = try widget.Gauge.init(alloc);
+    defer cpu.deinit();
+    cpu.setValue(72);
+    try cpu.setLabel("CPU 72%");
+    try cpu.widget.layout(layout.Rect.init(1, 1, 30, 3));
+    try cpu.widget.draw(&mock.renderer);
+
+    var mem = try widget.Gauge.init(alloc);
+    defer mem.deinit();
+    mem.setValue(48);
+    try mem.setLabel("MEM 48%");
+    mem.fill = render.Color.named(.magenta);
+    try mem.widget.layout(layout.Rect.init(35, 1, 30, 3));
+    try mem.widget.draw(&mock.renderer);
+
+    var table = try widget.Table.init(alloc);
+    defer table.deinit();
+    try table.addColumn("PID", 6, false);
+    try table.addColumn("USER", 8, false);
+    try table.addColumn("CPU%", 6, false);
+    try table.addColumn("MEM%", 6, false);
+    try table.addColumn("COMMAND", 30, true);
+    const rows = [_][5][]const u8{
+        .{ "1203", "root", "23.1", "12.4", "zig build test --summary" },
+        .{ "992", "palash", "12.3", "08.1", "tailscaled" },
+        .{ "4431", "palash", "07.9", "02.0", "zit demo render" },
+    };
+    for (rows) |row| try table.addRow(&row);
+    table.show_grid = false;
+    table.border = .rounded;
+    table.selected_row = 0;
+    try table.widget.layout(layout.Rect.init(1, 5, 78, 15));
+    try table.widget.draw(&mock.renderer);
+
+    var status = try widget.StatusBar.init(alloc);
+    defer status.deinit();
+    status.setSegments("load: 1.04 0.98 0.77", "htop-clone", "q quit");
+    try status.widget.layout(layout.Rect.init(0, 22, 80, 1));
+    try status.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try snap.expectContains("1203");
+    try snap.expectContains("zig build test");
+    try snap.expectContains("htop-clone");
+}
+
+test "real-world file manager snapshot remains well formed" {
+    const alloc = std.testing.allocator;
+    var mock = try MockTerminal.init(alloc, 80, 22);
+    defer mock.deinit();
+
+    var crumbs = try widget.Breadcrumbs.init(alloc, &[_][]const u8{ "home", "dev", "projects", "zit" });
+    defer crumbs.deinit();
+    try crumbs.widget.layout(layout.Rect.init(1, 0, 60, 1));
+    try crumbs.widget.draw(&mock.renderer);
+
+    var toolbar = try widget.Toolbar.init(alloc, &[_][]const u8{ "Open", "New Folder", "Delete", "Refresh" });
+    defer toolbar.deinit();
+    toolbar.setActive(1);
+    try toolbar.widget.layout(layout.Rect.init(0, 1, 80, 1));
+    try toolbar.widget.draw(&mock.renderer);
+
+    var table = try widget.Table.init(alloc);
+    defer table.deinit();
+    try table.addColumn("Name", 28, true);
+    try table.addColumn("Type", 10, true);
+    try table.addColumn("Size", 8, true);
+    try table.addColumn("Modified", 20, true);
+    const rows = [_][4][]const u8{
+        .{ "src", "dir", "-", "2024-04-02 10:12" },
+        .{ "examples", "dir", "-", "2024-04-01 08:31" },
+        .{ "README.md", "file", "12 KB", "2024-03-30 18:04" },
+        .{ "build.zig", "file", "6 KB", "2024-03-30 17:59" },
+    };
+    for (rows) |row| try table.addRow(&row);
+    table.selected_row = 2;
+    table.border = .double;
+    try table.widget.layout(layout.Rect.init(1, 3, 78, 15));
+    try table.widget.draw(&mock.renderer);
+
+    var status = try widget.StatusBar.init(alloc);
+    defer status.deinit();
+    status.setSegments("4 items", "file manager", "F5 refresh");
+    try status.widget.layout(layout.Rect.init(0, 20, 80, 1));
+    try status.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try snap.expectContains("README.md");
+    try snap.expectContains("file manager");
+    try snap.expectContains("New Folder");
+}
+
+test "real-world dashboard snapshot remains well formed" {
+    const alloc = std.testing.allocator;
+    var mock = try MockTerminal.init(alloc, 80, 22);
+    defer mock.deinit();
+
+    var toolbar = try widget.Toolbar.init(alloc, &[_][]const u8{ "Overview", "Pipelines", "Alerts", "Settings" });
+    defer toolbar.deinit();
+    toolbar.setActive(0);
+    try toolbar.widget.layout(layout.Rect.init(0, 0, 80, 1));
+    try toolbar.widget.draw(&mock.renderer);
+
+    var rating = try widget.RatingStars.init(alloc, 5);
+    defer rating.deinit();
+    rating.setValue(4);
+    try rating.widget.layout(layout.Rect.init(2, 2, 10, 1));
+    try rating.widget.draw(&mock.renderer);
+    mock.renderer.drawStr(13, 2, "service health", render.Color.named(.bright_white), render.Color.named(.default), render.Style{});
+
+    var wizard = try widget.WizardStepper.init(alloc, &[_][]const u8{ "Build", "Test", "Deploy", "Verify" });
+    defer wizard.deinit();
+    wizard.setStep(2);
+    try wizard.widget.layout(layout.Rect.init(2, 6, 70, 2));
+    try wizard.widget.draw(&mock.renderer);
+
+    var center = try widget.NotificationCenter.init(alloc);
+    defer center.deinit();
+    try center.push("Deploy", "p99 +8ms", .warning);
+    try center.push("Canary", "2 pods pending", .info);
+    try center.widget.layout(layout.Rect.init(2, 9, 50, 5));
+    try center.widget.draw(&mock.renderer);
+
+    var status = try widget.StatusBar.init(alloc);
+    defer status.deinit();
+    status.setSegments("status: green", "dashboard", "shift+q quit");
+    try status.widget.layout(layout.Rect.init(0, 20, 80, 1));
+    try status.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try snap.expectContains("service health");
+    try snap.expectContains("Deploy");
+    try snap.expectContains("dashboard");
+}
+
+test "real-world editor snapshot remains well formed" {
+    const alloc = std.testing.allocator;
+    var mock = try MockTerminal.init(alloc, 80, 20);
+    defer mock.deinit();
+
+    mock.renderer.fillRect(0, 0, 80, 16, ' ', render.Color.named(.bright_white), render.Color.named(.black), render.Style{});
+    const lines = [_][]const u8{
+        "fn main() !void {",
+        "    var app = try zit.quickstart.renderText(\"Hello\", .{});",
+        "    _ = app;",
+        "}",
+        "",
+        "// Press : to open the palette",
+    };
+    for (lines, 0..) |line, idx| {
+        mock.renderer.drawStr(2, @intCast(idx + 1), line, render.Color.named(.bright_white), render.Color.named(.black), render.Style{});
+    }
+
+    var palette = try widget.CommandPalette.init(alloc, &[_][]const u8{
+        "Save file",
+        "Close buffer",
+        "Toggle minimap",
+        "Search symbol",
+        "Replace in file",
+    });
+    defer palette.deinit();
+    palette.setQuery(":");
+    palette.selected = 3;
+    try palette.widget.layout(layout.Rect.init(10, 7, 60, 8));
+    try palette.widget.draw(&mock.renderer);
+
+    var status = try widget.StatusBar.init(alloc);
+    defer status.deinit();
+    status.setSegments("main.zig  UTF-8  LF", "INSERT", "Ln 42, Col 3");
+    try status.widget.layout(layout.Rect.init(0, 18, 80, 1));
+    try status.widget.draw(&mock.renderer);
+
+    var snap = try mock.snapshot(alloc);
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try snap.expectContains("renderText");
+    try snap.expectContains("Search symbol");
+    try snap.expectContains("Ln 42");
 }
 
 test "snapshot label basic render" {

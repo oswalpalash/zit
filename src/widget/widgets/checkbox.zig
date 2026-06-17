@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -145,14 +146,9 @@ pub const Checkbox = struct {
         // Draw label
         if (self.label.len > 0 and rect.width > 4) {
             var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, rect.width), truncated_text.len);
-            if (max_width > 7 and self.label.len > max_width - 7) {
-                @memcpy(truncated_text[0 .. max_width - 7], self.label[0 .. max_width - 7]);
-                @memcpy(truncated_text[max_width - 7 .. max_width - 4], "...");
-                renderer.drawStr(rect.x + 3, rect.y, truncated_text[0 .. max_width - 4], fg, bg, render.Style{});
-            } else {
-                renderer.drawStr(rect.x + 3, rect.y, self.label, fg, bg, render.Style{});
-            }
+            const label_width = rect.width - 4;
+            const clipped = text_metrics.clipWithEllipsis(self.label, label_width, &truncated_text);
+            renderer.drawStr(rect.x + 3, rect.y, clipped.text, fg, bg, render.Style{});
         }
     }
 
@@ -195,7 +191,8 @@ pub const Checkbox = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
 
-        return layout_module.Size.init(@as(u16, @intCast(@min(self.label.len + 4, 40))), // Cap width at 40 chars
+        const label_width: usize = text_metrics.measureWidth(self.label).width;
+        return layout_module.Size.init(@as(u16, @intCast(@min(label_width + 4, 40))), // Cap width at 40 cells
             1 // Height is 1 row
         );
     }
@@ -239,6 +236,23 @@ test "checkbox toggles and fires callback" {
     try std.testing.expect(checkbox.checked);
     try std.testing.expectEqual(@as(usize, 1), test_checkbox_calls);
     try std.testing.expectEqual(true, test_checkbox_state.?);
+}
+
+test "checkbox does not ellipsize label that exactly fits preferred width" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Safe mode");
+    defer checkbox.deinit();
+
+    try checkbox.widget.layout(layout_module.Rect.init(1, 0, 13, 1));
+
+    var renderer = try render.Renderer.init(alloc, 14, 1);
+    defer renderer.deinit();
+    try checkbox.widget.draw(&renderer);
+
+    const expected = "Safe mode";
+    for (expected, 0..) |char, idx| {
+        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 4)), 0).*.codepoint());
+    }
 }
 
 test "checkbox ignores presses when bounds are zero" {

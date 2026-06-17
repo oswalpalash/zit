@@ -171,7 +171,7 @@ pub const RichText = struct {
         }
 
         max_width = @max(max_width, current_width);
-        return layout_module.Size.init(@intCast(@max(max_width, 12)), @intCast(@max(lines, 2)));
+        return layout_module.Size.init(@as(u16, @intCast(@max(max_width, 12))), @as(u16, @intCast(@max(lines, 2))));
     }
 
     fn canFocusFn(_: *anyopaque) bool {

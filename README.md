@@ -3,9 +3,9 @@
 [![CI](https://github.com/oswalpalash/zit/actions/workflows/build.yaml/badge.svg?branch=main)](https://github.com/oswalpalash/zit/actions/workflows/build.yaml)
 [![Release](https://img.shields.io/github/v/tag/oswalpalash/zit?label=version&color=0ea5e9)](https://github.com/oswalpalash/zit/releases)
 [![License](https://img.shields.io/github/license/oswalpalash/zit?color=10b981)](LICENSE)
-![Zig version](https://img.shields.io/badge/zig-0.15.x%20matrix-f97316)
+![Zig version](https://img.shields.io/badge/zig-0.16.x-f97316)
 
-Zit helps you ship terminal dashboards, editors, and workflows with the same confidence you expect from GUI toolkits: a rich widget catalog, focus and typeahead helpers, fast rendering, and accessibility baked in. Zero dependencies, test coverage, and benchmarks included.
+Zit helps you ship terminal dashboards, editors, and workflows with the same confidence you expect from GUI toolkits: a rich widget catalog, focus and typeahead helpers, fast rendering, and accessibility baked in. Zero dependencies, test coverage, and benchmarks included. The project is governed by four public-facing tenets: efficiency, reliability, stability, and features, in that order.
 
 ## Why Zit
 - 30+ production-ready widgets (blocks/paragraphs, charts, tables with typeahead, context menus, popups, file browser, bracketed paste-aware inputs).
@@ -111,7 +111,7 @@ _ = try app.scheduleTimer(1000, 1000, struct {
 ## Installation
 
 ### Zig package manager (recommended)
-Requires Zig 0.15.x with package manager enabled.
+Requires Zig 0.16.x with package manager enabled.
 
 1) Add Zit to `build.zig.zon` (auto-add via fetch):
 ```bash
@@ -142,7 +142,7 @@ const zit_module = b.createModule(.{
 exe.root_module.addImport("zit", zit_module);
 ```
 
-From this repo you can also run `zig build hello-world` to confirm your toolchain and terminal setup.
+From this repo you can also run `zig build hello-world` to launch the smallest interactive example. Interactive examples require a real terminal for raw-mode input; under non-TTY automation they exit cleanly with a short message instead of a stack trace.
 
 ## Quick Start (copy-pasteable)
 
@@ -151,7 +151,7 @@ const std = @import("std");
 const zit = @import("zit");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -189,7 +189,7 @@ pub fn main() !void {
 ```
 
 ## Examples, Docs, and Benchmarks
-Run everything from the repo root (each command builds and launches the example):
+Run everything from the repo root. Interactive example steps launch when a TTY is available and exit cleanly under non-TTY automation; deterministic real-world snapshot and benchmark steps execute directly.
 
 Quick starts
 - `zig build hello-world` (`examples/hello_world.zig`): five-line alternate-screen loop with raw-mode input and a centered label.
@@ -208,23 +208,27 @@ Widget gallery
 - `zig build notifications-example` (`examples/widget_examples/notifications_example.zig`): toast and notification manager behavior.
 - `zig build table-example` (`examples/widget_examples/table_example.zig`): sortable/searchable table with keyboard navigation.
 - `zig build file-browser-example` (`examples/widget_examples/file_browser_example.zig`): file browser widget with typeahead navigation.
-- `zig build file-manager-example` (`examples/widget_examples/file_manager_example.zig`): split-pane file manager (tree + list) interactions.
+- `zig build file-manager-example` (`examples/widget_examples/file_manager_example.zig`): split-pane file manager interactions.
 - `zig build form-wizard-example` (`examples/widget_examples/form_wizard_example.zig`): multi-step form with validation feedback.
 - `zig build system-monitor-example` (`examples/widget_examples/system_monitor_example.zig`): live metrics dashboard with charts and gauges.
-- `zig build widget-showcase` (`examples/widget_examples/showcase_demo.zig`): everything-in-one showcase to explore most widgets in one place.
+- `zig build widget-showcase` (`examples/widget_examples/showcase_demo.zig`): everything-in-one widget showcase.
 
 Real-world snapshots
 - `zig build htop-clone` (`examples/realworld/htop_clone.zig`): htop-inspired dashboard rendering.
 - `zig build file-manager` (`examples/realworld/file_manager.zig`): single-shot render of a file manager layout.
 - `zig build text-editor` (`examples/realworld/text_editor.zig`): text editor frame with status bars and gutters.
 - `zig build dashboard-demo` (`examples/realworld/dashboard_demo.zig`): compact monitoring dashboard composed of core widgets.
+- `zig build widget-gallery` (`examples/realworld/widget_gallery.zig`): deterministic screenshot target covering core widgets and advanced controls.
+- `zig build widget-gallery-extended` (`examples/realworld/widget_gallery_extended.zig`): deterministic screenshot target covering text entry, structured text, charts, menus, logs, indicators, and drawing primitives.
 
 Benchmarks
 - `zig build render-bench` (`examples/benchmarks/render_bench.zig`): micro-benchmark for renderer throughput.
 - `zig build bench` (`examples/benchmarks/bench_suite.zig`): suite covering layout, widgets, and input decoding costs.
 
-Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`.
+Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`, `docs/STABILITY.md`.
 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
-- Use `zig fmt --check src/` and `zig build` locally; repo hooks mirror the same checks.
+- Use `zig fmt --check src/ examples/ build.zig` and `zig build quality` locally before opening a PR.
+- Release verification also includes `zig build smoke -Dtarget=x86_64-linux`, `zig build smoke -Dtarget=x86_64-windows`, `python3 scripts/check_build_steps.py`, and docs generation.
+- For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4` and inspect the generated contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift across all real-world and widget-gallery targets.

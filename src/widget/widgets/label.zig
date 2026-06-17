@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 
@@ -122,29 +123,23 @@ pub const Label = struct {
 
             const line = self.text[start..i];
             const y = rect.y + line_idx;
+            var truncated_text: [256]u8 = undefined;
+            const clipped = text_metrics.clipWithEllipsis(line, rect.width, &truncated_text);
 
             // Calculate x position based on alignment
             var x: u16 = rect.x;
             if (self.alignment == .center) {
-                if (line.len < rect.width) {
-                    x = rect.x + (rect.width - @as(u16, @intCast(line.len))) / 2;
+                if (clipped.width < rect.width) {
+                    x = rect.x + (rect.width - clipped.width) / 2;
                 }
             } else if (self.alignment == .right) {
-                if (line.len < rect.width) {
-                    x = rect.x + rect.width - @as(u16, @intCast(line.len));
+                if (clipped.width < rect.width) {
+                    x = rect.x + rect.width - clipped.width;
                 }
             }
 
             // Draw the line
-            var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, rect.width), truncated_text.len);
-            if (max_width > 3 and line.len > max_width - 3) {
-                @memcpy(truncated_text[0 .. max_width - 3], line[0 .. max_width - 3]);
-                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
-                renderer.drawStr(x, y, truncated_text[0..max_width], fg, bg, style);
-            } else {
-                renderer.drawStr(x, y, line, fg, bg, style);
-            }
+            renderer.drawStr(x, y, clipped.text, fg, bg, style);
 
             line_idx += 1;
             if (!at_end) {
@@ -181,7 +176,7 @@ pub const Label = struct {
         while (i <= self.text.len) : (i += 1) {
             const at_end = i == self.text.len;
             if (!at_end and self.text[i] != '\n') continue;
-            const line_len = i - start;
+            const line_len: usize = text_metrics.measureWidth(self.text[start..i]).width;
             max_width = @max(max_width, line_len);
             lines += 1;
             if (!at_end) {
@@ -216,6 +211,22 @@ test "label setText updates preferred size" {
     const size = try label.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 5), size.width);
     try std.testing.expectEqual(@as(u16, 2), size.height);
+}
+
+test "label does not ellipsize text that exactly fits" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "abcdefghijklmnopqrst");
+    defer label.deinit();
+
+    try label.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try label.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, 'r'), renderer.back.getCell(17, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, 's'), renderer.back.getCell(18, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, 't'), renderer.back.getCell(19, 0).*.codepoint());
 }
 
 test "label handles empty text" {

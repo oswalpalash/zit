@@ -7,6 +7,7 @@ const accessibility = @import("../widget/accessibility.zig");
 const render = @import("../render/render.zig");
 const layout = @import("../layout/layout.zig");
 const memory = @import("../memory/memory.zig");
+const compat = @import("../compat.zig");
 
 const event_loop_sleep_ms: u64 = 10;
 const focus_history_limit: usize = 10;
@@ -112,7 +113,7 @@ pub const Event = struct {
             .type = event_type,
             .target = target,
             .current_target = target,
-            .timestamp = std.time.milliTimestamp(),
+            .timestamp = compat.nowMillis(),
             .data = data,
         };
     }
@@ -609,7 +610,7 @@ pub const EventQueue = struct {
     /// Event queue
     queue: std.ArrayList(Event),
     head: usize = 0,
-    lock: std.Thread.Mutex = .{},
+    lock: compat.Mutex = .{},
     /// Event dispatcher
     dispatcher: EventDispatcher,
     /// Allocator for event queue operations
@@ -617,7 +618,7 @@ pub const EventQueue = struct {
     /// Optional debug hooks
     debug_hooks: DebugHooks = .{},
     /// Reusable buffer for propagation paths to avoid per-event allocations
-    path_scratch: std.ArrayListUnmanaged(*widget.Widget) = .{},
+    path_scratch: std.ArrayListUnmanaged(*widget.Widget) = .empty,
     /// Optional pre-dispatch hook (shortcuts, global handlers, etc.)
     preprocessor: ?EventPreprocessor = null,
 
@@ -2097,7 +2098,8 @@ pub const Application = struct {
         return try self.io_manager.?.watchFile(path, target);
     }
 
-    /// Connect to a network server
+    /// Create a network context. Network transport is currently unsupported on the Zig 0.16 baseline;
+    /// the context emits a `.network_error` event instead of opening a socket.
     pub fn connectToServer(self: *Application, address: []const u8, port: u16, target: ?*widget.Widget) !*@import("io_events.zig").NetworkContext {
         if (self.io_manager == null) {
             try self.initIoManager();
@@ -2180,7 +2182,7 @@ pub const Application = struct {
             try self.event_queue.processEvents();
         }
 
-        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const now_ms: u64 = @intCast(compat.nowMillis());
         const delta = if (self.last_frame_ms == 0) 0 else now_ms - self.last_frame_ms;
         self.animator.tick(delta);
         self.timer_manager.tick(now_ms);
@@ -2191,10 +2193,10 @@ pub const Application = struct {
     pub fn pollUntil(self: *Application, deadline_ms: u64) !void {
         if (!self.running) self.running = true;
         while (true) {
-            const now_ms: u64 = @intCast(std.time.milliTimestamp());
+            const now_ms: u64 = @intCast(compat.nowMillis());
             if (now_ms >= deadline_ms or !self.running) break;
             try self.tickOnce();
-            std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
+            compat.sleepMillis(event_loop_sleep_ms);
         }
     }
 
@@ -2205,13 +2207,13 @@ pub const Application = struct {
         }
 
         self.running = true;
-        self.last_frame_ms = @as(u64, @intCast(std.time.milliTimestamp()));
+        self.last_frame_ms = @as(u64, @intCast(compat.nowMillis()));
 
         while (self.running) {
             try self.tickOnce();
 
             // Yield to allow other tasks to run
-            std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
+            compat.sleepMillis(event_loop_sleep_ms);
         }
     }
 
@@ -2222,14 +2224,14 @@ pub const Application = struct {
         }
 
         self.running = true;
-        self.last_frame_ms = @as(u64, @intCast(std.time.milliTimestamp()));
+        self.last_frame_ms = @as(u64, @intCast(compat.nowMillis()));
 
         // Start processing in a separate thread
         var thread = try std.Thread.spawn(.{}, struct {
             fn threadFn(app: *Application, cb: ?*const fn () void) !void {
                 while (app.running) {
                     try app.tickOnce();
-                    std.Thread.sleep(std.time.ns_per_ms * event_loop_sleep_ms);
+                    compat.sleepMillis(event_loop_sleep_ms);
                 }
 
                 if (cb != null) {
@@ -2335,7 +2337,7 @@ pub const Application = struct {
 
     /// Schedule a timer callback
     pub fn scheduleTimer(self: *Application, delay_ms: u64, repeat_ms: ?u64, callback: timer.TimerCallback, ctx: ?*anyopaque) !timer.TimerHandle {
-        const now_ms: u64 = @intCast(std.time.milliTimestamp());
+        const now_ms: u64 = @intCast(compat.nowMillis());
         if (self.last_frame_ms == 0) self.last_frame_ms = now_ms;
         return try self.timer_manager.schedule(now_ms, delay_ms, repeat_ms, callback, ctx);
     }
@@ -2587,7 +2589,7 @@ test "background tasks emit completion events" {
 
     var attempts: usize = 0;
     while (attempts < 50 and !announcement_seen) : (attempts += 1) {
-        std.Thread.sleep(std.time.ns_per_ms * 2);
+        compat.sleepMillis(2);
         try app.tickOnce();
     }
 

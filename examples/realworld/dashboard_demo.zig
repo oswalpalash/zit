@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// Dashboard demo that stitches together new widgets in a single frame.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

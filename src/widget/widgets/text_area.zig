@@ -230,7 +230,7 @@ pub const TextArea = struct {
         if (clamped == self.cursor) return;
         if (std.mem.indexOfScalar(usize, self.extra_cursors.items, clamped) != null) return;
         try self.extra_cursors.append(self.allocator, clamped);
-        std.sort.sort(usize, self.extra_cursors.items, {}, std.sort.asc(usize));
+        std.sort.pdq(usize, self.extra_cursors.items, {}, std.sort.asc(usize));
     }
 
     pub fn clearExtraCursors(self: *TextArea) void {
@@ -350,7 +350,7 @@ pub const TextArea = struct {
             try marks.append(self.allocator, .{ .pos = @min(pos, self.buffer.items.len), .primary = false });
         }
 
-        std.sort.sort(CursorMark, marks.items, {}, cursorLess);
+        std.sort.pdq(CursorMark, marks.items, {}, cursorLess);
 
         var write: usize = 0;
         var idx: usize = 0;

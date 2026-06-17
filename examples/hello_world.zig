@@ -8,14 +8,14 @@ const memory = zit.memory;
 const theme = zit.widget.theme;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var memory_manager = try memory.MemoryManager.init(allocator, 128 * 1024, 32);
     defer memory_manager.deinit();
 
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "hello-world")) orelse return;
     defer term.deinit() catch {};
 
     var renderer = try render.Renderer.init(allocator, term.width, term.height);

@@ -292,7 +292,7 @@ pub const SyntaxHighlighter = struct {
         }
         max_width = @max(max_width, width);
 
-        return layout_module.Size.init(@intCast(@max(max_width + 2, 24)), @intCast(@max(lines, 3)));
+        return layout_module.Size.init(@as(u16, @intCast(@max(max_width + 2, 24))), @as(u16, @intCast(@max(lines, 3))));
     }
 
     fn canFocusFn(_: *anyopaque) bool {

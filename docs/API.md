@@ -11,12 +11,12 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 - `widget` – Base `Widget` + vtable, theme helpers, builders, and concrete widgets (`Label`, `Button`, `List`, `Table`, `SplitPane`, `Modal`, `ContextMenu`, etc.).
 - `memory` – `MemoryManager.init(parent, arena_size, widget_pool_size)`, `getArenaAllocator`, `getWidgetPoolAllocator`, `resetArena`, `getStats`.
 - `quickstart` – Convenience helpers like `renderText` for trivial programs.
-- `testing` – Utilities to ease widget/layout testing.
+- `testing` – `MockTerminal`, `WidgetHarness`, `renderWidget`, golden snapshot assertions, and `Snapshot.expectWellFormed()` for deterministic headless rendering checks.
 
 ## Common Patterns
 ### Bootstrapping
 ```zig
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}){};
 defer _ = gpa.deinit();
 const allocator = gpa.allocator();
 

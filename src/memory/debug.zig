@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
+const compat = @import("../compat.zig");
 
 pub const MemoryDebugger = struct {
     const Self = @This();
@@ -13,7 +14,7 @@ pub const MemoryDebugger = struct {
 
     parent_allocator: Allocator,
     allocations: std.AutoHashMap([*]u8, Allocation),
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
     stats: struct {
         total_allocations: usize,
         total_deallocations: usize,
@@ -26,7 +27,7 @@ pub const MemoryDebugger = struct {
         return Self{
             .parent_allocator = parent_allocator,
             .allocations = std.AutoHashMap([*]u8, Allocation).init(parent_allocator),
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
             .stats = .{
                 .total_allocations = 0,
                 .total_deallocations = 0,

@@ -98,7 +98,7 @@ pub const Paragraph = struct {
         if (content_width == 0 or content_height == 0) return;
 
         var lines = try self.buildLines(content_width);
-        defer lines.deinit();
+        defer lines.deinit(self.allocator);
 
         const start_line = @min(@as(usize, self.scroll_offset), lines.items.len);
         const max_lines = @min(@as(usize, content_height), lines.items.len - start_line);
@@ -200,13 +200,13 @@ pub const Paragraph = struct {
                 break;
             }
 
-            const maybe_space = std.mem.lastIndexOfScalar(remaining[0..max_width], ' ');
+            const maybe_space = std.mem.findScalarLast(u8, remaining[0..max_width], ' ');
             const split_at = maybe_space orelse max_width;
             const line = remaining[0..split_at];
             try lines.append(self.allocator, line);
 
             const after = remaining[split_at..];
-            const trimmed = std.mem.trimLeft(u8, after, " ");
+            const trimmed = std.mem.trimStart(u8, after, " ");
             remaining = trimmed;
         }
     }

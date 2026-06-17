@@ -101,6 +101,59 @@ pub fn measureWidth(str: []const u8) Metrics {
     return unicode_width.measure(str);
 }
 
+pub const ClipResult = struct {
+    text: []const u8,
+    width: u16,
+    clipped: bool,
+};
+
+/// Clip text to a terminal-cell width without splitting UTF-8 or grapheme clusters.
+///
+/// When clipping is required and at least four cells are available, the result
+/// reserves three cells for "...". Narrower widths receive only as many dots as
+/// fit. The returned slice either aliases `text` when no clipping is needed or
+/// points into `buffer`.
+pub fn clipWithEllipsis(text: []const u8, max_width: u16, buffer: []u8) ClipResult {
+    if (max_width == 0 or buffer.len == 0) {
+        return .{ .text = "", .width = 0, .clipped = text.len > 0 };
+    }
+
+    const measured = measureWidth(text);
+    if (measured.width <= max_width) {
+        return .{ .text = text, .width = measured.width, .clipped = false };
+    }
+
+    const ellipsis = "...";
+    if (max_width <= ellipsis.len) {
+        const dot_count = @min(@as(usize, max_width), buffer.len);
+        @memset(buffer[0..dot_count], '.');
+        return .{ .text = buffer[0..dot_count], .width = @intCast(dot_count), .clipped = true };
+    }
+
+    const target_width: u16 = max_width - @as(u16, @intCast(ellipsis.len));
+    var out_len: usize = 0;
+    var out_width: u16 = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |g| {
+        const next_width = out_width + @as(u16, g.width);
+        if (next_width > target_width) break;
+        const slice = g.slice();
+        if (out_len + slice.len > buffer.len) break;
+        @memcpy(buffer[out_len .. out_len + slice.len], slice);
+        out_len += slice.len;
+        out_width = next_width;
+    }
+
+    const dots_to_copy = @min(ellipsis.len, buffer.len - out_len);
+    if (dots_to_copy > 0) {
+        @memcpy(buffer[out_len .. out_len + dots_to_copy], ellipsis[0..dots_to_copy]);
+        out_len += dots_to_copy;
+        out_width += @intCast(dots_to_copy);
+    }
+
+    return .{ .text = buffer[0..out_len], .width = out_width, .clipped = true };
+}
+
 /// Detect a dominant text direction using a simple RTL majority heuristic.
 pub fn detectDirection(str: []const u8) TextDirection {
     var rtl: usize = 0;
@@ -141,7 +194,7 @@ pub fn collectVisualOrder(text: []const u8, direction: TextDirection, list: *std
 
 /// Basic bidi sanitizer: reorders graphemes for simple terminals while preserving combining marks.
 pub fn sanitizeBidi(str: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    var graphemes = std.ArrayListUnmanaged(Grapheme){};
+    var graphemes = std.ArrayListUnmanaged(Grapheme).empty;
     defer graphemes.deinit(allocator);
     _ = try collectVisualOrder(str, .auto, &graphemes, allocator);
 
@@ -212,4 +265,21 @@ test "grapheme iterator keeps emoji intact" {
     try std.testing.expectEqual(@as(u3, 1), first.width);
     const second = it.next().?;
     try std.testing.expectEqual(@as(u3, 2), second.width);
+}
+
+test "clipWithEllipsis preserves exact-fit text" {
+    var buffer: [32]u8 = undefined;
+    const clipped = clipWithEllipsis("Checks catch clipping.", 22, &buffer);
+    try std.testing.expect(!clipped.clipped);
+    try std.testing.expectEqualStrings("Checks catch clipping.", clipped.text);
+    try std.testing.expectEqual(@as(u16, 22), clipped.width);
+}
+
+test "clipWithEllipsis keeps utf8 valid and respects wide glyph width" {
+    var buffer: [32]u8 = undefined;
+    const clipped = clipWithEllipsis("ab界cd", 5, &buffer);
+    try std.testing.expect(clipped.clipped);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(clipped.text));
+    try std.testing.expect(clipped.width <= 5);
+    try std.testing.expectEqualStrings("ab...", clipped.text);
 }

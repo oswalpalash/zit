@@ -18,7 +18,7 @@ fn updateStatus(comptime fmt: []const u8, args: anytype) void {
 
 pub fn main() !void {
     // Initialize memory manager
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -26,7 +26,7 @@ pub fn main() !void {
     defer memory_manager.deinit();
 
     // Initialize terminal with memory manager
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "demo")) orelse return;
     defer term.deinit() catch {};
 
     // Initialize renderer with memory manager

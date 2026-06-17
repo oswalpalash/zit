@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -152,28 +153,13 @@ pub const Button = struct {
         if (self.button_text.len > 0 and rect.width > 2 and rect.height > 2) {
             const inner_width = rect.width - 2;
             var truncated_text: [256]u8 = undefined;
-            const max_width = @min(@as(usize, inner_width), truncated_text.len);
-            if (max_width > 3 and self.button_text.len > max_width - 3) {
-                @memcpy(truncated_text[0 .. max_width - 3], self.button_text[0 .. max_width - 3]);
-                @memcpy(truncated_text[max_width - 3 .. max_width], "...");
-                // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(max_width));
-                const text_x = if (inner_width > text_len)
-                    rect.x + 1 + (inner_width - text_len) / 2
-                else
-                    rect.x + 1;
-                const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, truncated_text[0..max_width], fg, bg, style);
-            } else {
-                // Safely calculate text position to avoid overflow
-                const text_len = @as(u16, @intCast(@min(@as(usize, inner_width), self.button_text.len)));
-                const text_x = if (inner_width > text_len)
-                    rect.x + 1 + (inner_width - text_len) / 2
-                else
-                    rect.x + 1;
-                const text_y = rect.y + rect.height / 2;
-                renderer.drawStr(text_x, text_y, self.button_text, fg, bg, style);
-            }
+            const clipped = text_metrics.clipWithEllipsis(self.button_text, inner_width, &truncated_text);
+            const text_x = if (inner_width > clipped.width)
+                rect.x + 1 + (inner_width - clipped.width) / 2
+            else
+                rect.x + 1;
+            const text_y = rect.y + rect.height / 2;
+            renderer.drawStr(text_x, text_y, clipped.text, fg, bg, style);
         }
     }
 
@@ -225,7 +211,8 @@ pub const Button = struct {
         const height: u16 = if (self.button_text.len > 30) 5 else 3; // Use taller button for longer text
 
         // Button size should accommodate text plus borders
-        return layout_module.Size.init(@as(u16, @intCast(@min(self.button_text.len + 4, 40))), // Cap width at 40 chars
+        const text_width: usize = text_metrics.measureWidth(self.button_text).width;
+        return layout_module.Size.init(@as(u16, @intCast(@min(text_width + 4, 40))), // Cap width at 40 cells
             height // Adjustable height
         );
     }
@@ -269,6 +256,23 @@ test "button triggers callback on press" {
     const key_event = input.Event{ .key = input.KeyEvent.init(' ', input.KeyModifiers{}) };
     try std.testing.expect(try button.widget.handleEvent(key_event));
     try std.testing.expectEqual(@as(usize, 2), test_button_presses);
+}
+
+test "button does not ellipsize text that exactly fits inner width" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Deploy");
+    defer button.deinit();
+
+    try button.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    try button.widget.draw(&renderer);
+
+    const expected = "Deploy";
+    for (expected, 0..) |char, idx| {
+        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 1)), 1).*.codepoint());
+    }
 }
 
 test "button ignores presses when bounds are zero" {

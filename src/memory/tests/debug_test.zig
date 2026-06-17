@@ -3,7 +3,7 @@ const testing = std.testing;
 const MemoryDebugger = @import("../debug.zig").MemoryDebugger;
 
 test "MemoryDebugger basic operations" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -34,7 +34,7 @@ test "MemoryDebugger basic operations" {
 }
 
 test "MemoryDebugger resize" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -58,7 +58,7 @@ test "MemoryDebugger resize" {
 }
 
 test "MemoryDebugger leak detection" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -80,7 +80,7 @@ test "MemoryDebugger leak detection" {
 }
 
 test "MemoryDebugger thread safety" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

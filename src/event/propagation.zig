@@ -51,7 +51,7 @@ pub fn buildWidgetPathInto(
 
 /// Build a widget path, returning an owned list for callers that do not reuse scratch buffers.
 pub fn buildWidgetPath(allocator: std.mem.Allocator, start_widget: *widget.Widget) !std.ArrayList(*widget.Widget) {
-    var scratch = std.ArrayListUnmanaged(*widget.Widget){};
+    var scratch = std.ArrayListUnmanaged(*widget.Widget).empty;
     defer scratch.deinit(allocator);
 
     const path_slice = try buildWidgetPathInto(allocator, start_widget, &scratch);
@@ -85,7 +85,7 @@ pub fn dispatchWithPropagationCached(
 /// Dispatch an event with both capturing and bubbling phases using a temporary buffer.
 /// Prefer `dispatchWithPropagationCached` inside event loops to avoid repeated allocations.
 pub fn dispatchWithPropagation(dispatcher: *event.EventDispatcher, event_item: *event.Event, allocator: std.mem.Allocator, hooks: event.DebugHooks) !bool {
-    var scratch = std.ArrayListUnmanaged(*widget.Widget){};
+    var scratch = std.ArrayListUnmanaged(*widget.Widget).empty;
     defer scratch.deinit(allocator);
     return dispatchWithPropagationCached(dispatcher, event_item, allocator, &scratch, hooks);
 }

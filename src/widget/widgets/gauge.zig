@@ -111,14 +111,38 @@ pub const Gauge = struct {
 
         if (self.orientation == .horizontal) {
             const filled = @as(u16, @intFromFloat(ratio * @as(f32, @floatFromInt(inner_width))));
-            if (filled > 0) {
-                renderer.fillRect(inner_x, inner_y, filled, inner_height, ' ', self.fg, self.fill, render.Style{});
+            for (0..inner_height) |row| {
+                const y = inner_y + @as(u16, @intCast(row));
+                for (0..inner_width) |col| {
+                    const x = inner_x + @as(u16, @intCast(col));
+                    const is_filled = col < filled;
+                    renderer.drawChar(
+                        x,
+                        y,
+                        if (is_filled) '█' else '░',
+                        if (is_filled) self.fill else self.fg,
+                        self.bg,
+                        render.Style{},
+                    );
+                }
             }
         } else {
             const filled = @as(u16, @intFromFloat(ratio * @as(f32, @floatFromInt(inner_height))));
-            if (filled > 0) {
-                const start_y = inner_y + inner_height - filled;
-                renderer.fillRect(inner_x, start_y, inner_width, filled, ' ', self.fg, self.fill, render.Style{});
+            const start_y = inner_y + inner_height - filled;
+            for (0..inner_height) |row| {
+                const y = inner_y + @as(u16, @intCast(row));
+                const is_filled_row = y >= start_y;
+                for (0..inner_width) |col| {
+                    const x = inner_x + @as(u16, @intCast(col));
+                    renderer.drawChar(
+                        x,
+                        y,
+                        if (is_filled_row) '█' else '░',
+                        if (is_filled_row) self.fill else self.fg,
+                        self.bg,
+                        render.Style{},
+                    );
+                }
             }
         }
 
@@ -168,9 +192,9 @@ test "gauge fills proportionally" {
     var empty: usize = 0;
     for (0..20) |x| {
         const cell = renderer.back.getCell(@intCast(x), 1).*;
-        if (std.meta.eql(cell.bg, gauge.fill)) {
+        if (cell.codepoint() == '█') {
             filled += 1;
-        } else {
+        } else if (cell.codepoint() == '░') {
             empty += 1;
         }
     }

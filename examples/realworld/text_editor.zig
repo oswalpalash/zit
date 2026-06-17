@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// Minimal text editor screen with status bar and command palette preview.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -36,7 +36,7 @@ pub fn main() !void {
     defer palette.deinit();
     palette.setQuery(":");
     palette.selected = 3;
-    try palette.widget.layout(zit.layout.Rect.init(10, 6, 60, 8));
+    try palette.widget.layout(zit.layout.Rect.init(10, 7, 60, 8));
     try palette.widget.draw(&mock.renderer);
 
     var status = try zit.widget.StatusBar.init(allocator);

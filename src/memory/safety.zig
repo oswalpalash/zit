@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
+const compat = @import("../compat.zig");
 
 pub const MemorySafety = struct {
     const Self = @This();
@@ -13,17 +14,17 @@ pub const MemorySafety = struct {
 
     parent_allocator: Allocator,
     checks: std.AutoHashMap([*]u8, SafetyCheck),
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
     canary_value: u64,
 
     pub fn init(parent_allocator: Allocator) !Self {
-        var prng = std.Random.DefaultPrng.init(@bitCast(u64, std.time.milliTimestamp()));
+        var prng = std.Random.DefaultPrng.init(@bitCast(compat.nowMillis()));
         const canary = prng.random().int(u64);
 
         return Self{
             .parent_allocator = parent_allocator,
             .checks = std.AutoHashMap([*]u8, SafetyCheck).init(parent_allocator),
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
             .canary_value = canary,
         };
     }

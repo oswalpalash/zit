@@ -98,7 +98,7 @@ pub const ColorPicker = struct {
             if (base_x >= rect.x + rect.width or base_y >= rect.y + rect.height) continue;
             if (base_x + sw_w > rect.x + rect.width or base_y + sw_h > rect.y + rect.height) continue;
 
-            const inset = if (sw_w > 2 and sw_h > 2) 1 else 0;
+            const inset: u16 = if (sw_w > 2 and sw_h > 2) 1 else 0;
             if (inset == 0) {
                 renderer.fillRect(base_x, base_y, sw_w, sw_h, ' ', color, color, render.Style{});
             } else {

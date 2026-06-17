@@ -5,7 +5,7 @@ const zit = @import("zit");
 
 /// A static file manager screen with breadcrumbs, toolbar, and directory table.
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

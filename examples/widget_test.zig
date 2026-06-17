@@ -15,12 +15,12 @@ fn updateStatus(comptime fmt: []const u8, args: anytype) void {
 
 pub fn main() !void {
     // Initialize allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Initialize terminal
-    var term = try zit.terminal.init(allocator);
+    var term = (try zit.terminal.initInteractive(allocator, "widget-test")) orelse return;
     defer term.deinit() catch {};
 
     // Initialize renderer
@@ -169,7 +169,7 @@ pub fn main() !void {
     var progress_increasing = true;
     var gauge_value: f32 = 20;
     var gauge_delta: f32 = 2.5;
-    const rng_seed: u64 = @bitCast(std.time.timestamp());
+    const rng_seed: u64 = 0x5a17_7e57_cafe_babe;
     var rng = std.Random.DefaultPrng.init(rng_seed);
 
     // Create widgets array

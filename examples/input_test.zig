@@ -6,7 +6,7 @@ const memory = zit.memory;
 
 pub fn main() !void {
     // Initialize memory manager
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -14,7 +14,7 @@ pub fn main() !void {
     defer memory_manager.deinit();
 
     // Initialize terminal with memory manager
-    var term = try zit.terminal.init(memory_manager.getArenaAllocator());
+    var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "input-test")) orelse return;
     defer term.deinit() catch {};
 
     // Initialize input handler with memory manager
@@ -32,9 +32,12 @@ pub fn main() !void {
     try term.clear();
 
     // Display instructions
-    var stdout_file = std.fs.File.stdout();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var stdout_file = std.Io.File.stdout();
     var stdout_buffer: [512]u8 = undefined;
-    var writer = stdout_file.writer(&stdout_buffer).interface;
+    var stdout_writer = stdout_file.writerStreaming(io, &stdout_buffer);
+    var writer = &stdout_writer.interface;
+    defer stdout_writer.flush() catch {};
     try writer.writeAll("Input Handler Test\n\n");
     try writer.writeAll("Press keys to see their events (press 'q' to quit)\n");
     try writer.writeAll("Click or move mouse to see mouse events\n\n");

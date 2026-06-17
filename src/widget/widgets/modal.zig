@@ -4,6 +4,7 @@ const Widget = base.Widget;
 const layout_module = @import("../../layout/layout.zig");
 const Size = layout_module.Size;
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -181,23 +182,28 @@ pub const Modal = struct {
         const bg = styled.bg;
         const style = styled.style;
 
-        // Draw border
-        for (0..rect.width) |i| {
-            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y, '-', self.border_fg, bg, style);
-            renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y + rect.height - 1, '-', self.border_fg, bg, style);
+        if (rect.width == 0 or rect.height == 0) return;
+
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', styled.fg, bg, style);
+
+        const draw_border = self.show_border and rect.width >= 2 and rect.height >= 2;
+        if (draw_border) {
+            renderer.drawBox(rect.x, rect.y, rect.width, rect.height, .rounded, self.border_fg, bg, style);
         }
 
         // Draw title if enabled
         if (self.show_title and self.title.len > 0) {
-            const title_y = rect.y;
+            const title_inset: u16 = if (draw_border) 1 else 0;
+            if (rect.width > title_inset * 2) {
+                const title_y = rect.y;
+                const title_x = rect.x + title_inset;
+                const title_width = rect.width - title_inset * 2;
+                var title_buf: [256]u8 = undefined;
+                const clipped = text_metrics.clipWithEllipsis(self.title, title_width, &title_buf);
+                const text_x = title_x + (title_width - clipped.width) / 2;
 
-            // Draw title background
-            renderer.fillRect(rect.x + 1, title_y, rect.width - 2, 1, ' ', self.title_fg, self.title_bg, style);
-
-            // Draw title text
-            const title_x = rect.x + @as(u16, @intCast(@divTrunc(@as(i16, @intCast(rect.width)) - @as(i16, @intCast(self.title.len)), 2)));
-            for (self.title, 0..) |char, i| {
-                renderer.drawChar(title_x + @as(u16, @intCast(i)), title_y, char, self.title_fg, self.title_bg, style);
+                renderer.fillRect(title_x, title_y, title_width, 1, ' ', self.title_fg, self.title_bg, style);
+                renderer.drawStr(text_x, title_y, clipped.text, self.title_fg, self.title_bg, style);
             }
         }
 
@@ -252,9 +258,22 @@ pub const Modal = struct {
 
         // Layout content if present
         if (self.content) |content| {
-            const content_rect = layout_module.Rect.init(modal_rect.x + 1, modal_rect.y + 2, modal_rect.width - 2, modal_rect.height - 3);
+            const content_rect = self.contentRect(modal_rect);
             try content.layout(content_rect);
         }
+    }
+
+    fn contentRect(self: *Modal, rect: layout_module.Rect) layout_module.Rect {
+        if (rect.width == 0 or rect.height == 0) return layout_module.Rect.init(rect.x, rect.y, 0, 0);
+
+        const border_inset: u16 = if (self.show_border and rect.width > 2 and rect.height > 2) 1 else 0;
+        const title_rows: u16 = if (self.show_title and self.title.len > 0 and rect.height > border_inset) 1 else 0;
+        const x = rect.x + border_inset;
+        const y = rect.y + border_inset + title_rows;
+        const width = if (rect.width > border_inset * 2) rect.width - border_inset * 2 else 0;
+        const consumed_height = border_inset * 2 + title_rows;
+        const height = if (rect.height > consumed_height) rect.height - consumed_height else 0;
+        return layout_module.Rect.init(x, y, width, height);
     }
 
     /// Get preferred size implementation for Modal
@@ -333,6 +352,62 @@ test "modal clamps to available bounds when empty" {
     try modal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
     try std.testing.expectEqual(@as(u16, 8), modal.widget.rect.width);
     try std.testing.expectEqual(@as(u16, 4), modal.widget.rect.height);
+}
+
+test "modal renders rounded border and respects no-border mode" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+    modal.width = 8;
+    modal.height = 4;
+    try modal.setTitle("Hi");
+    try modal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
+
+    var renderer = try render.Renderer.init(alloc, 8, 4);
+    defer renderer.deinit();
+    try modal.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '╭'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '╮'), renderer.back.getCell(7, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '╰'), renderer.back.getCell(0, 3).codepoint());
+    try std.testing.expectEqual(@as(u21, '╯'), renderer.back.getCell(7, 3).codepoint());
+
+    modal.setShowBorder(false);
+    var no_border = try render.Renderer.init(alloc, 8, 4);
+    defer no_border.deinit();
+    try modal.widget.draw(&no_border);
+    try std.testing.expect(no_border.back.getCell(0, 0).codepoint() != '╭');
+}
+
+test "modal title renders wide utf8 glyphs as graphemes" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    modal.width = 4;
+    modal.height = 3;
+    try modal.setTitle("界");
+    try modal.widget.layout(layout_module.Rect.init(0, 0, 4, 3));
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    try modal.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(1, 0).*.codepoint());
+    try std.testing.expect(renderer.back.getCell(2, 0).*.continuation);
+}
+
+test "modal tolerates tiny layouts" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+    try modal.setTitle("Tiny");
+    try modal.widget.layout(layout_module.Rect.init(0, 0, 1, 1));
+
+    var renderer = try render.Renderer.init(alloc, 1, 1);
+    defer renderer.deinit();
+    try modal.widget.draw(&renderer);
 }
 
 test "modal maintains parent linkage for content" {

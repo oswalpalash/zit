@@ -5,12 +5,12 @@ const zit = @import("zit");
 
 pub fn main() !void {
     // Initialize allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     // Initialize terminal
-    var term = try zit.terminal.init(allocator);
+    var term = (try zit.terminal.initInteractive(allocator, "render-test")) orelse return;
     defer term.deinit() catch {};
 
     // Get terminal size

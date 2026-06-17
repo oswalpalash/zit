@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 
@@ -184,8 +185,9 @@ pub const TreeView = struct {
 
             const label_start = indent + 2;
             if (label_start < rect.width) {
-                const max_label = @min(node.label.len, rect.width - label_start);
-                renderer.drawStr(rect.x + label_start, y_pos, node.label[0..max_label], row_fg, row_bg, self.palette.style);
+                var label_buf: [256]u8 = undefined;
+                const clipped = text_metrics.clipWithEllipsis(node.label, rect.width - label_start, &label_buf);
+                renderer.drawStr(rect.x + label_start, y_pos, clipped.text, row_fg, row_bg, self.palette.style);
             }
 
             row += 1;
@@ -353,4 +355,23 @@ test "tree view preferred size defaults when empty" {
     const size = try tree.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 12), size.width);
     try std.testing.expectEqual(@as(u16, 3), size.height);
+}
+
+test "tree view clips labels without splitting wide utf8 glyphs" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    _ = try tree.addRoot("界abcd");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 7, 1));
+
+    var renderer = try render.Renderer.init(alloc, 7, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(2, 0).*.codepoint());
+    try std.testing.expect(renderer.back.getCell(3, 0).*.continuation);
+    try std.testing.expectEqual(@as(u21, '.'), renderer.back.getCell(6, 0).*.codepoint());
 }

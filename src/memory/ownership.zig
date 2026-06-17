@@ -1,16 +1,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const compat = @import("../compat.zig");
 
 pub const RefCounted = struct {
     const Self = @This();
 
     ref_count: usize,
-    mutex: std.Thread.Mutex,
+    mutex: compat.Mutex,
 
     pub fn init() Self {
         return Self{
             .ref_count = 1,
-            .mutex = std.Thread.Mutex{},
+            .mutex = .{},
         };
     }
 
