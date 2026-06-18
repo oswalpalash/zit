@@ -4,8 +4,9 @@
 The normal interactive smoke proves examples render and quit. This probe changes
 the pseudo-terminal window size while `input_test` is running and requires the
 example to print the new resize dimensions before it can pass. It then launches
-every public interactive example, changes the PTY geometry, and requires the
-process to redraw a live resize marker with the new geometry and quit on `q`.
+every public interactive example, drives a burst of tiny PTY geometries, and
+requires the process to recover by redrawing a live resize marker at the final
+geometry and quitting on `q`.
 """
 
 from __future__ import annotations
@@ -58,6 +59,17 @@ DEFAULT_RESIZE_EXAMPLES = (
     "widget_gallery_layouts",
 )
 
+
+DEFAULT_STRESS_SIZES = (
+    (12, 40),
+    (8, 24),
+    (4, 12),
+    (2, 8),
+    (1, 1),
+    (5, 18),
+)
+
+
 def wait_for_text(master_fd: int, pid: int, output: bytearray, marker: str, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -67,6 +79,37 @@ def wait_for_text(master_fd: int, pid: int, output: bytearray, marker: str, time
         if wait_for_pid(pid, 0.0) is not None:
             return False
     return False
+
+
+def assert_child_healthy(pid: int, output: bytearray, label: str) -> None:
+    exit_code = wait_for_pid(pid, 0.0)
+    if exit_code is not None:
+        raise RuntimeError(
+            f"{label} exited during resize stress before q with code {exit_code}\n"
+            f"--- terminal tail ---\n{tail_text(bytes(output))}"
+        )
+
+    text = stripped_text(bytes(output))
+    for marker_text in FATAL_OUTPUT_MARKERS:
+        if marker_text in text:
+            raise RuntimeError(
+                f"{label} emitted fatal diagnostic marker {marker_text!r}\n"
+                f"--- terminal tail ---\n{tail_text(bytes(output))}"
+            )
+
+
+def drive_resize_stress(
+    master_fd: int,
+    pid: int,
+    output: bytearray,
+    label: str,
+    sizes: tuple[tuple[int, int], ...],
+    settle_time: float,
+) -> None:
+    for stress_rows, stress_cols in sizes:
+        set_window_size(master_fd, stress_rows, stress_cols)
+        output.extend(read_available(master_fd, settle_time))
+        assert_child_healthy(pid, output, label)
 
 
 def quit_child(master_fd: int, pid: int, timeout: float, output: bytearray) -> int | None:
@@ -87,7 +130,17 @@ def quit_child(master_fd: int, pid: int, timeout: float, output: bytearray) -> i
     return exit_code
 
 
-def run_probe(root: Path, rows: int, cols: int, new_rows: int, new_cols: int, timeout: float, quit_timeout: float) -> bytes:
+def run_probe(
+    root: Path,
+    rows: int,
+    cols: int,
+    new_rows: int,
+    new_cols: int,
+    timeout: float,
+    quit_timeout: float,
+    stress_sizes: tuple[tuple[int, int], ...],
+    stress_settle: float,
+) -> bytes:
     if pty is None:
         print("resize smoke skipped: pty module is unavailable on this platform")
         return b""
@@ -119,6 +172,7 @@ def run_probe(root: Path, rows: int, cols: int, new_rows: int, new_cols: int, ti
                 f"--- terminal tail ---\n{tail_text(bytes(output))}"
             )
 
+        drive_resize_stress(master_fd, pid, output, "input_test", stress_sizes, stress_settle)
         set_window_size(master_fd, new_rows, new_cols)
         marker = f"Resize: {new_cols}x{new_rows}"
         if not wait_for_text(master_fd, pid, output, marker, timeout):
@@ -168,6 +222,8 @@ def run_example_resize_probe(
     new_cols: int,
     timeout: float,
     quit_timeout: float,
+    stress_sizes: tuple[tuple[int, int], ...],
+    stress_settle: float,
 ) -> bytes:
     if pty is None:
         print("resize smoke skipped: pty module is unavailable on this platform")
@@ -201,6 +257,7 @@ def run_example_resize_probe(
                     f"--- terminal tail ---\n{tail_text(bytes(output))}"
                 )
 
+        drive_resize_stress(master_fd, pid, output, example.binary, stress_sizes, stress_settle)
         set_window_size(master_fd, new_rows, new_cols)
         resized_marker = f"resize: {new_cols}x{new_rows}"
         if not wait_for_text(master_fd, pid, output, resized_marker, timeout):
@@ -257,6 +314,33 @@ def select_resize_examples(names: list[str] | None) -> list[Example]:
     return selected
 
 
+def parse_stress_sizes(value: str) -> tuple[tuple[int, int], ...]:
+    if value.strip() == "":
+        return ()
+
+    sizes: list[tuple[int, int]] = []
+    for item in value.split(","):
+        raw = item.strip().lower()
+        if not raw:
+            continue
+        if "x" not in raw:
+            raise argparse.ArgumentTypeError(f"stress size {item!r} must use ROWSxCOLS")
+        rows_text, cols_text = raw.split("x", 1)
+        try:
+            rows = int(rows_text)
+            cols = int(cols_text)
+        except ValueError as err:
+            raise argparse.ArgumentTypeError(f"stress size {item!r} must contain integers") from err
+        if rows < 1 or cols < 1:
+            raise argparse.ArgumentTypeError(f"stress size {item!r} must be positive")
+        sizes.append((rows, cols))
+    return tuple(sizes)
+
+
+def format_stress_sizes(sizes: tuple[tuple[int, int], ...]) -> str:
+    return ", ".join(f"{rows}x{cols}" for rows, cols in sizes)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true", help="reuse zig-out/bin instead of running zig build first")
@@ -266,6 +350,13 @@ def main() -> int:
     parser.add_argument("--new-cols", type=int, default=91, help="resized PTY column count")
     parser.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for render and resize markers")
     parser.add_argument("--quit-timeout", type=float, default=3.0, help="seconds to wait for q to terminate")
+    parser.add_argument(
+        "--stress-sizes",
+        type=parse_stress_sizes,
+        default=DEFAULT_STRESS_SIZES,
+        help="comma-separated ROWSxCOLS PTY sizes to apply before the final resize; empty disables stress",
+    )
+    parser.add_argument("--stress-settle", type=float, default=0.06, help="seconds to drain output after each stress resize")
     parser.add_argument("--example", action="append", dest="examples", help="resizable example binary to probe; may be repeated")
     args = parser.parse_args()
 
@@ -273,9 +364,11 @@ def main() -> int:
     if not args.no_build:
         ensure_binaries(root)
 
-    data = run_probe(root, args.rows, args.cols, args.new_rows, args.new_cols, args.timeout, args.quit_timeout)
+    data = run_probe(root, args.rows, args.cols, args.new_rows, args.new_cols, args.timeout, args.quit_timeout, args.stress_sizes, args.stress_settle)
     if pty is not None:
-        print(f"ok resize smoke: input_test reported {args.new_cols}x{args.new_rows} and quit ({len(data)} bytes)")
+        stress = format_stress_sizes(args.stress_sizes)
+        suffix = f" after stress [{stress}]" if stress else ""
+        print(f"ok resize smoke: input_test reported {args.new_cols}x{args.new_rows}{suffix} and quit ({len(data)} bytes)")
 
     examples = select_resize_examples(args.examples)
     for example in examples:
@@ -288,9 +381,13 @@ def main() -> int:
             args.new_cols,
             args.timeout,
             args.quit_timeout,
+            args.stress_sizes,
+            args.stress_settle,
         )
         if pty is not None:
-            print(f"ok resize smoke: {example.binary} redrew at {args.new_cols}x{args.new_rows} and quit ({len(example_data)} bytes)")
+            stress = format_stress_sizes(args.stress_sizes)
+            suffix = f" after stress [{stress}]" if stress else ""
+            print(f"ok resize smoke: {example.binary} redrew at {args.new_cols}x{args.new_rows}{suffix} and quit ({len(example_data)} bytes)")
     return 0
 
 

@@ -203,7 +203,17 @@ fn applyTheme(current: theme.Theme, chart: *widget.Chart, autocomplete: *widget.
 }
 
 fn pointInRect(x: u16, y: u16, rect: layout.Rect) bool {
-    return x >= rect.x and y >= rect.y and x < rect.x + rect.width and y < rect.y + rect.height;
+    const max_x = addClamped(rect.x, rect.width);
+    const max_y = addClamped(rect.y, rect.height);
+    return x >= rect.x and y >= rect.y and x < max_x and y < max_y;
+}
+
+fn addClamped(value: u16, amount: u16) u16 {
+    return std.math.add(u16, value, amount) catch std.math.maxInt(u16);
+}
+
+fn subClamped(value: u16, amount: u16) u16 {
+    return if (value > amount) value - amount else 0;
 }
 
 fn cycleImageMode(state: *DemoState) void {
@@ -628,14 +638,17 @@ pub fn main(init: std.process.Init) !void {
         const chart_height: u16 = if (inner.height > 20) inner.height - header_height - 6 else inner.height / 2;
         const side_gap: u16 = if (inner.width > 50) 3 else 0;
         const chart_width: u16 = if (inner.width > 50 and inner.width > 27) inner.width - 27 else inner.width;
-        const chart_rect = layout.Rect.init(inner.x + 1, inner.y + header_height, chart_width, chart_height);
-        const info_rect = layout.Rect.init(chart_rect.x + chart_rect.width + side_gap, chart_rect.y, if (inner.width > chart_width + side_gap + 2) inner.width - chart_width - side_gap - 2 else 0, chart_height);
-        const search_rect = layout.Rect.init(inner.x + 1, inner.y + 2, chart_width, if (header_height > 3) header_height - 3 else 1);
-        const chart_widget_rect = layout.Rect.init(chart_rect.x, chart_rect.y + 2, chart_rect.width, if (chart_rect.height > 2) chart_rect.height - 2 else chart_rect.height);
-        const image_rect = layout.Rect.init(info_rect.x, info_rect.y + 2, info_rect.width, info_rect.height / 2);
+        const content_x = addClamped(inner.x, 1);
+        const chart_rect = layout.Rect.init(content_x, addClamped(inner.y, header_height), chart_width, chart_height);
+        const info_x = addClamped(addClamped(chart_rect.x, chart_rect.width), side_gap);
+        const info_width = if (inner.width > chart_width + side_gap + 2) inner.width - chart_width - side_gap - 2 else 0;
+        const info_rect = layout.Rect.init(info_x, chart_rect.y, info_width, chart_height);
+        const search_rect = layout.Rect.init(content_x, addClamped(inner.y, 2), chart_width, if (header_height > 3) header_height - 3 else 1);
+        const chart_widget_rect = layout.Rect.init(chart_rect.x, addClamped(chart_rect.y, 2), chart_rect.width, if (chart_rect.height > 2) chart_rect.height - 2 else chart_rect.height);
+        const image_rect = layout.Rect.init(info_rect.x, addClamped(info_rect.y, 2), info_rect.width, info_rect.height / 2);
         const log_height: u16 = if (inner.height > 6) 3 else 1;
         const log_y = if (inner.height > log_height) inner.y + inner.height - log_height else inner.y;
-        const log_rect = layout.Rect.init(inner.x + 1, log_y, inner.width - 2, log_height);
+        const log_rect = layout.Rect.init(content_x, log_y, subClamped(inner.width, 2), log_height);
 
         try autocomplete.widget.layout(search_rect);
         try chart.widget.layout(chart_widget_rect);
@@ -646,12 +659,12 @@ pub fn main(init: std.process.Init) !void {
         chart.setType(state.chart_type);
 
         // Title + instructions.
-        renderer.drawSmartStr(inner.x + 1, inner.y, "Chart + autocomplete + context menu + drag/drop", accent, bg, render.Style{ .bold = true });
-        renderer.drawSmartStr(inner.x + 1, inner.y + 1, "Keys: q quit | t theme | c chart | m image | right click menu | drag chips onto chart/image", muted, bg, render.Style{});
+        renderer.drawSmartStr(content_x, inner.y, "Chart + autocomplete + context menu + drag/drop", accent, bg, render.Style{ .bold = true });
+        renderer.drawSmartStr(content_x, addClamped(inner.y, 1), "Keys: q quit | t theme | c chart | m image | right click menu | drag chips onto chart/image", muted, bg, render.Style{});
 
         // Section backgrounds.
-        style.drawPanel(&renderer, layout.Rect.init(chart_rect.x - 1, chart_rect.y - 1, chart_rect.width + 2, chart_rect.height + 2), palette, "Live Chart", accent);
-        style.drawPanel(&renderer, layout.Rect.init(info_rect.x - 1, info_rect.y - 1, info_rect.width + 2, info_rect.height + 2), palette, "Image + Drag Targets", palette.success);
+        style.drawPanel(&renderer, layout.Rect.init(subClamped(chart_rect.x, 1), subClamped(chart_rect.y, 1), addClamped(chart_rect.width, 2), addClamped(chart_rect.height, 2)), palette, "Live Chart", accent);
+        style.drawPanel(&renderer, layout.Rect.init(subClamped(info_rect.x, 1), subClamped(info_rect.y, 1), addClamped(info_rect.width, 2), addClamped(info_rect.height, 2)), palette, "Image + Drag Targets", palette.success);
 
         autocomplete.widget.markDirty();
         chart.widget.markDirty();
@@ -665,8 +678,8 @@ pub fn main(init: std.process.Init) !void {
         var idx: usize = 0;
         while (idx < drag_tokens.len) : (idx += 1) {
             const token = drag_tokens[idx];
-            const token_x = info_rect.x + 1;
-            const token_y = image_rect.y + image_rect.height + 1 + @as(u16, @intCast(idx)) * 3;
+            const token_x = addClamped(info_rect.x, 1);
+            const token_y = addClamped(addClamped(image_rect.y, image_rect.height), @as(u16, @intCast(1 + idx * 3)));
             const token_w: u16 = if (info_rect.width > 4) info_rect.width - 2 else info_rect.width;
             token_rects[idx] = layout.Rect.init(token_x, token_y, token_w, 2);
             const rect = token_rects[idx];
@@ -676,12 +689,13 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // Event log.
-        renderer.drawSmartStr(log_rect.x, log_rect.y - 1, "Event log (drag + menu + search)", accent, bg, render.Style{ .bold = true });
+        renderer.drawSmartStr(log_rect.x, subClamped(log_rect.y, 1), "Event log (drag + menu + search)", accent, bg, render.Style{ .bold = true });
         var line: usize = 0;
         const visible_log_lines = @min(state.log.lines.items.len, @as(usize, log_rect.height));
         const start_line = if (visible_log_lines > 0 and state.log.lines.items.len > visible_log_lines) state.log.lines.items.len - visible_log_lines else 0;
         var row: u16 = log_rect.y;
-        while (line < state.log.lines.items.len - start_line and row < log_rect.y + log_rect.height) : ({
+        const log_limit_y = addClamped(log_rect.y, log_rect.height);
+        while (line < state.log.lines.items.len - start_line and row < log_limit_y) : ({
             line += 1;
             row += 1;
         }) {
@@ -753,7 +767,7 @@ pub fn main(init: std.process.Init) !void {
                 state.selected_metric,
             },
         ) catch "status";
-        renderer.drawSmartStr(inner.x + 1, log_rect.y + log_rect.height, status, muted, bg, render.Style{});
+        renderer.drawSmartStr(content_x, addClamped(log_rect.y, log_rect.height), status, muted, bg, render.Style{});
         renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         try renderer.render();
