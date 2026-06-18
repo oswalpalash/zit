@@ -12,6 +12,7 @@ pub const SnapshotError = error{
     InvalidSnapshotControlCode,
     InvalidSnapshotWidth,
     InvalidSnapshotHeight,
+    InvalidSnapshotBuffer,
     MissingSnapshotTrailingNewline,
     SnapshotTextMissing,
 };
@@ -264,7 +265,7 @@ pub const Snapshot = struct {
 
         for (0..buffer.height) |y| {
             for (0..buffer.width) |x| {
-                const cell = buffer.getCell(@intCast(x), @intCast(y)).*;
+                const cell = (buffer.getCellOrNull(@intCast(x), @intCast(y)) orelse return SnapshotError.InvalidSnapshotBuffer).*;
                 const glyph_bytes = if (cell.continuation) " " else cell.glyph.slice();
                 const active = if (glyph_bytes.len == 0) " " else glyph_bytes;
                 @memcpy(buf[idx .. idx + active.len], active);

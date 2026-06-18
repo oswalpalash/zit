@@ -621,6 +621,8 @@ pub const Buffer = struct {
     height: u16,
     /// Cells in the buffer
     cells: []Cell,
+    /// Per-buffer fallback returned by legacy invalid reads.
+    fallback_cell: Cell,
     /// Allocator for buffer operations
     allocator: std.mem.Allocator,
 
@@ -640,6 +642,7 @@ pub const Buffer = struct {
             .width = width,
             .height = height,
             .cells = cells,
+            .fallback_cell = Cell.blank(),
             .allocator = allocator,
         };
     }
@@ -651,29 +654,22 @@ pub const Buffer = struct {
 
     /// Get cell at specified coordinates
     pub fn getCell(self: *Buffer, x: u16, y: u16) *Cell {
-        if (self.cells.len == 0) {
-            std.debug.panic("zit: attempted to access a cell in an uninitialized buffer", .{});
-        }
-        if (x >= self.width or y >= self.height) {
-            std.debug.assert(false);
-            return &self.cells[0];
-        }
-        const idx = self.cellIndex(x, y);
+        const idx = self.cellIndexOrNull(x, y) orelse {
+            self.fallback_cell = Cell.blank();
+            return &self.fallback_cell;
+        };
+        return &self.cells[idx];
+    }
+
+    /// Get cell at specified coordinates, returning null for uninitialized or out-of-bounds buffers.
+    pub fn getCellOrNull(self: *Buffer, x: u16, y: u16) ?*Cell {
+        const idx = self.cellIndexOrNull(x, y) orelse return null;
         return &self.cells[idx];
     }
 
     /// Set cell at specified coordinates
     pub fn setCell(self: *Buffer, x: u16, y: u16, cell: Cell) void {
-        if (self.cells.len == 0) {
-            std.debug.assert(false);
-            return;
-        }
-        if (x >= self.width or y >= self.height) {
-            std.debug.assert(false);
-            return; // Out of bounds
-        }
-
-        const idx = self.cellIndex(x, y);
+        const idx = self.cellIndexOrNull(x, y) orelse return;
         self.cells[idx] = cell;
     }
 
@@ -698,13 +694,11 @@ pub const Buffer = struct {
         }
     }
 
-    fn cellIndex(self: *Buffer, x: u16, y: u16) usize {
-        const stride = std.math.mul(usize, @as(usize, self.width), @as(usize, y)) catch {
-            std.debug.panic("zit: buffer row stride overflow for {d}x{d}", .{ self.width, self.height });
-        };
-        const offset = std.math.add(usize, stride, @as(usize, x)) catch {
-            std.debug.panic("zit: buffer index overflow for {d}x{d}", .{ self.width, self.height });
-        };
+    fn cellIndexOrNull(self: *const Buffer, x: u16, y: u16) ?usize {
+        if (self.cells.len == 0 or x >= self.width or y >= self.height) return null;
+        const stride = std.math.mul(usize, @as(usize, self.width), @as(usize, y)) catch return null;
+        const offset = std.math.add(usize, stride, @as(usize, x)) catch return null;
+        if (offset >= self.cells.len) return null;
         return offset;
     }
 };
@@ -1814,6 +1808,34 @@ test "renderer bounds checks skip off-screen writes" {
             try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(@intCast(x), @intCast(y)).codepoint());
         }
     }
+}
+
+test "buffer invalid reads use blank fallback without trapping" {
+    const alloc = std.testing.allocator;
+    var zero = try Buffer.init(alloc, 0, 0);
+    defer zero.deinit();
+
+    zero.setCell(0, 0, Cell.init('X', Color.named(.white), Color.named(.black), Style{}));
+    zero.fillRect(0, 0, 1, 1, Cell.init('Y', Color.named(.white), Color.named(.black), Style{}));
+
+    try std.testing.expectEqual(@as(?*Cell, null), zero.getCellOrNull(0, 0));
+    const zero_cell = zero.getCell(0, 0);
+    try std.testing.expectEqual(@as(u21, ' '), zero_cell.codepoint());
+    zero_cell.* = Cell.init('Z', Color.named(.white), Color.named(.black), Style{});
+    try std.testing.expectEqual(@as(u21, ' '), zero.getCell(0, 0).codepoint());
+
+    var buffer = try Buffer.init(alloc, 1, 1);
+    defer buffer.deinit();
+
+    buffer.setCell(0, 0, Cell.init('A', Color.named(.white), Color.named(.black), Style{}));
+    buffer.setCell(1, 0, Cell.init('B', Color.named(.white), Color.named(.black), Style{}));
+    buffer.setCell(0, 1, Cell.init('C', Color.named(.white), Color.named(.black), Style{}));
+
+    try std.testing.expectEqual(@as(u21, 'A'), buffer.getCell(0, 0).codepoint());
+    try std.testing.expect(buffer.getCellOrNull(0, 0) != null);
+    try std.testing.expectEqual(@as(?*Cell, null), buffer.getCellOrNull(1, 0));
+    try std.testing.expectEqual(@as(u21, ' '), buffer.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), buffer.getCell(0, 0).codepoint());
 }
 
 test "renderer draws strings at edge without overflow" {

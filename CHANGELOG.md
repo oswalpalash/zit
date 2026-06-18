@@ -60,6 +60,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Runtime RGB and ANSI-256 color constructors now clamp invalid, oversized, and NaN values instead of panicking on caller-provided theme data.
 - Runtime layout constraints now normalize inverted min/max bounds instead of panicking during dynamic resize or reflow calculations.
 - Runtime layout dimensions now clamp invalid signed, oversized, and NaN values, and rectangle intersection/shrink math avoids u16 intermediate overflows.
+- Renderer buffers now provide `getCellOrNull`, return a blank fallback for zero-sized or out-of-bounds legacy reads, and ignore invalid writes instead of trapping during edge-case geometry paths.
 - Labels, buttons, and checkboxes now clip by grapheme and terminal-cell width, preserving UTF-8 while avoiding premature ellipsizing for exact-fit text.
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.
