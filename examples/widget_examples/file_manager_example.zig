@@ -8,6 +8,7 @@ const widget = zit.widget;
 const theme = zit.widget.theme;
 const memory = zit.memory;
 const input = zit.input;
+const style = @import("example_style.zig");
 
 const StatusLine = struct {
     buffer: [160]u8 = undefined,
@@ -95,11 +96,8 @@ pub fn main() !void {
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
 
-    const ui_theme = theme.Theme.dark();
-    const bg = ui_theme.color(.background);
-    const text = ui_theme.color(.text);
-    const muted = ui_theme.color(.muted);
-    const surface = ui_theme.color(.surface);
+    const palette = style.filePalette();
+    const ui_theme = style.asTheme(palette);
 
     var tree = try widget.TreeView.init(memory_manager.getWidgetPoolAllocator());
     defer tree.deinit();
@@ -121,15 +119,14 @@ pub fn main() !void {
     var list = try widget.List.init(memory_manager.getWidgetPoolAllocator());
     defer list.deinit();
     list.setTheme(ui_theme);
-    list.border = .single;
+    list.border = .none;
+    list.bg = palette.surface;
+    list.fg = palette.text;
+    list.selected_bg = render.Color.rgb(16, 51, 34);
+    list.selected_fg = palette.text;
+    list.focused_bg = palette.surface_alt;
+    list.focused_fg = palette.text;
     try loadFiles(list, "apps");
-
-    var split = try widget.SplitPane.init(memory_manager.getWidgetPoolAllocator());
-    defer split.deinit();
-    split.setOrientation(.horizontal);
-    split.setRatio(0.33);
-    split.setFirst(&tree.widget);
-    split.setSecond(&list.widget);
 
     var status = StatusLine{};
 
@@ -150,15 +147,38 @@ pub fn main() !void {
     var running = true;
     while (running) {
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', text, bg, render.Style{});
+        const content = style.drawChrome(&renderer, palette, "zit file manager", "tree view / typeahead / detail pane");
 
-        const header = "File manager: arrows navigate, Tab switches focus, m/right-click opens menu";
-        renderer.drawSmartStr(1, 0, header, muted, bg, render.Style{});
+        if (content.height > 6 and content.width > 20) {
+            const gap: u16 = 2;
+            const tree_w: u16 = if (content.width > 72) 32 else content.width / 3;
+            const files_w: u16 = if (content.width > tree_w + gap) content.width - tree_w - gap else 0;
+            const tree_rect = layout.Rect.init(content.x, content.y, tree_w, content.height);
+            const files_rect = layout.Rect.init(content.x + tree_w + gap, content.y, files_w, content.height);
 
-        if (renderer.back.height > 2 and renderer.back.width > 2) {
-            const inner = layout.Rect.init(1, 1, renderer.back.width - 2, renderer.back.height - 2);
-            try split.widget.layout(inner);
-            try split.widget.draw(&renderer);
+            style.drawPanel(&renderer, tree_rect, palette, "Workspace Tree", palette.accent);
+            style.drawPanel(&renderer, files_rect, palette, "Directory View", palette.accent);
+
+            if (tree_rect.width > 4 and tree_rect.height > 4) {
+                try tree.widget.layout(layout.Rect.init(tree_rect.x + 2, tree_rect.y + 3, tree_rect.width - 4, tree_rect.height - 5));
+                tree.widget.markDirty();
+                try tree.widget.draw(&renderer);
+            }
+            if (files_rect.width > 4 and files_rect.height > 7) {
+                renderer.fillRect(files_rect.x + 2, files_rect.y + 3, files_rect.width - 4, 1, ' ', palette.accent, palette.surface_alt, render.Style{ .bold = true });
+                renderer.drawSmartStr(files_rect.x + 3, files_rect.y + 3, "NAME", palette.accent, palette.surface_alt, render.Style{ .bold = true });
+                if (files_rect.width > 34) renderer.drawSmartStr(files_rect.x + files_rect.width - 18, files_rect.y + 3, "TYPE", palette.accent, palette.surface_alt, render.Style{ .bold = true });
+                try list.widget.layout(layout.Rect.init(files_rect.x + 2, files_rect.y + 5, files_rect.width - 4, files_rect.height - 9));
+                list.widget.markDirty();
+                try list.widget.draw(&renderer);
+
+                const detail_y = files_rect.y + files_rect.height - 3;
+                renderer.fillRect(files_rect.x + 2, detail_y, files_rect.width - 4, 1, ' ', palette.text, palette.surface_alt, render.Style{});
+                const label = list.getSelectedItem() orelse "(none)";
+                var detail_buf: [160]u8 = undefined;
+                const detail = std.fmt.bufPrint(&detail_buf, "selected: {s}  |  enter opens  |  q quits", .{label}) catch "q quits";
+                renderer.drawSmartStr(files_rect.x + 3, detail_y, detail, palette.accent, palette.surface_alt, render.Style{ .bold = true });
+            }
         }
 
         // Keep the context menu width consistent when reopened.
@@ -166,17 +186,14 @@ pub fn main() !void {
         ctx_menu.widget.rect.width = pref.width;
         if (ctx_menu.open) {
             ctx_menu.widget.setFocus(true);
+            ctx_menu.widget.markDirty();
             try ctx_menu.widget.draw(&renderer);
         } else {
             ctx_menu.widget.setFocus(false);
         }
 
         // Status bar at the bottom for quick feedback.
-        if (renderer.back.height > 0) {
-            const status_y: u16 = renderer.back.height - 1;
-            renderer.fillRect(0, status_y, renderer.back.width, 1, ' ', text, surface, render.Style{});
-            renderer.drawSmartStr(1, status_y, status.text, text, surface, render.Style{});
-        }
+        style.drawStatus(&renderer, palette, status.text);
 
         try renderer.render();
 

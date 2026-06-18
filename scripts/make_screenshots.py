@@ -524,41 +524,25 @@ def render_svg(screen: TerminalEmulator, cell_w: int = 9, cell_h: int = 16, padd
                     f'  <rect x="{rect_x}" y="{rect_y}" width="{rect_w}" height="{cell_h}" fill="{rgb_hex(bg)}"/>'
                 )
 
-    font = "JetBrains Mono, 'Fira Code', SFMono-Regular, Consolas, Menlo, monospace"
+    font = "monospace"
     for y, row in enumerate(screen.cells):
         text_y = padding + y * cell_h
-        lines.append(
-            f'  <text x="{padding}" y="{text_y}" xml:space="preserve" font-family="{font}" font-size="13" '
-            f'dominant-baseline="hanging">'
-        )
-        current_fg: Optional[Tuple[int, int, int]] = None
-        current_bold = False
-        buffer = ""
-
-        def flush():
-            nonlocal buffer, current_fg, current_bold
-            if not buffer:
-                return
-            attrs = []
-            if current_fg:
-                attrs.append(f'fill="{rgb_hex(current_fg)}"')
-            if current_bold:
-                attrs.append('font-weight="700"')
-            attr_str = " " + " ".join(attrs) if attrs else ""
-            lines.append(f"    <tspan{attr_str}>{html.escape(buffer)}</tspan>")
-            buffer = ""
-
-        for cell in row:
-            fg = cell.fg
-            bold = cell.bold
+        for x, cell in enumerate(row):
             ch = cell.ch if cell.ch != "\x00" else " "
-            if (fg != current_fg) or (bold != current_bold):
-                flush()
-                current_fg = fg
-                current_bold = bold
-            buffer += ch
-        flush()
-        lines.append("  </text>")
+            if ch == " ":
+                continue
+            attrs = [
+                f'x="{padding + x * cell_w}"',
+                f'y="{text_y}"',
+                'xml:space="preserve"',
+                f'font-family="{font}"',
+                'font-size="13"',
+                'dominant-baseline="hanging"',
+                f'fill="{rgb_hex(cell.fg)}"',
+            ]
+            if cell.bold:
+                attrs.append('font-weight="700"')
+            lines.append(f'  <text {" ".join(attrs)}>{html.escape(ch)}</text>')
     lines.append("</svg>")
     return "\n".join(lines) + "\n"
 
@@ -814,8 +798,8 @@ def main() -> None:
     else:
         demos = {
             "system_monitor_example": args.bin_dir / "system_monitor",
-            "file_manager_example": args.bin_dir / "file_manager",
-            "showcase_demo": args.bin_dir / "showcase_demo",
+            "file_manager_example": args.bin_dir / "file_manager_example",
+            "showcase_demo": args.bin_dir / "widget_showcase",
         }
         for name, path in demos.items():
             if not path.exists():

@@ -9,6 +9,7 @@ const theme = zit.widget.theme;
 const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
+const style = @import("example_style.zig");
 
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
@@ -470,17 +471,15 @@ pub fn main() !void {
         }
         ctx_menu.widget.setFocus(ctx_menu.open);
 
-        const bg = current_theme.color(.background);
-        const surface = current_theme.color(.surface);
-        const accent = current_theme.color(.accent);
-        const text = current_theme.color(.text);
-        const muted = current_theme.color(.muted);
+        const palette = style.showcasePalette();
+        const bg = palette.bg;
+        const surface = palette.surface;
+        const accent = palette.accent;
+        const text = palette.text;
+        const muted = palette.muted;
 
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', text, bg, render.Style{});
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, accent, bg, render.Style{});
-
-        const inner = layout.Rect.init(1, 1, renderer.back.width - 2, renderer.back.height - 2);
+        const inner = style.drawChrome(&renderer, palette, "zit widget showcase", "featureful without visual noise");
         const header_height: u16 = if (inner.height > 6) 5 else inner.height / 3;
         const chart_height: u16 = if (inner.height > 20) inner.height - header_height - 6 else inner.height / 2;
         const chart_width: u16 = if (inner.width > 50) inner.width - 24 else inner.width;
@@ -501,35 +500,37 @@ pub fn main() !void {
         chart.setType(state.chart_type);
 
         // Title + instructions.
-        renderer.drawSmartStr(inner.x + 1, inner.y, "Zit showcase: chart + autocomplete + context menu + drag/drop", accent, bg, render.Style{ .bold = true });
-        renderer.drawSmartStr(inner.x + 1, inner.y + 1, "Keys: q quit | t theme | c chart | m image | right click for menu | drag chips onto chart/image", text, bg, render.Style{});
+        renderer.drawSmartStr(inner.x + 1, inner.y, "Chart + autocomplete + context menu + drag/drop", accent, bg, render.Style{ .bold = true });
+        renderer.drawSmartStr(inner.x + 1, inner.y + 1, "Keys: q quit | t theme | c chart | m image | right click menu | drag chips onto chart/image", muted, bg, render.Style{});
 
         // Section backgrounds.
-        renderer.drawBox(chart_rect.x - 1, chart_rect.y - 1, chart_rect.width + 2, chart_rect.height + 2, render.BorderStyle.single, accent, surface, render.Style{});
-        renderer.drawBox(info_rect.x - 1, info_rect.y - 1, info_rect.width + 2, info_rect.height + 2, render.BorderStyle.single, accent, surface, render.Style{});
-        renderer.drawSmartStr(chart_rect.x, chart_rect.y - 2, "Live chart", accent, bg, render.Style{ .bold = true });
-        renderer.drawSmartStr(info_rect.x, info_rect.y - 2, "Image + drag targets", accent, bg, render.Style{ .bold = true });
+        style.drawPanel(&renderer, layout.Rect.init(chart_rect.x - 1, chart_rect.y - 1, chart_rect.width + 2, chart_rect.height + 2), palette, "Live Chart", accent);
+        style.drawPanel(&renderer, layout.Rect.init(info_rect.x - 1, info_rect.y - 1, info_rect.width + 2, info_rect.height + 2), palette, "Image + Drag Targets", palette.success);
 
+        autocomplete.widget.markDirty();
+        chart.widget.markDirty();
+        image.widget.markDirty();
         try autocomplete.widget.draw(&renderer);
         try chart.widget.draw(&renderer);
         try image.widget.draw(&renderer);
 
         // Drag tokens.
         var token_rects: [drag_tokens.len]layout.Rect = undefined;
-        const token_base_y = chart_rect.y + chart_rect.height + 1;
         var idx: usize = 0;
         while (idx < drag_tokens.len) : (idx += 1) {
             const token = drag_tokens[idx];
-            const token_x = inner.x + 2 + @as(u16, @intCast(idx)) * 24;
-            token_rects[idx] = layout.Rect.init(token_x, token_base_y, 20, 3);
+            const token_x = info_rect.x + 1;
+            const token_y = image_rect.y + image_rect.height + 1 + @as(u16, @intCast(idx)) * 3;
+            const token_w: u16 = if (info_rect.width > 4) info_rect.width - 2 else info_rect.width;
+            token_rects[idx] = layout.Rect.init(token_x, token_y, token_w, 2);
             const rect = token_rects[idx];
             renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', text, token.accent, render.Style{});
             renderer.drawBox(rect.x, rect.y, rect.width, rect.height, render.BorderStyle.rounded, text, token.accent, render.Style{});
-            renderer.drawSmartStr(rect.x + 1, rect.y + 1, token.label, render.Color.named(render.NamedColor.black), token.accent, render.Style{ .bold = true });
+            renderer.drawSmartStr(rect.x + 1, rect.y, token.label, render.Color.named(render.NamedColor.black), token.accent, render.Style{ .bold = true });
         }
 
         // Event log.
-        renderer.drawSmartStr(log_rect.x, log_rect.y - 1, "Event log (drag + menu + search):", accent, bg, render.Style{ .bold = true });
+        renderer.drawSmartStr(log_rect.x, log_rect.y - 1, "Event log (drag + menu + search)", accent, bg, render.Style{ .bold = true });
         var line: usize = 0;
         const visible_log_lines = @min(state.log.lines.items.len, @as(usize, log_rect.height));
         const start_line = if (visible_log_lines > 0 and state.log.lines.items.len > visible_log_lines) state.log.lines.items.len - visible_log_lines else 0;
@@ -575,6 +576,7 @@ pub fn main() !void {
         const menu_size = try ctx_menu.widget.getPreferredSize();
         if (ctx_menu.open) {
             try ctx_menu.widget.layout(layout.Rect.init(ctx_menu.widget.rect.x, ctx_menu.widget.rect.y, menu_size.width, menu_size.height));
+            ctx_menu.widget.markDirty();
             try ctx_menu.widget.draw(&renderer);
         }
 

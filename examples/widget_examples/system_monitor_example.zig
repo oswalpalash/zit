@@ -7,11 +7,13 @@ const layout = zit.layout;
 const widget = zit.widget;
 const theme = zit.widget.theme;
 const memory = zit.memory;
+const style = @import("example_style.zig");
 
 const Process = struct {
     name: []const u8,
     cpu: f32,
     mem: f32,
+    state: []const u8,
 };
 
 const StatusLine = struct {
@@ -106,6 +108,7 @@ fn refreshTable(table: *widget.Table, procs: []const Process) !void {
         const mem_text = std.fmt.bufPrint(&mem_buf, "{d:.1} MB", .{proc.mem}) catch "0 MB";
         try table.setCell(idx, 1, cpu_text, null, null);
         try table.setCell(idx, 2, mem_text, null, null);
+        try table.setCell(idx, 3, proc.state, null, null);
     }
 }
 
@@ -163,22 +166,23 @@ pub fn main() !void {
     defer table.deinit();
     table.widget.focused = true;
     table.setShowHeaders(true);
-    table.setBorder(.single);
+    table.setBorder(.none);
     table.show_grid = false;
     try table.addColumn("Process", 16, true);
-    try table.addColumn("CPU", 10, true);
-    try table.addColumn("Memory", 12, true);
+    try table.addColumn("CPU", 8, true);
+    try table.addColumn("Memory", 10, true);
+    try table.addColumn("State", 10, true);
 
     var processes = [_]Process{
-        .{ .name = "zit-demo", .cpu = 8.0, .mem = 120.0 },
-        .{ .name = "renderer", .cpu = 14.0, .mem = 96.0 },
-        .{ .name = "metricsd", .cpu = 6.0, .mem = 80.0 },
-        .{ .name = "net-tap", .cpu = 4.0, .mem = 64.0 },
-        .{ .name = "backup", .cpu = 3.5, .mem = 52.0 },
+        .{ .name = "renderer", .cpu = 41.0, .mem = 118.0, .state = "steady" },
+        .{ .name = "input-loop", .cpu = 13.0, .mem = 42.0, .state = "ready" },
+        .{ .name = "layout", .cpu = 8.0, .mem = 51.0, .state = "clean" },
+        .{ .name = "watcher", .cpu = 2.0, .mem = 19.0, .state = "idle" },
+        .{ .name = "telemetry", .cpu = 4.5, .mem = 34.0, .state = "sample" },
     };
 
     for (processes) |proc| {
-        try table.addRow(&.{ proc.name, "0%", "0 MB" });
+        try table.addRow(&.{ proc.name, "0%", "0 MB", proc.state });
     }
     table.setSelectedRow(0);
 
@@ -202,41 +206,30 @@ pub fn main() !void {
     while (running) {
         const active_theme = theme_options[theme_idx];
         const current_theme = active_theme.value;
-        const bg = current_theme.color(.background);
-        const surface = current_theme.color(.surface);
-        const accent = current_theme.color(.accent);
-        const accent_fg = pickAccentForeground(accent, current_theme.palette);
-        const text = current_theme.color(.text);
-        const muted = current_theme.color(.muted);
-        const border = current_theme.color(.border);
-        const success = current_theme.color(.success);
-        const warning = current_theme.color(.warning);
-        const danger = current_theme.color(.danger);
+        const palette = style.monitorPalette();
+        const accent_fg = palette.accent_text;
+        const text = palette.text;
+        const success = palette.success;
+        const warning = palette.warning;
+        const danger = palette.danger;
 
         try cpu.setTheme(current_theme);
         try mem.setTheme(current_theme);
         try spark.setTheme(current_theme);
         table.fg = text;
-        table.bg = surface;
-        table.header_bg = theme.adjust(accent, -8);
+        table.bg = palette.surface;
+        table.header_bg = palette.surface_alt;
         table.header_fg = accent_fg;
-        table.selected_bg = accent;
+        table.selected_bg = render.Color.rgb(14, 42, 58);
         table.selected_fg = accent_fg;
-        table.grid_fg = border;
-        table.focused_bg = theme.adjust(surface, 6);
+        table.grid_fg = palette.border;
+        table.focused_bg = palette.surface_alt;
         table.focused_fg = text;
+        spark.fg = palette.accent;
+        spark.bg = palette.surface;
 
         renderer.back.clear();
-        renderer.fillRect(0, 0, renderer.back.width, renderer.back.height, ' ', muted, bg, render.Style{});
-        renderer.drawBox(0, 0, renderer.back.width, renderer.back.height, render.BorderStyle.single, border, bg, render.Style{});
-
-        if (renderer.back.width > 2 and renderer.back.height > 2) {
-            const header_width: u16 = renderer.back.width - 2;
-            renderer.fillRect(1, 1, header_width, 1, ' ', accent_fg, accent, render.Style{});
-            var header_buf: [160]u8 = undefined;
-            const header_text = std.fmt.bufPrint(&header_buf, "System monitor - {s}", .{active_theme.name}) catch "System monitor";
-            renderer.drawSmartStr(2, 1, header_text, accent_fg, accent, render.Style{ .bold = true });
-        }
+        const content = style.drawChrome(&renderer, palette, "zit system monitor", "live widgets / stable frames");
 
         if (!paused) {
             const random = prng.random();
@@ -275,78 +268,56 @@ pub fn main() !void {
 
         // Apply contextual colors to meters.
         const cpu_fill = if (cpu.value > 85) danger else if (cpu.value > 65) warning else success;
-        const mem_fill = if (mem.value > 85) danger else if (mem.value > 65) warning else accent;
+        const mem_fill = if (mem.value > 85) danger else if (mem.value > 65) warning else palette.accent;
         cpu.fill = cpu_fill;
         mem.fill = mem_fill;
+        var cpu_meter_buf: [32]u8 = undefined;
+        var mem_meter_buf: [32]u8 = undefined;
+        const cpu_meter_text = std.fmt.bufPrint(&cpu_meter_buf, "CPU {d:.1}%", .{cpu.value}) catch "CPU";
+        const mem_meter_text = std.fmt.bufPrint(&mem_meter_buf, "Memory {d:.1}%", .{mem.value}) catch "Memory";
 
-        const content_top: u16 = 3;
-        if (renderer.back.width > 6 and renderer.back.height > content_top + 2) {
-            const inner_height = renderer.back.height - content_top - 2;
-            const inner = layout.Rect.init(2, content_top, renderer.back.width - 4, inner_height);
-            const left_width: u16 = inner.width / 2;
-            const left = layout.Rect.init(inner.x, inner.y, left_width, inner.height);
-            const right = layout.Rect.init(inner.x + left_width + 1, inner.y, inner.width - left_width - 1, inner.height);
+        if (content.width > 20 and content.height > 8) {
+            const gap: u16 = 2;
+            const top_h: u16 = if (content.height > 18) 12 else @max(@as(u16, 5), content.height / 2);
+            const left_w: u16 = if (content.width > 70) 36 else content.width / 2;
+            const right_w: u16 = if (content.width > left_w + gap) content.width - left_w - gap else 0;
+            const service = layout.Rect.init(content.x, content.y, left_w, top_h);
+            const proc_rect = layout.Rect.init(content.x + left_w + gap, content.y, right_w, top_h);
+            const latency_h: u16 = if (content.height > top_h + gap) content.height - top_h - gap else 0;
+            const latency = layout.Rect.init(content.x, content.y + top_h + gap, content.width, latency_h);
 
-            renderer.fillRect(left.x, left.y, left.width, left.height, ' ', muted, surface, render.Style{});
-            renderer.fillRect(right.x, right.y, right.width, right.height, ' ', muted, surface, render.Style{});
-
-            const left_pad: u16 = 1;
-            if (left.width > left_pad * 2 and left.height > 3) {
-                renderer.drawSmartStr(left.x + left_pad, left.y, "CPU / Memory", accent, surface, render.Style{ .bold = true });
-
-                const content_width = left.width - left_pad * 2;
-                var lane_y = left.y + left_pad + 1;
-                const lane_end = left.y + left.height;
-                const available_after_label = if (lane_end > lane_y) lane_end - lane_y else 0;
-
-                const cpu_h: u16 = if (available_after_label > 8) 5 else if (available_after_label > 4) 4 else available_after_label;
-                if (cpu_h > 0) {
-                    try cpu.widget.layout(layout.Rect.init(left.x + left_pad, lane_y, content_width, cpu_h));
-                    try cpu.widget.draw(&renderer);
-                }
-
-                lane_y = lane_y + cpu_h + 1;
-                const remaining_after_cpu = if (lane_end > lane_y) lane_end - lane_y else 0;
-                const mem_h: u16 = if (remaining_after_cpu > 7) 4 else remaining_after_cpu;
-                if (mem_h > 0) {
-                    try mem.widget.layout(layout.Rect.init(left.x + left_pad, lane_y, content_width, mem_h));
-                    try mem.widget.draw(&renderer);
-                }
-
-                lane_y = lane_y + mem_h + 1;
-                const remaining = if (lane_end > lane_y) lane_end - lane_y else 0;
-                if (remaining > 1) {
-                    renderer.drawSmartStr(left.x + left_pad, lane_y - 1, "Network throughput", muted, surface, render.Style{});
-                    try spark.widget.layout(layout.Rect.init(left.x + left_pad, lane_y, content_width, remaining - 1));
-                    try spark.widget.draw(&renderer);
-                }
+            style.drawPanel(&renderer, service, palette, "Service Health", palette.accent);
+            if (service.width > 8 and service.height > 8) {
+                const meter_w = service.width - 6;
+                style.drawMeter(&renderer, service.x + 3, service.y + 3, meter_w, cpu_meter_text, cpu.value / 100.0, palette, cpu_fill);
+                style.drawMeter(&renderer, service.x + 3, service.y + 6, meter_w, mem_meter_text, mem.value / 100.0, palette, mem_fill);
+                style.drawMeter(&renderer, service.x + 3, service.y + 9, meter_w, "Network 36%", 0.36, palette, palette.accent);
             }
 
-            if (right.width > 2 and right.height > 2) {
-                renderer.drawSmartStr(right.x + 1, right.y, "Processes", accent, surface, render.Style{ .bold = true });
-                const table_height = if (right.height > 1) right.height - 1 else 0;
-                if (table_height > 0) {
-                    try table.widget.layout(layout.Rect.init(right.x, right.y + 1, right.width, table_height));
-                    try table.widget.draw(&renderer);
+            if (proc_rect.width > 8 and proc_rect.height > 5) {
+                style.drawPanel(&renderer, proc_rect, palette, "Process Table", palette.accent);
+                try table.widget.layout(layout.Rect.init(proc_rect.x + 2, proc_rect.y + 3, proc_rect.width - 4, proc_rect.height - 4));
+                table.widget.markDirty();
+                try table.widget.draw(&renderer);
+            }
+
+            if (latency.width > 8 and latency.height > 5) {
+                style.drawPanel(&renderer, latency, palette, "Latency + Event Stream", palette.accent);
+                renderer.drawSmartStr(latency.x + 3, latency.y + 3, "p95 frame time", palette.muted, palette.surface, render.Style{ .bold = true });
+                renderer.drawSmartStr(latency.x + 3, latency.y + 4, "1.18ms", palette.text, palette.surface, render.Style{ .bold = true });
+                try spark.widget.layout(layout.Rect.init(latency.x + 18, latency.y + 3, latency.width - 22, latency.height - 5));
+                spark.widget.markDirty();
+                try spark.widget.draw(&renderer);
+                if (latency.width > 42) {
+                    renderer.drawSmartStr(latency.x + latency.width - 40, latency.y + latency.height - 2, "automatic resize + diff renderer", palette.muted, palette.surface, render.Style{ .bold = true });
                 }
             }
         }
 
-        if (renderer.back.height > 0) {
-            const status_y: u16 = renderer.back.height - 1;
-            renderer.fillRect(0, status_y, renderer.back.width, 1, ' ', accent, surface, render.Style{});
-            const selected = if (table.selected_row) |idx|
-                processes[idx].name
-            else
-                "(none)";
-            var status_buf: [220]u8 = undefined;
-            const text_line = std.fmt.bufPrint(&status_buf, "{s} | theme: {s} | focused: {s}", .{
-                status.text,
-                active_theme.name,
-                selected,
-            }) catch status.text;
-            renderer.drawSmartStr(1, status_y, text_line, accent, surface, render.Style{ .bold = true });
-        }
+        const selected = if (table.selected_row) |idx| processes[idx].name else "(none)";
+        var status_buf: [220]u8 = undefined;
+        const text_line = std.fmt.bufPrint(&status_buf, "{s} | theme: {s} | focused: {s}", .{ status.text, active_theme.name, selected }) catch status.text;
+        style.drawStatus(&renderer, palette, text_line);
 
         try renderer.render();
 

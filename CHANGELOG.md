@@ -35,6 +35,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
 - README screenshot generation now emits polished deterministic SVG previews for the system monitor, file manager, and widget showcase.
+- Widget example styling helpers now provide shared terminal chrome, panel headers, status bands, badges, and palette-driven themes for polished public examples.
 
 ### Fixed
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
@@ -66,6 +67,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Label, button, checkbox, progress bar, paragraph, markdown, popup, input-field placeholder, and text-area placeholder setters now invalidate retained render state after visible changes.
 - Text-owning widget setters now duplicate replacement buffers before releasing current buffers, with allocation-failure regression coverage for stable rollback behavior.
 - The interactive demo layout now presents a structured application frame while continuing to stay live until `q`.
+- System monitor, file manager, and widget showcase examples now use the polished panel language from the README references and keep manually redrawn widgets dirty across full-frame repaint loops.
+- Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.
