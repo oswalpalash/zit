@@ -17,11 +17,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPORT_FILE = ROOT / "src/widget/widget.zig"
+WIDGET_CATALOG = ROOT / "docs/WIDGET_CATALOG.md"
 
 PUBLIC_WIDGET_EXPORT = re.compile(
     r'^pub const (?P<export>[A-Za-z_][A-Za-z0-9_]*) = @import\("widgets/[^"]+"\)\.(?P<source>[A-Za-z_][A-Za-z0-9_]*);',
     re.MULTILINE,
 )
+CATALOG_PATH_REF = re.compile(r"`((?:src|examples|docs|assets)/[^`]+)`")
 
 SUPPORT_EXPORTS = {
     "BaseWidget",
@@ -134,11 +136,46 @@ def snake_case(name: str) -> str:
     return "".join(out)
 
 
+def catalog_widget_rows(text: str) -> dict[str, list[str]]:
+    rows: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        if not line.startswith("| ") or line.startswith("| ---"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if not cells or cells[0] == "Widget":
+            continue
+        rows[cells[0]] = cells
+    return rows
+
+
+def validate_catalog(widgets: dict[str, str], errors: list[str]) -> None:
+    try:
+        text = WIDGET_CATALOG.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        errors.append("docs/WIDGET_CATALOG.md: file does not exist")
+        return
+
+    rows = catalog_widget_rows(text)
+    for name in sorted(widgets):
+        if name not in rows:
+            errors.append(f"docs/WIDGET_CATALOG.md: missing public widget row: {name}")
+
+    for name in sorted(rows):
+        if name not in widgets:
+            errors.append(f"docs/WIDGET_CATALOG.md: row has no matching public widget export: {name}")
+
+    for rel in CATALOG_PATH_REF.findall(text):
+        if not (ROOT / rel).exists():
+            errors.append(f"docs/WIDGET_CATALOG.md: referenced path does not exist: {rel}")
+
+
 def validate(verbose: bool) -> int:
     exports = public_widget_exports()
     widgets = {name: source for name, source in exports.items() if name not in SUPPORT_EXPORTS}
 
     errors: list[str] = []
+    validate_catalog(widgets, errors)
+
     for name in sorted(widgets):
         paths = COVERAGE.get(name)
         if not paths:
@@ -164,7 +201,7 @@ def validate(verbose: bool) -> int:
 
     if verbose:
         print(json.dumps({name: COVERAGE[name] for name in sorted(widgets)}, indent=2))
-    print(f"checked {len(widgets)} public widget coverage declaration(s)")
+    print(f"checked {len(widgets)} public widget coverage declaration(s) and catalog row(s)")
     return 0
 
 

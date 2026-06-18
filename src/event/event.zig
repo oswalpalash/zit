@@ -2815,8 +2815,8 @@ test "application input binding stores non-blocking poll configuration" {
     try std.testing.expect(!app.input_polled_before_tick);
 
     var term = @import("../terminal/terminal.zig").Terminal{
-        .stdin_fd = 0,
-        .stdout_fd = 1,
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = std.Io.File.stdout().handle,
         .original_termios = .none,
         .width = 80,
         .height = 24,

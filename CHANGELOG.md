@@ -24,6 +24,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size and requires `input_test` to report the new geometry.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
+- Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
 - DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
@@ -58,6 +59,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - MemoryOptimizer now tracks live cache-line ownership instead of casting arbitrary small frees into cache nodes, preventing backing allocation corruption and freeing live optimized blocks on teardown.
 - Memory debugger, ownership, safety, optimizer, and memory-manager suites now compile through the primary `zig build test` target, preventing dormant memory regressions from bypassing release checks.
 - Background tasks are now owned by `Application`, joined on shutdown, and paired with queued custom-event destructor cleanup so teardown cannot leave detached workers using a destroyed event queue.
+- Event input binding tests now use cross-platform standard handles, fixing the Windows CI compile failure in `zig build quality`.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

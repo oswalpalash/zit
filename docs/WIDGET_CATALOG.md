@@ -1,74 +1,92 @@
 # Widget Catalog
 
-A quick index of Zit widgets with their roles, related examples, and snapshot references. Use this alongside `docs/WIDGET_GUIDE.md` for implementation details.
+A quick index of the public Zit widget API with roles, related examples, and enforced coverage references. Use this alongside `docs/WIDGET_GUIDE.md` for implementation details.
 
 ## Core Controls
-| Widget | Use | Example | Snapshot |
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
 | Label | Read-only text with alignment and style helpers. | `examples/hello_world.zig` | `src/testing/golden/label_basic.snap` |
-| Button | Clickable control with focus styling and borders. | `examples/widget_examples/button_example.zig` | `src/testing/golden/button_basic.snap` |
-| Checkbox | Toggleable boolean control with label. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/checkbox_basic.snap` |
-| InputField | Single-line editable input with placeholder/cursor. | `examples/widget_examples/form_wizard_example.zig` | `src/testing/golden/input_field_basic.snap` |
-| TextArea | Multi-line editor with cursor and selection helpers. | `examples/widget_examples/form_wizard_example.zig` | `src/testing/golden/text_area_basic.snap` |
-| ProgressBar | Horizontal/vertical progress display. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/progress_bar_basic.snap` |
-| List | Scrollable list with selection/highlight. | `examples/demo.zig` | `src/testing/golden/list_basic.snap` |
-| Table | Column/row data view with sorting and editing. | `examples/widget_examples/table_example.zig` | `src/testing/golden/table_basic.snap` |
-| TreeView | Hierarchical list with expand/collapse. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/tree_view_basic.snap` |
+| Button | Focusable action control with border and pressed state styling. | `examples/widget_examples/button_example.zig` | `src/testing/golden/button_basic.snap` |
+| Checkbox | Toggleable boolean control with label text. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/checkbox_checked.snap` |
+| InputField | Single-line editable input with placeholder and cursor handling. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| AutocompleteInput | Editable input with filtered suggestions. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| TextArea | Multi-line editor with cursor and viewport state. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| ToggleSwitch | Compact on/off switch control. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| RadioGroup | Mutually exclusive option selector. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| Slider | Numeric range selector with a visual track. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| ColorPicker | Terminal color selection control. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| RatingStars | Compact rating selector and display. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| ProgressBar | Horizontal or vertical progress display. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/progress_bar_50.snap` |
 
 ## Layout and Containers
-| Widget | Use | Example | Snapshot |
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| Container | Basic parent container with optional border/fill. | `examples/demo.zig` | `src/testing/golden/container_basic.snap` |
-| FlexContainer | Flexbox-style row/column layout. | `examples/layout_test.zig` | `src/testing/golden/flex_layout.snap` |
-| GridContainer | Grid layout with explicit rows/columns. | `examples/layout_test.zig` | `src/testing/golden/grid_layout.snap` |
-| ScrollContainer | Scrollable viewport with optional scrollbars. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/scroll_container_basic.snap` |
-| SplitPane | Resizable two-pane layout (vertical or horizontal). | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/split_pane_basic.snap` |
+| Container | Basic parent container with optional border and fill. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| FlexContainer | Flexbox-style row or column layout. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| GridContainer | Grid layout with explicit rows and columns. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| ScrollContainer | Scrollable viewport with child clipping. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| Scrollbar | Standalone scroll position indicator. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| SplitPane | Two-pane layout with horizontal or vertical split orientation. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| Block | Styled rectangular region for grouped content. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| Paragraph | Wrapped text block for longer copy. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 
 ## Navigation and Structure
-| Widget | Use | Example | Snapshot |
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| TabView | Tabbed navigation with tab bar. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/tab_view_basic.snap` |
-| MenuBar | Top-level menus with dropdown items. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/menu_bar_basic.snap` |
-| Breadcrumbs | Path navigation with segment styling. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/breadcrumbs_basic.snap` |
-| Pagination | Paged navigation for data sets. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/pagination_basic.snap` |
-| ScreenManager | Stack of screens with transitions. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/screen_manager_basic.snap` |
+| TabView | Tabbed content region with tab selection. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| TabBar | Standalone tab navigation strip. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| MenuBar | Top-level menus with dropdown items. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| Breadcrumbs | Path navigation with segment styling. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| Pagination | Paged navigation for data sets. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| ScreenManager | Stack of screens with lifecycle and transition hooks. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| StatusBar | Low-height status line for app state. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| Toolbar | Horizontal command strip. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| Accordion | Expandable section list. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| WizardStepper | Multi-step workflow progress and navigation. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| CommandPalette | Searchable command picker. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 
 ## Overlays and Menus
-| Widget | Use | Example | Snapshot |
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| Modal | Dialog container with title/body. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/modal_basic.snap` |
-| Popup | Inline popup message box. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/popup_basic.snap` |
-| ToastManager | Timed notifications stack. | `examples/widget_examples/notifications_example.zig` | `src/testing/golden/toast_basic.snap` |
-| DropdownMenu | Selectable option list. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/dropdown_basic.snap` |
-| ContextMenu | Right-click menu list. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/context_menu_basic.snap` |
+| Modal | Dialog container with title, body, and border. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/modal_basic.snap` |
+| Popup | Inline popup message box. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| ToastManager | Timed notification stack. | `examples/widget_examples/notifications_example.zig` | `examples/widget_examples/notifications_example.zig` |
+| NotificationCenter | Aggregated notification list. | `examples/realworld/dashboard_demo.zig` | `examples/realworld/dashboard_demo.zig` |
+| DropdownMenu | Selectable option list. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| ContextMenu | Contextual menu list. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
 
-## Data Visualization
-| Widget | Use | Example | Snapshot |
+## Data Visualization and Indicators
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| Chart | Bars/lines/pie/scatter plots. | `examples/widget_examples/system_monitor_example.zig` | `src/testing/golden/chart_basic.snap` |
-| Sparkline | Tiny trendline for inline metrics. | `examples/widget_examples/system_monitor_example.zig` | `src/testing/golden/sparkline_basic.snap` |
-| Gauge | Meter display with colored fill. | `examples/widget_examples/system_monitor_example.zig` | `src/testing/golden/gauge_basic.snap` |
-| Indicators | Battery/signal/resource status widgets. | `examples/widget_examples/system_monitor_example.zig` | `src/testing/golden/indicators_basic.snap` |
+| Table | Column and row data view. | `examples/widget_examples/table_example.zig` | `src/testing/golden/table_basic.snap` |
+| List | Scrollable list with selection and highlight state. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/list_items.snap` |
+| TreeView | Hierarchical list with expand and collapse state. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| Chart | Bars, lines, pie charts, and scatter plots. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| Sparkline | Inline trendline for compact metrics. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| Gauge | Meter display with directional fill. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
+| BatteryIndicator | Battery level and charging state indicator. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| SignalStrength | Signal quality indicator. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| ResourceMeter | Resource usage meter for CPU, memory, or similar values. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| TrafficLight | Three-state status indicator. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 
 ## Content and Media
-| Widget | Use | Example | Snapshot |
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| Markdown | Render headings, lists, and paragraphs. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/markdown_basic.snap` |
-| RichText | Inline spans with mixed styles. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/rich_text_basic.snap` |
-| SyntaxHighlighter | Tokenized code blocks. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/syntax_basic.snap` |
-| ImageWidget | Block/braille rendering for pixel data. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/image_basic.snap` |
-| Canvas | Immediate-mode drawing surface. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/canvas_basic.snap` |
+| Markdown | Render headings, lists, and paragraphs. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| RichText | Inline spans with mixed styles. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| SyntaxHighlighter | Tokenized code block rendering. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| ImageWidget | Block or braille rendering for pixel data. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
+| Canvas | Immediate-mode drawing surface. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| LogView | Scrollable log entries with level styling. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 
-## Utilities
-| Widget | Use | Example | Snapshot |
+## Files and Utilities
+| Widget | Use | Example | Coverage Reference |
 | --- | --- | --- | --- |
-| FileBrowser | Directory tree with file previews. | `examples/widget_examples/file_browser_example.zig` | `src/testing/golden/file_browser_basic.snap` |
-| FileManager | Multi-pane file manager. | `examples/widget_examples/file_manager_example.zig` | `src/testing/golden/file_manager_basic.snap` |
-| DateTimePicker | Date/time selection. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/date_time_picker_basic.snap` |
-| LogView | Scrollable log entries with level coloring. | `examples/widget_examples/showcase_demo.zig` | `src/testing/golden/log_view_basic.snap` |
-| Form widgets | WizardStepper, Accordion, CommandPalette, NotificationCenter. | `examples/widget_examples/form_wizard_example.zig` | `src/testing/golden/form_widgets_basic.snap` |
+| FileBrowser | Directory tree with file previews. | `examples/widget_examples/file_browser_example.zig` | `examples/widget_examples/file_browser_example.zig` |
+| DateTimePicker | Date and time selection. | `examples/realworld/widget_gallery_layouts.zig` | `examples/realworld/widget_gallery_layouts.zig` |
 
 ## Notes
-- Snapshots live under `src/testing/golden/` and are exercised by widget unit tests.
-- Layout examples under `examples/layout_test.zig` show how to wire Flex/Grid layouts without a full app loop.
+- Golden snapshots live under `src/testing/golden/`; broader visual coverage references point to deterministic examples exercised by `zig build release-check`.
+- `scripts/check_widget_coverage.py` validates every public widget export, every catalog row, and every backticked catalog file path.
+- `examples/realworld/file_manager.zig` and `examples/widget_examples/file_manager_example.zig` are full applications built from public widgets, not separate public widget exports.
 - For a one-stop tour of the catalog, run `zig build widget-showcase` from a real terminal.
