@@ -81,6 +81,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.
 - UTF-8 text input now decodes to a single key event, and `InputField`/`TextArea` insert, move, delete, and clamp capacity on codepoint boundaries instead of corrupting multibyte input.
 - Real-world htop and file-manager examples now render richer reference-style frames in interactive terminals while keeping plain deterministic snapshots for visual repeat checks.
+- Real-world dashboard and text-editor examples now use polished application frames and ANSI-backed snapshots so visual repeat review checks their real colors and layout hierarchy.
 - Real-world and widget example meters now render filled/empty glyphs rather than relying on color-only backgrounds, keeping progress visible in monochrome screenshots and terminal captures.
 - Release verification now creates the docs output parent directory before generating API docs, fixing clean-checkout CI runs without a preexisting `zig-out`.
 - Real-world snapshot-backed examples now display a live terminal-size status line in interactive mode, giving users and PTY smoke tests visible proof that resize events redraw the frame.

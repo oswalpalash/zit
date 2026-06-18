@@ -66,7 +66,7 @@ DEFAULT_EXAMPLES = (
     Example("widget_showcase", ("Keys: q quit", "Theme:")),
     Example("htop_clone", ("htop-clone", "q quit")),
     Example("file_manager", ("file manager", "F10 quit")),
-    Example("text_editor", ("main.zig", "Command Palette")),
+    Example("text_editor", ("widget.zig", "Command Palette")),
     Example("dashboard_demo", ("dashboard", "status: green")),
     Example("widget_gallery", ("Table", "quality: visual")),
     Example("widget_gallery_extended", ("Telemetry", "Drawing Primitives")),
