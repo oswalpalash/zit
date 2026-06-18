@@ -229,10 +229,11 @@ pub const ResourceMeter = struct {
     }
 
     pub fn setLabel(self: *ResourceMeter, label: []const u8) !void {
+        const next = try self.allocator.dupe(u8, label);
         if (self.owns_label and self.label.len > 0) {
             self.allocator.free(self.label);
         }
-        self.label = try self.allocator.dupe(u8, label);
+        self.label = next;
         self.owns_label = true;
     }
 
@@ -467,6 +468,23 @@ test "resource meter writes label text" {
         if (cell.codepoint() == 'C') seen_c = true;
     }
     try std.testing.expect(seen_c);
+}
+
+test "resource meter setLabel preserves label on allocation failure" {
+    const alloc = std.testing.allocator;
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+
+    try meter.setLabel("Stable");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = meter.allocator;
+    meter.allocator = failing.allocator();
+    defer meter.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, meter.setLabel("Replacement"));
+    try std.testing.expectEqualStrings("Stable", meter.label);
+    try std.testing.expect(meter.owns_label);
 }
 
 test "traffic light highlights active color" {

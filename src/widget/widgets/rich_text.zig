@@ -46,8 +46,9 @@ pub const RichText = struct {
     }
 
     pub fn addSpan(self: *RichText, text: []const u8, fg: render.Color, bg: render.Color, style: render.Style) !void {
+        try self.spans.ensureUnusedCapacity(self.allocator, 1);
         const copy = try self.allocator.dupe(u8, text);
-        try self.spans.append(self.allocator, .{
+        self.spans.appendAssumeCapacity(.{
             .text = copy,
             .fg = fg,
             .bg = bg,
@@ -204,4 +205,33 @@ test "rich text applies span styles" {
     const world_cell = renderer.back.getCell(6, 0).*;
     try std.testing.expect(world_cell.style.italic);
     try std.testing.expect(std.meta.eql(world_cell.fg, render.Color{ .named_color = render.NamedColor.blue }));
+}
+
+fn richTextAddSpanAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var text = try RichText.init(allocator);
+    defer text.deinit();
+
+    try text.addSpan("Hello", render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    try text.addSpan("World", render.Color{ .named_color = render.NamedColor.blue }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+}
+
+test "rich text addSpan cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, richTextAddSpanAllocationFailureHarness, .{});
+}
+
+test "rich text addSpan preserves spans on allocation failure" {
+    const alloc = std.testing.allocator;
+    var text = try RichText.init(alloc);
+    defer text.deinit();
+
+    try text.addSpan("stable", render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = text.allocator;
+    text.allocator = failing.allocator();
+    defer text.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, text.addSpan("replacement", render.Color{ .named_color = render.NamedColor.blue }, render.Color{ .named_color = render.NamedColor.default }, render.Style{}));
+    try std.testing.expectEqual(@as(usize, 1), text.spans.items.len);
+    try std.testing.expectEqualStrings("stable", text.spans.items[0].text);
 }

@@ -53,12 +53,13 @@ pub const ToastManager = struct {
     }
 
     pub fn push(self: *ToastManager, msg: []const u8, level: ToastLevel, lifespan_ticks: u32) !void {
+        try self.toasts.ensureUnusedCapacity(self.allocator, 1);
         const toast = ToastEntry{
             .message = try self.allocator.dupe(u8, msg),
             .level = level,
             .remaining_ticks = @max(lifespan_ticks, 1),
         };
-        try self.toasts.append(self.allocator, toast);
+        self.toasts.appendAssumeCapacity(toast);
         self.trimOverflow();
     }
 
@@ -156,4 +157,33 @@ test "toast manager drops expired messages" {
 
     manager.tick(2);
     try std.testing.expectEqual(@as(usize, 0), manager.toasts.items.len);
+}
+
+fn toastPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var manager = try ToastManager.init(allocator);
+    defer manager.deinit();
+
+    try manager.push("one", .info, 2);
+    try manager.push("two", .success, 1);
+}
+
+test "toast manager push cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, toastPushAllocationFailureHarness, .{});
+}
+
+test "toast manager push preserves toasts on allocation failure" {
+    const alloc = std.testing.allocator;
+    var manager = try ToastManager.init(alloc);
+    defer manager.deinit();
+
+    try manager.push("stable", .info, 2);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = manager.allocator;
+    manager.allocator = failing.allocator();
+    defer manager.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, manager.push("replacement", .success, 1));
+    try std.testing.expectEqual(@as(usize, 1), manager.toasts.items.len);
+    try std.testing.expectEqualStrings("stable", manager.toasts.items[0].message);
 }

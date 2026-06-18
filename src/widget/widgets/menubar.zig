@@ -47,7 +47,9 @@ pub const MenuBar = struct {
     }
 
     pub fn addItem(self: *MenuBar, label: []const u8, on_select: ?*const fn () void) !void {
-        try self.items.append(self.allocator, .{ .label = try self.allocator.dupe(u8, label), .on_select = on_select });
+        try self.items.ensureUnusedCapacity(self.allocator, 1);
+        const copy = try self.allocator.dupe(u8, label);
+        self.items.appendAssumeCapacity(.{ .label = copy, .on_select = on_select });
     }
 
     pub fn setActive(self: *MenuBar, index: usize) void {
@@ -168,4 +170,32 @@ test "menubar navigates and triggers callbacks" {
     const enter = input.Event{ .key = input.KeyEvent.init('\n', input.KeyModifiers{}) };
     _ = try bar.widget.handleEvent(enter);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+fn menuBarAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var bar = try MenuBar.init(allocator);
+    defer bar.deinit();
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", null);
+}
+
+test "menubar addItem cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, menuBarAddItemAllocationFailureHarness, .{});
+}
+
+test "menubar addItem preserves items on allocation failure" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+    try bar.addItem("File", null);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = bar.allocator;
+    bar.allocator = failing.allocator();
+    defer bar.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, bar.addItem("Edit", null));
+    try std.testing.expectEqual(@as(usize, 1), bar.items.items.len);
+    try std.testing.expectEqualStrings("File", bar.items.items[0].label);
 }

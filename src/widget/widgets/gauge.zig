@@ -72,10 +72,11 @@ pub const Gauge = struct {
     }
 
     pub fn setLabel(self: *Gauge, text: []const u8) !void {
+        const next = try self.allocator.dupe(u8, text);
         if (self.label.len > 0) {
             self.allocator.free(self.label);
         }
-        self.label = try self.allocator.dupe(u8, text);
+        self.label = next;
     }
 
     pub fn setOrientation(self: *Gauge, orientation: GaugeOrientation) void {
@@ -204,4 +205,20 @@ test "gauge fills proportionally" {
 
     try std.testing.expect(filled > 0);
     try std.testing.expect(empty > 0);
+}
+
+test "gauge setLabel preserves label on allocation failure" {
+    const alloc = std.testing.allocator;
+    var gauge = try Gauge.init(alloc);
+    defer gauge.deinit();
+
+    try gauge.setLabel("Stable");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = gauge.allocator;
+    gauge.allocator = failing.allocator();
+    defer gauge.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, gauge.setLabel("Replacement"));
+    try std.testing.expectEqualStrings("Stable", gauge.label);
 }

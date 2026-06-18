@@ -57,8 +57,9 @@ pub const Block = struct {
     }
 
     pub fn setTitle(self: *Block, title: []const u8) !void {
+        const next = try self.allocator.dupe(u8, title);
         if (self.title) |t| self.allocator.free(t);
-        self.title = try self.allocator.dupe(u8, title);
+        self.title = next;
     }
 
     pub fn setTitleStyle(self: *Block, color: render.Color, style: render.Style) void {
@@ -238,4 +239,20 @@ test "block draws title inside border" {
 
     const cell = renderer.back.getCell(1, 0).*;
     try std.testing.expectEqual('S', cell.codepoint());
+}
+
+test "block setTitle preserves title on allocation failure" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+
+    try block.setTitle("Stable");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = block.allocator;
+    block.allocator = failing.allocator();
+    defer block.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, block.setTitle("Replacement"));
+    try std.testing.expectEqualStrings("Stable", block.title.?);
 }

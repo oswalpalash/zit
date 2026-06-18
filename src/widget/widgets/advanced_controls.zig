@@ -5,6 +5,34 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
 
+fn appendOwnedString(list: *std.ArrayListUnmanaged([]const u8), allocator: std.mem.Allocator, value: []const u8) !void {
+    try list.ensureUnusedCapacity(allocator, 1);
+    const copy = try allocator.dupe(u8, value);
+    list.appendAssumeCapacity(copy);
+}
+
+fn freeStringList(list: *std.ArrayListUnmanaged([]const u8), allocator: std.mem.Allocator) void {
+    for (list.items) |item| allocator.free(item);
+    list.clearRetainingCapacity();
+}
+
+fn appendOwnedPart(list: *std.ArrayListUnmanaged(Breadcrumbs.Part), allocator: std.mem.Allocator, part: Breadcrumbs.Part) !void {
+    try list.ensureUnusedCapacity(allocator, 1);
+    const label = try allocator.dupe(u8, part.label);
+    errdefer allocator.free(label);
+    const icon = if (part.icon) |ic| try allocator.dupe(u8, ic) else null;
+    errdefer if (icon) |ic| allocator.free(ic);
+    list.appendAssumeCapacity(.{ .label = label, .icon = icon });
+}
+
+fn freePartList(list: *std.ArrayListUnmanaged(Breadcrumbs.Part), allocator: std.mem.Allocator) void {
+    for (list.items) |part| {
+        allocator.free(part.label);
+        if (part.icon) |ic| allocator.free(ic);
+    }
+    list.clearRetainingCapacity();
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -146,16 +174,17 @@ pub const RadioGroup = struct {
             .options = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
 
         for (opts) |opt| {
-            try self.options.append(self.allocator, try allocator.dupe(u8, opt));
+            try appendOwnedString(&self.options, self.allocator, opt);
         }
 
         return self;
     }
 
     pub fn deinit(self: *RadioGroup) void {
-        for (self.options.items) |opt| self.allocator.free(opt);
+        freeStringList(&self.options, self.allocator);
         self.options.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -589,14 +618,16 @@ pub const Toolbar = struct {
             .items = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
+
         for (labels) |lbl| {
-            try self.items.append(self.allocator, try allocator.dupe(u8, lbl));
+            try appendOwnedString(&self.items, self.allocator, lbl);
         }
         return self;
     }
 
     pub fn deinit(self: *Toolbar) void {
-        for (self.items.items) |item| self.allocator.free(item);
+        freeStringList(&self.items, self.allocator);
         self.items.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -710,17 +741,16 @@ pub const Breadcrumbs = struct {
             .parts = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
+
         for (parts) |part| {
-            try self.parts.append(self.allocator, .{ .label = try allocator.dupe(u8, part) });
+            try appendOwnedPart(&self.parts, self.allocator, .{ .label = part });
         }
         return self;
     }
 
     pub fn deinit(self: *Breadcrumbs) void {
-        for (self.parts.items) |p| {
-            self.allocator.free(p.label);
-            if (p.icon) |ic| self.allocator.free(ic);
-        }
+        freePartList(&self.parts, self.allocator);
         self.parts.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -730,16 +760,19 @@ pub const Breadcrumbs = struct {
     }
 
     pub fn setParts(self: *Breadcrumbs, parts: []const Part) !void {
-        for (self.parts.items) |p| {
-            self.allocator.free(p.label);
-            if (p.icon) |ic| self.allocator.free(ic);
+        var next = std.ArrayListUnmanaged(Part).empty;
+        errdefer {
+            freePartList(&next, self.allocator);
+            next.deinit(self.allocator);
         }
-        self.parts.clearRetainingCapacity();
+
         for (parts) |p| {
-            const label = try self.allocator.dupe(u8, p.label);
-            const icon = if (p.icon) |ic| try self.allocator.dupe(u8, ic) else null;
-            try self.parts.append(self.allocator, .{ .label = label, .icon = icon });
+            try appendOwnedPart(&next, self.allocator, p);
         }
+
+        freePartList(&self.parts, self.allocator);
+        self.parts.deinit(self.allocator);
+        self.parts = next;
     }
 
     fn segmentWidth(part: Part) u16 {
@@ -1022,14 +1055,16 @@ pub const CommandPalette = struct {
             .commands = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
+
         for (commands) |cmd| {
-            try self.commands.append(self.allocator, try allocator.dupe(u8, cmd));
+            try appendOwnedString(&self.commands, self.allocator, cmd);
         }
         return self;
     }
 
     pub fn deinit(self: *CommandPalette) void {
-        for (self.commands.items) |cmd| self.allocator.free(cmd);
+        freeStringList(&self.commands, self.allocator);
         self.commands.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -1150,12 +1185,16 @@ pub const NotificationCenter = struct {
     }
 
     pub fn push(self: *NotificationCenter, title: []const u8, body: []const u8, level: Level) !void {
+        try self.notifications.ensureUnusedCapacity(self.allocator, 1);
+        const title_copy = try self.allocator.dupe(u8, title);
+        errdefer self.allocator.free(title_copy);
+        const body_copy = try self.allocator.dupe(u8, body);
         const duped = Notification{
-            .title = try self.allocator.dupe(u8, title),
-            .body = try self.allocator.dupe(u8, body),
+            .title = title_copy,
+            .body = body_copy,
             .level = level,
         };
-        try self.notifications.append(self.allocator, duped);
+        self.notifications.appendAssumeCapacity(duped);
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1374,14 +1413,16 @@ pub const WizardStepper = struct {
             .steps = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
+
         for (steps) |step| {
-            try self.steps.append(self.allocator, try allocator.dupe(u8, step));
+            try appendOwnedString(&self.steps, self.allocator, step);
         }
         return self;
     }
 
     pub fn deinit(self: *WizardStepper) void {
-        for (self.steps.items) |s| self.allocator.free(s);
+        freeStringList(&self.steps, self.allocator);
         self.steps.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -1513,4 +1554,87 @@ test "pagination advances pages" {
     defer pager.deinit();
     pager.setPage(3);
     try std.testing.expectEqual(@as(usize, 3), pager.current);
+}
+
+fn radioGroupInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var radio = try RadioGroup.init(allocator, &[_][]const u8{ "One", "Two", "Three" });
+    defer radio.deinit();
+}
+
+fn toolbarInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var toolbar = try Toolbar.init(allocator, &[_][]const u8{ "Open", "Save", "Close" });
+    defer toolbar.deinit();
+}
+
+fn breadcrumbsInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var crumbs = try Breadcrumbs.init(allocator, &[_][]const u8{ "home", "repo", "src" });
+    defer crumbs.deinit();
+}
+
+fn commandPaletteInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var palette = try CommandPalette.init(allocator, &[_][]const u8{ "Open file", "Run tests", "Toggle terminal" });
+    defer palette.deinit();
+}
+
+fn wizardStepperInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var wizard = try WizardStepper.init(allocator, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+}
+
+fn notificationPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var center = try NotificationCenter.init(allocator);
+    defer center.deinit();
+
+    try center.push("Build", "Started", .info);
+    try center.push("Build", "Finished", .success);
+}
+
+test "advanced controls clean up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, radioGroupInitAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, toolbarInitAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, breadcrumbsInitAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, commandPaletteInitAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, wizardStepperInitAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, notificationPushAllocationFailureHarness, .{});
+}
+
+test "breadcrumbs setParts preserves parts on allocation failure" {
+    const alloc = std.testing.allocator;
+    var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{ "home", "repo" });
+    defer crumbs.deinit();
+
+    const next_parts = [_]Breadcrumbs.Part{
+        .{ .label = "home", .icon = "H" },
+        .{ .label = "repo", .icon = "R" },
+        .{ .label = "src", .icon = "S" },
+    };
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = crumbs.allocator;
+    crumbs.allocator = failing.allocator();
+    defer crumbs.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, crumbs.setParts(&next_parts));
+    try std.testing.expectEqual(@as(usize, 2), crumbs.parts.items.len);
+    try std.testing.expectEqualStrings("home", crumbs.parts.items[0].label);
+    try std.testing.expectEqualStrings("repo", crumbs.parts.items[1].label);
+    try std.testing.expectEqual(@as(?[]const u8, null), crumbs.parts.items[0].icon);
+}
+
+test "notification center push preserves notifications on allocation failure" {
+    const alloc = std.testing.allocator;
+    var center = try NotificationCenter.init(alloc);
+    defer center.deinit();
+
+    try center.push("Stable", "Body", .info);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = center.allocator;
+    center.allocator = failing.allocator();
+    defer center.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, center.push("Replacement", "Body", .success));
+    try std.testing.expectEqual(@as(usize, 1), center.notifications.items.len);
+    try std.testing.expectEqualStrings("Stable", center.notifications.items[0].title);
+    try std.testing.expectEqualStrings("Body", center.notifications.items[0].body);
 }

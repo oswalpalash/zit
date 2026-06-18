@@ -47,12 +47,9 @@ pub const SyntaxHighlighter = struct {
     }
 
     pub fn setCode(self: *SyntaxHighlighter, code: []const u8) !void {
+        const next: []u8 = if (code.len == 0) &[_]u8{} else try self.allocator.dupe(u8, code);
         self.freeCode();
-        if (code.len == 0) {
-            self.code = &[_]u8{};
-            return;
-        }
-        self.code = try self.allocator.dupe(u8, code);
+        self.code = next;
     }
 
     pub fn setLanguage(self: *SyntaxHighlighter, language: Language) void {
@@ -337,4 +334,20 @@ test "syntax highlighter colors keywords and comments" {
     // Comment area should use comment color.
     const comment_cell = renderer.back.getCell(start_x + 22, start_y).*;
     try std.testing.expect(std.meta.eql(comment_cell.fg, highlighter.comment_color));
+}
+
+test "syntax highlighter setCode preserves code on allocation failure" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    try highlighter.setCode("const stable = true;");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = highlighter.allocator;
+    highlighter.allocator = failing.allocator();
+    defer highlighter.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, highlighter.setCode("const replacement = false;"));
+    try std.testing.expectEqualStrings("const stable = true;", highlighter.code);
 }
