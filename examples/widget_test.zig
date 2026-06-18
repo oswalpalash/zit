@@ -13,6 +13,10 @@ fn updateStatus(comptime fmt: []const u8, args: anytype) void {
     label.setText(text) catch {};
 }
 
+fn subClamped(value: u16, amount: u16) u16 {
+    return if (value > amount) value - amount else 0;
+}
+
 pub fn main() !void {
     // Initialize allocator
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -207,7 +211,10 @@ pub fn main() !void {
         renderer.drawBox(0, 0, width, height, zit.render.BorderStyle.single, border, bg, zit.render.Style{});
 
         // Draw the title
-        const title_rect = zit.layout.Rect.init(1, 1, width - 2, 1);
+        const title_rect = if (width > 2)
+            zit.layout.Rect.init(1, 1, width - 2, 1)
+        else
+            zit.layout.Rect.init(0, 0, width, 1);
         try title.widget.layout(title_rect);
         try title.widget.draw(&renderer);
 
@@ -251,7 +258,11 @@ pub fn main() !void {
         }
 
         // Draw the status at the bottom
-        const status_rect = zit.layout.Rect.init(1, if (height > 3) height - 2 else 1, width - 2, 1);
+        const status_y: u16 = if (height > 3) height - 2 else subClamped(height, 1);
+        const status_rect = if (width > 2)
+            zit.layout.Rect.init(1, status_y, width - 2, 1)
+        else
+            zit.layout.Rect.init(0, status_y, width, 1);
         try status.widget.layout(status_rect);
         try status.widget.draw(&renderer);
 

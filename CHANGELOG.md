@@ -45,6 +45,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 
 ### Fixed
 - Terminal mouse events are now normalized from protocol 1-based coordinates into Zit screen coordinates at decode time, fixing clickable widgets that responded one row/column away from their rendered position.
+- DropdownMenu and `widget_test` now tolerate aggressively tiny resize layouts without unsigned underflow during public PTY stress checks.
 - Interactive examples now render a shared live resize marker, and `terminal_test` uses `InputHandler` so its resize handling follows the same event path as the rest of the public examples.
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
 - Migrated the library, examples, benchmarks, and CI baseline to Zig 0.16.x.

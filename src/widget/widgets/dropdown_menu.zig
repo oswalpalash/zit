@@ -245,6 +245,8 @@ pub const DropdownMenu = struct {
         const bg = styled.bg;
         const style = styled.style;
 
+        if (rect.width == 0 or rect.height == 0) return;
+
         // Fill dropdown background
         renderer.fillRect(rect.x, rect.y, rect.width, 1, ' ', fg, bg, style);
 
@@ -259,27 +261,33 @@ pub const DropdownMenu = struct {
         }
 
         // Draw text
-        var x = rect.x + 1;
-        for (display_text) |char| {
-            if (x - rect.x >= rect.width - 2) {
-                break;
-            }
+        const header_text_capacity: u16 = if (rect.width > 2) rect.width - 2 else 0;
+        if (header_text_capacity > 0) {
+            var x = rect.x + 1;
+            for (display_text, 0..) |char, i| {
+                if (i >= header_text_capacity) {
+                    break;
+                }
 
-            renderer.drawChar(x, rect.y, char, fg, bg, style);
-            x += 1;
+                renderer.drawChar(x, rect.y, char, fg, bg, style);
+                x += 1;
+            }
         }
 
         // Draw dropdown arrow
-        renderer.drawChar(rect.x + rect.width - 2, rect.y, '▼', fg, bg, style);
+        const arrow_x = if (rect.width >= 2) rect.x + rect.width - 2 else rect.x;
+        renderer.drawChar(arrow_x, rect.y, '▼', fg, bg, style);
 
         // Draw dropdown menu if open
-        if (self.is_open and self.items.items.len > 0) {
+        if (self.is_open and self.items.items.len > 0 and rect.y < std.math.maxInt(u16)) {
             const menu_height = @min(@as(i16, @intCast(self.items.items.len)), 10);
+            const menu_height_u16: u16 = @intCast(menu_height);
 
             // Fill menu background
-            renderer.fillRect(rect.x, rect.y + 1, rect.width, @as(u16, @intCast(@min(@as(i16, @intCast(self.items.items.len)), 10))), ' ', fg, bg, style);
+            renderer.fillRect(rect.x, rect.y + 1, rect.width, menu_height_u16, ' ', fg, bg, style);
 
             // Draw menu items
+            const item_text_capacity: u16 = if (rect.width > 1) rect.width - 1 else 0;
             for (self.items.items, 0..) |item, i| {
                 if (i >= @as(usize, @intCast(menu_height))) {
                     break;
@@ -305,14 +313,16 @@ pub const DropdownMenu = struct {
                 renderer.fillRect(rect.x, item_y, rect.width, 1, ' ', item_fg, item_bg, style);
 
                 // Draw item text
-                x = rect.x + 1;
-                for (item.text) |char| {
-                    if (x - rect.x >= rect.width - 1) {
-                        break;
-                    }
+                if (item_text_capacity > 0) {
+                    var x = rect.x + 1;
+                    for (item.text, 0..) |char, text_idx| {
+                        if (text_idx >= item_text_capacity) {
+                            break;
+                        }
 
-                    renderer.drawChar(x, item_y, char, item_fg, item_bg, style);
-                    x += 1;
+                        renderer.drawChar(x, item_y, char, item_fg, item_bg, style);
+                        x += 1;
+                    }
                 }
             }
         }
@@ -518,4 +528,23 @@ test "dropdown menu ignores input when empty" {
     const click_event = input.Event{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) };
     try std.testing.expect(!try menu.widget.handleEvent(click_event));
     try std.testing.expect(menu.getSelectedItemText() == null);
+}
+
+test "dropdown menu tolerates tiny render widths" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.open();
+
+    var zero = try render.Renderer.init(alloc, 1, 3);
+    defer zero.deinit();
+    menu.widget.rect = layout_module.Rect.init(0, 0, 0, 1);
+    try menu.widget.draw(&zero);
+
+    var one = try render.Renderer.init(alloc, 1, 3);
+    defer one.deinit();
+    menu.widget.rect = layout_module.Rect.init(0, 0, 1, 1);
+    try menu.widget.draw(&one);
 }
