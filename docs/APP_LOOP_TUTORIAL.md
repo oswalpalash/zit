@@ -16,7 +16,7 @@ const zit = @import("zit");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var memory = try zit.memory.MemoryManager.init(allocator, 512 * 1024, 128);
@@ -57,7 +57,8 @@ pub fn main() !void {
 
     var reflow = zit.layout.ReflowManager.init();
     reflow.setRoot(root.widget.asLayoutElement());
-    _ = try reflow.handleResize(term.width, term.height);
+    app.bindResize(&renderer, &reflow);
+    _ = try app.handleResize(term.width, term.height);
 
     try term.clear();
 
@@ -65,18 +66,13 @@ pub fn main() !void {
     while (running) {
         if (try input.pollEvent(16)) |ev| {
             switch (ev) {
-                .resize => |size| {
-                    try renderer.resize(size.width, size.height);
-                    _ = try reflow.handleResize(size.width, size.height);
-                },
                 .key => |key| {
                     if (key.key == 'q') running = false;
                 },
                 else => {},
             }
 
-            const app_event = zit.event.fromInputEvent(ev, &root.widget);
-            try app.event_queue.pushEvent(app_event);
+            try app.processInputEvent(ev);
         }
 
         try app.tickOnce();
@@ -95,6 +91,6 @@ pub fn main() !void {
 - **Dirty redraws**: if you keep the back buffer intact between frames, only dirty widgets will redraw and the renderer will diff against the front buffer.
 - **Targeting input**: `event.fromInputEvent(ev, target)` lets you set a specific widget target (e.g., from hit testing).
 - **Animations/timers**: `Application.tickOnce()` already advances timers/animations, so just keep calling it each frame.
-- **Layout updates**: on resize or widget tree changes, call `ReflowManager.handleResize` and re-render.
+- **Layout updates**: `Application.bindResize(&renderer, &reflow)` applies terminal resize events automatically; on widget tree changes, call `ReflowManager.handleResize` and re-render.
 
 For more patterns (custom widgets, async tasks, background work), see `docs/WIDGET_GUIDE.md` and `docs/ARCHITECTURE.md`.

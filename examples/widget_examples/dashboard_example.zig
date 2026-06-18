@@ -23,6 +23,9 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     try term.enableRawMode();
     try term.hideCursor();
@@ -128,9 +131,7 @@ pub fn main() !void {
                         _ = try main_split.widget.handleEvent(event);
                     }
                 },
-                .resize => |resize| {
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(event),
                 else => {
                     _ = try main_split.widget.handleEvent(event);
                 },

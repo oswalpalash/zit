@@ -10,8 +10,17 @@ Zit helps you ship terminal dashboards, editors, and workflows with the same con
 ## Why Zit
 - 30+ production-ready widgets (blocks/paragraphs, charts, tables with typeahead, context menus, popups, file browser, bracketed paste-aware inputs).
 - Batteries-included UX: mouse + drag-and-drop payloads, focus rings, typeahead search on lists/tables/file browser, accessibility roles/announcements.
+- Automatic terminal resizing: bind an `Application` to your renderer/reflow manager once and resize events update buffers and layout for you.
 - Thoughtful theming and motion: light/dark/high-contrast palettes, per-widget `setTheme`, animator with easing/yoyo, timers for periodic work.
 - Works the Zig way: explicit `init`/`deinit`, allocator-friendly builders, zero global state, tested layouts + render paths, rendering benchmarks.
+
+## Screenshots
+
+| System monitor | File manager |
+| --- | --- |
+| <img src="assets/system_monitor_example.svg" alt="System monitor dashboard example" width="100%"> | <img src="assets/file_manager_example.svg" alt="File manager TUI example" width="100%"> |
+
+<img src="assets/showcase_demo.svg" alt="Widget showcase TUI example" width="100%">
 
 ## Feature Highlights
 
@@ -152,7 +161,7 @@ const zit = @import("zit");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var term = try zit.terminal.init(allocator);
@@ -160,6 +169,9 @@ pub fn main() !void {
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
     var input = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     try term.enableRawMode();
     defer term.disableRawMode() catch {};
@@ -178,7 +190,7 @@ pub fn main() !void {
 
         if (try input.pollEvent(120)) |event| switch (event) {
             .key => |key| if (key.key == 'q') running = false,
-            .resize => |size| try renderer.resize(size.width, size.height),
+            .resize => try app.processInputEvent(event),
             else => {},
         };
     }

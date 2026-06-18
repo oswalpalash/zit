@@ -6,6 +6,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 - `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`.
 - `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
+- `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement` adapters let widgets participate in container layouts.
 - `render` – `Renderer.init(allocator, width, height)`, `drawStr`, `drawBox`, `fillRect`, `drawGradient`, `render()` (front/back diff). Colors via `Color.named/rgb/ansi256`, styles via `Style` and `FocusRingStyle`.
 - `widget` – Base `Widget` + vtable, theme helpers, builders, and concrete widgets (`Label`, `Button`, `List`, `Table`, `SplitPane`, `Modal`, `ContextMenu`, etc.).
@@ -17,7 +18,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 ### Bootstrapping
 ```zig
 var gpa = std.heap.DebugAllocator(.{}){};
-defer _ = gpa.deinit();
+defer std.debug.assert(gpa.deinit() == .ok);
 const allocator = gpa.allocator();
 
 var memory_manager = try zit.memory.MemoryManager.init(allocator, 1 * 1024 * 1024, 128);
@@ -42,6 +43,23 @@ while (true) {
     }
     try queue.processEventsWithPropagation(allocator);
     try renderer.render();
+}
+```
+
+### Automatic Resize
+```zig
+var app = zit.event.Application.init(allocator);
+defer app.deinit();
+
+var reflow = zit.layout.ReflowManager.init();
+reflow.setRoot(root.widget.asLayoutElement());
+
+app.setRoot(root);
+app.bindResize(&renderer, &reflow);
+_ = try app.handleResize(term.width, term.height);
+
+if (try input_handler.pollEvent(16)) |evt| {
+    try app.processInputEvent(evt); // resize events update renderer + reflow
 }
 ```
 

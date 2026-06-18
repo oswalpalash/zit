@@ -22,6 +22,9 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -72,9 +75,7 @@ pub fn main() !void {
                         running = false;
                     }
                 },
-                .resize => |size| {
-                    try renderer.resize(size.width, size.height);
-                },
+                .resize => try app.processInputEvent(event),
                 else => {},
             }
         }

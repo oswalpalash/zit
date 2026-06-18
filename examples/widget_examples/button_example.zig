@@ -99,6 +99,9 @@ pub fn main() !void {
     // Create a renderer with the parent allocator
     var renderer = try render.Renderer.init(allocator, terminal.width, terminal.height);
     defer renderer.deinit();
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     // Create a title label using widget pool allocator
     const title = try Label.init(memory_manager.getWidgetPoolAllocator(), "Zit Button Widget Demo");
@@ -278,9 +281,7 @@ pub fn main() !void {
                         _ = try root.widget.handleEvent(e);
                     }
                 },
-                .resize => |resize| {
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(e),
                 .mouse => {
                     _ = try root.widget.handleEvent(e);
                 },

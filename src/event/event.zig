@@ -2019,6 +2019,14 @@ pub const Application = struct {
     style_sheet: ?*widget.css.StyleSheet = null,
     /// Optional theme for stylesheet resolution
     style_theme: ?widget.theme.Theme = null,
+    /// Optional terminal-size binding for automatic renderer/root relayout.
+    resize_binding: ResizeBinding = .{},
+
+    /// Components updated when a resize event reaches the application.
+    pub const ResizeBinding = struct {
+        renderer: ?*render.Renderer = null,
+        reflow: ?*layout.ReflowManager = null,
+    };
 
     /// Initialize a new application
     pub fn init(allocator: std.mem.Allocator) Application {
@@ -2113,6 +2121,42 @@ pub const Application = struct {
         self.root = root;
         self.applyStyleContext();
         self.applyAccessibilityContext();
+    }
+
+    /// Bind resize handling to renderer buffers and optional reflow layout.
+    ///
+    /// Once bound, `processInputEvent(.resize)` automatically resizes the
+    /// renderer and relayouts the root before user resize listeners run.
+    pub fn bindResize(self: *Application, renderer_ptr: *render.Renderer, reflow_ptr: ?*layout.ReflowManager) void {
+        self.resize_binding = .{
+            .renderer = renderer_ptr,
+            .reflow = reflow_ptr,
+        };
+    }
+
+    /// Remove automatic renderer/reflow resize handling.
+    pub fn unbindResize(self: *Application) void {
+        self.resize_binding = .{};
+    }
+
+    /// Apply a terminal size to bound rendering/layout state.
+    pub fn handleResize(self: *Application, width: u16, height: u16) !layout.Size {
+        if (self.resize_binding.renderer) |renderer_ptr| {
+            if (renderer_ptr.back.width != width or renderer_ptr.back.height != height) {
+                try renderer_ptr.resize(width, height);
+            }
+        }
+
+        if (self.resize_binding.reflow) |reflow_ptr| {
+            return try reflow_ptr.handleResize(width, height);
+        }
+
+        if (self.root) |root| {
+            try root.widget.layout(layout.Rect.init(0, 0, width, height));
+            return layout.Size.init(width, height);
+        }
+
+        return layout.Size.init(width, height);
     }
 
     /// Attach a stylesheet for CSS-like widget styling.
@@ -2441,6 +2485,13 @@ pub const Application = struct {
 
     /// Process an input event
     pub fn processInputEvent(self: *Application, input_event: input.Event) !void {
+        switch (input_event) {
+            .resize => |resize_event| {
+                _ = try self.handleResize(resize_event.width, resize_event.height);
+            },
+            else => {},
+        }
+
         if (self.root == null) {
             return;
         }
@@ -2552,6 +2603,53 @@ test "fromInputEvent converts unknown events to custom" {
     try std.testing.expect(event.data.custom.destructor == null);
     try std.testing.expectEqualStrings("input.unknown", event.data.custom.type_name.?);
     try std.testing.expect(event.data.custom.filter_fn == null);
+}
+
+test "application resize binding updates renderer reflow and queues resize event" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    app.setRoot(root);
+
+    var renderer_instance = try render.Renderer.init(alloc, 20, 10);
+    defer renderer_instance.deinit();
+
+    var reflow = layout.ReflowManager.init();
+    reflow.setRoot(root.widget.asLayoutElement());
+    app.bindResize(&renderer_instance, &reflow);
+
+    try app.processInputEvent(input.Event{ .resize = input.ResizeEvent.init(100, 30) });
+
+    try std.testing.expectEqual(@as(u16, 100), renderer_instance.back.width);
+    try std.testing.expectEqual(@as(u16, 30), renderer_instance.back.height);
+    try std.testing.expectEqual(@as(u16, 100), reflow.constraints.max_width);
+    try std.testing.expectEqual(@as(u16, 30), reflow.constraints.max_height);
+    try std.testing.expectEqual(@as(u16, 100), root.widget.rect.width);
+    try std.testing.expectEqual(@as(u16, 30), root.widget.rect.height);
+
+    const queued = app.event_queue.popFront().?;
+    try std.testing.expectEqual(EventType.resize, queued.type);
+    try std.testing.expectEqual(@as(u16, 100), queued.data.resize.width);
+    try std.testing.expectEqual(@as(u16, 30), queued.data.resize.height);
+}
+
+test "application resize binding works without a root widget" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var renderer_instance = try render.Renderer.init(alloc, 12, 5);
+    defer renderer_instance.deinit();
+    app.bindResize(&renderer_instance, null);
+
+    try app.processInputEvent(input.Event{ .resize = input.ResizeEvent.init(64, 18) });
+
+    try std.testing.expectEqual(@as(u16, 64), renderer_instance.back.width);
+    try std.testing.expectEqual(@as(u16, 18), renderer_instance.back.height);
+    try std.testing.expect(app.event_queue.popFront() == null);
 }
 
 test "background tasks emit completion events" {

@@ -35,6 +35,9 @@ pub fn main() !void {
 
     // Initialize input handler with the parent allocator
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -183,10 +186,7 @@ pub fn main() !void {
                         _ = try list.widget.handleEvent(e);
                     }
                 },
-                .resize => |resize| {
-                    // Resize renderer
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(e),
                 .mouse => {
                     // Pass the event to the widgets
                     _ = try button.widget.handleEvent(e);

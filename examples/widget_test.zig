@@ -33,6 +33,9 @@ pub fn main() !void {
 
     // Initialize input handler
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
     // Enable mouse tracking
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
@@ -312,10 +315,7 @@ pub fn main() !void {
                         }
                     }
                 },
-                .resize => |resize| {
-                    // Resize renderer
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(e),
                 .mouse => {
                     // Pass event to the modal first if visible
                     if (modal.widget.visible) {

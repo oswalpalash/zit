@@ -16,6 +16,9 @@ pub fn main() !void {
     defer renderer.deinit();
 
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     var browser = try zit.widget.FileBrowser.init(allocator, ".");
     defer browser.deinit();
@@ -82,9 +85,7 @@ pub fn main() !void {
                         _ = try browser.widget.handleEvent(e);
                     }
                 },
-                .resize => |resize| {
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(e),
                 else => {
                     _ = try browser.widget.handleEvent(e);
                 },

@@ -366,6 +366,7 @@ pub fn main() !void {
 
     var app = event.Application.initWithMemoryManager(&memory_manager);
     defer app.deinit();
+    app.bindResize(&renderer, null);
 
     var root = try widget.Container.init(memory_manager.getWidgetPoolAllocator());
     defer root.deinit();
@@ -663,9 +664,7 @@ pub fn main() !void {
                         _ = try autocomplete.widget.handleEvent(ev);
                     }
                 },
-                .resize => |size| {
-                    try renderer.resize(size.width, size.height);
-                },
+                .resize => try app.processInputEvent(ev),
                 else => {},
             }
         }

@@ -220,8 +220,20 @@ def run_example(root: Path, example: Example, render_timeout: float, quit_timeou
                 f"--- terminal tail ---\n{tail_text(bytes(output))}"
             )
 
-        os.write(master_fd, b"q")
-        exit_code = wait_for_pid(pid, quit_timeout)
+        exit_code = None
+        quit_deadline = time.monotonic() + quit_timeout
+        while time.monotonic() < quit_deadline:
+            try:
+                os.write(master_fd, b"q")
+            except OSError:
+                exit_code = wait_for_pid(pid, 0.5)
+                break
+            exit_code = wait_for_pid(pid, 0.15)
+            output.extend(read_available(master_fd, 0.02))
+            if exit_code is not None:
+                break
+        if exit_code is None:
+            exit_code = wait_for_pid(pid, 0.0)
         output.extend(read_available(master_fd, 0.2))
         if exit_code is None:
             terminate(pid)

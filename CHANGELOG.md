@@ -23,6 +23,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
+- DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
+- `Application.bindResize` and `Application.handleResize` provide automatic terminal resize handling for renderer buffers, root layout, and optional `ReflowManager` state.
 - Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
 
@@ -48,6 +50,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.
+- Added graphical README previews for the system monitor, file manager, and widget showcase examples.
 - Comprehensive references: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, and `docs/TERMINAL_COMPAT.md`.
 - README quickstart, installation, feature highlights, and example commands kept in sync with the build targets.
 - Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).

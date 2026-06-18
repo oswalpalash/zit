@@ -51,7 +51,7 @@ server.root_module.addImport("zit", zit_mod);
 const cli = b.addExecutable(.{ .name = "cli", .root_source_file = b.path("src/cli.zig") });
 cli.root_module.addImport("zit", zit_mod);
 ```
-- **Custom render backends**: `zit.render.Renderer` is allocator-driven. If you need to drive rendering from another loop, call `renderer.render()` only when your backend says the terminal is ready and use `Application.tickOnce()` for non-blocking event processing.
+- **Custom render backends**: `zit.render.Renderer` is allocator-driven. If you need to drive rendering from another loop, call `renderer.render()` only when your backend says the terminal is ready, use `Application.tickOnce()` for non-blocking event processing, and bind terminal resizing with `Application.bindResize(&renderer, reflow_or_null)`.
 - **Async/background work**: keep UI smooth by using `Application.startBackgroundTask()` and listen for the completion event before mutating widgets.
 
 ## Project patterns that pair well with Zit
@@ -87,12 +87,21 @@ const Dashboard = struct {
     }
 };
 
-fn run(app: *zit.event.Application, dash: *Dashboard, model: *Model) !void {
-    while (try app.tickOnce()) |evt| switch (evt) {
-        .key => |key| if (key.key == 'r') { model.cpu = 42; dash.update(model.*); },
-        .resize => |size| try dash.renderer.resize(size.width, size.height),
-        else => {},
-    };
+fn run(app: *zit.event.Application, input_handler: *zit.input.InputHandler, dash: *Dashboard, model: *Model) !void {
+    app.bindResize(&dash.renderer, null);
+    while (true) {
+        if (try input_handler.pollEvent(16)) |evt| {
+            switch (evt) {
+                .key => |key| if (key.key == 'r') {
+                    model.cpu = 42;
+                    dash.update(model.*);
+                },
+                else => {},
+            }
+            try app.processInputEvent(evt);
+        }
+        try dash.renderer.render();
+    }
 }
 ```
 

@@ -27,6 +27,9 @@ pub fn main() !void {
 
     // Initialize input handler with the parent allocator
     var input_handler = zit.input.InputHandler.init(allocator, &term);
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     // Clear screen
     try term.clear();
@@ -78,10 +81,7 @@ pub fn main() !void {
                         break;
                     }
                 },
-                .resize => |resize| {
-                    // Resize renderer
-                    try renderer.resize(resize.width, resize.height);
-                },
+                .resize => try app.processInputEvent(e),
                 else => {},
             }
         }

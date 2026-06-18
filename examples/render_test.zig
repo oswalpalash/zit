@@ -20,6 +20,9 @@ pub fn main() !void {
     // Initialize renderer
     var renderer = try zit.render.Renderer.init(allocator, width, height);
     defer renderer.deinit();
+    var app = zit.event.Application.init(allocator);
+    defer app.deinit();
+    app.bindResize(&renderer, null);
 
     // Enable raw mode
     try term.enableRawMode();
@@ -58,10 +61,8 @@ pub fn main() !void {
                 .mouse => |mouse| {
                     handleMouseEvent(&renderer, mouse);
                 },
-                .resize => |resize| {
-                    // Resize renderer
-                    try renderer.resize(resize.width, resize.height);
-
+                .resize => {
+                    try app.processInputEvent(e);
                     // Redraw UI
                     drawUI(&renderer);
                 },
