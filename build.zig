@@ -334,6 +334,11 @@ pub fn build(b: *std.Build) void {
     const resize_smoke_step = b.step("resize-smoke", "Run PTY resize smoke against input handling");
     resize_smoke_step.dependOn(&resize_smoke_cmd.step);
 
+    const mouse_smoke_cmd = b.addSystemCommand(&.{ "python3", "scripts/mouse_alignment_smoke.py", "--no-build" });
+    mouse_smoke_cmd.step.dependOn(b.getInstallStep());
+    const mouse_smoke_step = b.step("mouse-smoke", "Run PTY mouse coordinate alignment smoke");
+    mouse_smoke_step.dependOn(&mouse_smoke_cmd.step);
+
     const release_check_cmd = b.addSystemCommand(&.{ "python3", "scripts/release_verify.py" });
     const release_check_step = b.step("release-check", "Run the full public release verification gate");
     release_check_step.dependOn(&release_check_cmd.step);

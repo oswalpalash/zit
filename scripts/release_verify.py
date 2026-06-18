@@ -33,6 +33,7 @@ SCRIPT_COMPILE_TARGETS = (
     "scripts/check_debug_allocator_cleanup.py",
     "scripts/check_widget_coverage.py",
     "scripts/interactive_example_smoke.py",
+    "scripts/mouse_alignment_smoke.py",
     "scripts/release_verify.py",
     "scripts/resize_smoke.py",
     "scripts/visual_repeat_check.py",
@@ -90,6 +91,7 @@ def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
         Command("widget coverage", ("python3", "scripts/check_widget_coverage.py"), 120),
         Command("interactive PTY smoke", ("python3", "scripts/interactive_example_smoke.py"), 300),
         Command("resize PTY smoke", ("python3", "scripts/resize_smoke.py", "--no-build"), 120),
+        Command("mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build"), 120),
     ]
     if not args.skip_visual:
         out.append(Command("visual repeat", ("python3", "scripts/visual_repeat_check.py", "--count", str(args.visual_count)), 300))

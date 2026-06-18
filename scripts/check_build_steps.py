@@ -43,6 +43,7 @@ INTERACTIVE_STEPS = {
     "widget-gallery-extended",
     "widget-gallery-layouts",
     "resize-smoke",
+    "mouse-smoke",
 }
 
 

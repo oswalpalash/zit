@@ -7,6 +7,7 @@ Mark all that apply. Use `zig build release-check` before maintainers cut or mer
 - [ ] `zig build quality`
 - [ ] `python3 scripts/interactive_example_smoke.py`
 - [ ] `python3 scripts/resize_smoke.py --no-build`
+- [ ] `python3 scripts/mouse_alignment_smoke.py --no-build`
 - [ ] `python3 scripts/visual_repeat_check.py --count 4` for TUI-facing changes, plus contact-sheet inspection.
 - [ ] `zig build release-check`
 - [ ] Targeted examples/benchmarks (list):
