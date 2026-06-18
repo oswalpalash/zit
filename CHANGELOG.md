@@ -71,6 +71,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Label, button, checkbox, progress bar, paragraph, markdown, popup, input-field placeholder, and text-area placeholder setters now invalidate retained render state after visible changes.
 - Text-owning widget setters now duplicate replacement buffers before releasing current buffers, with allocation-failure regression coverage for stable rollback behavior.
 - InputField and TextArea validation field-name setters now preserve the previous owned name on allocation failure, preventing dangling pointers during failed validation reconfiguration.
+- InputField, TextArea, and AutocompleteInput initialization now clean up every intermediate allocation on induced OOM, with `checkAllAllocationFailures` regression coverage.
+- AutocompleteInput suggestion and filter rebuilds are now transactional, preserving the previous suggestion/filter state if allocation fails during replacement or typeahead filtering.
 - The interactive demo layout now presents a structured application frame while continuing to stay live until `q`.
 - System monitor, file manager, and widget showcase examples now use the polished panel language from the README references and keep manually redrawn widgets dirty across full-frame repaint loops.
 - Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.

@@ -29,14 +29,23 @@ pub const AutocompleteInput = struct {
 
     pub fn init(allocator: std.mem.Allocator, max_length: usize) !*AutocompleteInput {
         const self = try allocator.create(AutocompleteInput);
+        errdefer allocator.destroy(self);
+
         const theme_value = theme.Theme.dark();
         const field = try InputField.init(allocator, max_length);
+        errdefer field.deinit();
+
+        var suggestions = try std.ArrayList([]u8).initCapacity(allocator, 0);
+        errdefer suggestions.deinit(allocator);
+        var filtered = try std.ArrayList(usize).initCapacity(allocator, 0);
+        errdefer filtered.deinit(allocator);
+
         self.* = AutocompleteInput{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
             .input_field = field,
-            .suggestions = try std.ArrayList([]u8).initCapacity(allocator, 0),
-            .filtered = try std.ArrayList(usize).initCapacity(allocator, 0),
+            .suggestions = suggestions,
+            .filtered = filtered,
             .theme_value = theme_value,
         };
         self.input_field.widget.parent = &self.widget;
@@ -54,16 +63,26 @@ pub const AutocompleteInput = struct {
     }
 
     pub fn setSuggestions(self: *AutocompleteInput, values: []const []const u8) !void {
-        for (self.suggestions.items) |s| {
-            self.allocator.free(s);
-        }
-        self.suggestions.clearRetainingCapacity();
+        var next_suggestions = try std.ArrayList([]u8).initCapacity(self.allocator, values.len);
+        errdefer self.freeSuggestionList(&next_suggestions);
 
         for (values) |v| {
             const copy = try self.allocator.dupe(u8, v);
-            try self.suggestions.append(self.allocator, copy);
+            next_suggestions.append(self.allocator, copy) catch |err| {
+                self.allocator.free(copy);
+                return err;
+            };
         }
-        try self.updateFilter();
+
+        var next_filtered = try self.buildFilter(next_suggestions.items);
+        errdefer next_filtered.deinit(self.allocator);
+
+        self.freeSuggestionList(&self.suggestions);
+        self.filtered.deinit(self.allocator);
+        self.suggestions = next_suggestions;
+        self.filtered = next_filtered;
+        self.clampSelection();
+        self.widget.markDirty();
     }
 
     pub fn setMaxVisible(self: *AutocompleteInput, count: usize) void {
@@ -169,19 +188,42 @@ pub const AutocompleteInput = struct {
     }
 
     fn updateFilter(self: *AutocompleteInput) !void {
-        self.filtered.clearRetainingCapacity();
-        const query = self.input_field.getText();
-        if (query.len == 0 or self.suggestions.items.len == 0) return;
+        var next_filtered = try self.buildFilter(self.suggestions.items);
+        errdefer next_filtered.deinit(self.allocator);
 
-        for (self.suggestions.items, 0..) |s, idx| {
+        self.filtered.deinit(self.allocator);
+        self.filtered = next_filtered;
+        self.clampSelection();
+        self.widget.markDirty();
+    }
+
+    fn buildFilter(self: *AutocompleteInput, suggestions: []const []u8) !std.ArrayList(usize) {
+        var next_filtered = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        errdefer next_filtered.deinit(self.allocator);
+
+        const query = self.input_field.getText();
+        if (query.len == 0 or suggestions.len == 0) return next_filtered;
+
+        for (suggestions, 0..) |s, idx| {
             if (self.matches(query, s)) {
-                try self.filtered.append(self.allocator, idx);
+                try next_filtered.append(self.allocator, idx);
             }
         }
 
+        return next_filtered;
+    }
+
+    fn clampSelection(self: *AutocompleteInput) void {
         if (self.selected >= self.filtered.items.len) {
             self.selected = if (self.filtered.items.len == 0) 0 else 0;
         }
+    }
+
+    fn freeSuggestionList(self: *AutocompleteInput, suggestions: *std.ArrayList([]u8)) void {
+        for (suggestions.items) |s| {
+            self.allocator.free(s);
+        }
+        suggestions.deinit(self.allocator);
     }
 
     fn matches(self: *AutocompleteInput, needle: []const u8, haystack: []const u8) bool {
@@ -248,4 +290,72 @@ test "autocomplete selection commits suggestion" {
     const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(enter_event));
     try std.testing.expectEqualStrings("two", ac.input_field.getText());
+}
+
+fn autocompleteInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    const ac = try AutocompleteInput.init(allocator, 32);
+    ac.deinit();
+}
+
+test "autocomplete init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, autocompleteInitAllocationFailureHarness, .{});
+}
+
+fn autocompleteSetSuggestionsAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var ac = try AutocompleteInput.init(allocator, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
+    ac.input_field.setText("alp");
+    try ac.updateFilter();
+    try ac.setSuggestions(&[_][]const u8{ "delta", "delphi", "deal" });
+}
+
+test "autocomplete setSuggestions cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, autocompleteSetSuggestionsAllocationFailureHarness, .{});
+}
+
+test "autocomplete suggestions survive allocation failure" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
+    ac.input_field.setText("alp");
+    try ac.updateFilter();
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = ac.allocator;
+    ac.allocator = failing.allocator();
+    defer ac.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, ac.setSuggestions(&[_][]const u8{ "delta", "delphi" }));
+    try std.testing.expectEqual(@as(usize, 3), ac.suggestions.items.len);
+    try std.testing.expectEqualStrings("alpha", ac.suggestions.items[0]);
+    try std.testing.expectEqualStrings("beta", ac.suggestions.items[1]);
+    try std.testing.expectEqualStrings("alpaca", ac.suggestions.items[2]);
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+}
+
+test "autocomplete filter survives allocation failure" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
+    ac.input_field.setText("alp");
+    try ac.updateFilter();
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+
+    ac.input_field.setText("beta");
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = ac.allocator;
+    ac.allocator = failing.allocator();
+    defer ac.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, ac.updateFilter());
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+    try std.testing.expectEqual(@as(usize, 0), ac.filtered.items[0]);
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items[1]);
 }

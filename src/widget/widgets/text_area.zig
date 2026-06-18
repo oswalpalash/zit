@@ -58,14 +58,20 @@ pub const TextArea = struct {
     pub fn init(allocator: std.mem.Allocator, max_bytes: usize) !*TextArea {
         const capacity = @max(max_bytes, 1);
         const self = try allocator.create(TextArea);
+        errdefer allocator.destroy(self);
 
-        const buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
+        var buffer = try std.ArrayList(u8).initCapacity(allocator, capacity);
+        errdefer buffer.deinit(allocator);
+
+        var undo_redo = input.UndoRedoStack.init(allocator);
+        errdefer undo_redo.deinit();
+        try undo_redo.capture(buffer.items);
 
         self.* = TextArea{
             .widget = base.Widget.init(&vtable),
             .buffer = buffer,
             .max_bytes = capacity,
-            .undo_redo = input.UndoRedoStack.init(allocator),
+            .undo_redo = undo_redo,
             .clipboard_storage = input.Clipboard.init(allocator),
             .clipboard = undefined,
             .allocator = allocator,
@@ -74,7 +80,6 @@ pub const TextArea = struct {
 
         self.clipboard = &self.clipboard_storage;
         self.setTheme(theme.Theme.dark());
-        try self.undo_redo.capture(self.buffer.items);
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
         return self;
     }
@@ -1145,6 +1150,15 @@ test "text area validation surfaces rule failures" {
     try std.testing.expect(!res.isValid());
     try std.testing.expectEqualStrings("body", res.errors.items[0].field);
     try std.testing.expectEqualStrings("too short", res.errors.items[1].message);
+}
+
+fn textAreaInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    const area = try TextArea.init(allocator, 64);
+    area.deinit();
+}
+
+test "text area init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, textAreaInitAllocationFailureHarness, .{});
 }
 
 test "text area multi-cursor inserts at every caret" {

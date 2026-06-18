@@ -87,23 +87,28 @@ pub const InputField = struct {
     pub fn init(allocator: std.mem.Allocator, max_length: usize) !*InputField {
         const capacity = @max(max_length, 1);
         const self = try allocator.create(InputField);
+        errdefer allocator.destroy(self);
+
         const initial_buffer = try allocator.alloc(u8, capacity);
+        errdefer allocator.free(initial_buffer);
 
         @memset(initial_buffer, 0);
+        var undo_redo = input.UndoRedoStack.init(allocator);
+        errdefer undo_redo.deinit();
+        try undo_redo.capture(initial_buffer[0..0]);
 
         self.* = InputField{
             .widget = base.Widget.init(&vtable),
             .text = initial_buffer,
             .max_length = capacity,
             .allocator = allocator,
-            .undo_redo = input.UndoRedoStack.init(allocator),
+            .undo_redo = undo_redo,
             .clipboard_storage = input.Clipboard.init(allocator),
             .clipboard = undefined,
         };
 
         self.clipboard = &self.clipboard_storage;
         self.setTheme(theme.Theme.dark());
-        try self.undo_redo.capture(self.text[0..0]);
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
 
         return self;
@@ -773,6 +778,15 @@ test "input field placeholder can be replaced safely" {
     try field.setPlaceholder("first");
     try field.setPlaceholder("second");
     try std.testing.expectEqualStrings("second", field.placeholder);
+}
+
+fn inputFieldInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    const field = try InputField.init(allocator, 32);
+    field.deinit();
+}
+
+test "input field init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, inputFieldInitAllocationFailureHarness, .{});
 }
 
 test "input field placeholder survives allocation failure" {
