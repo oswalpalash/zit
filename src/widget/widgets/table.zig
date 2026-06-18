@@ -776,28 +776,63 @@ pub const Table = struct {
         return null;
     }
 
+    fn hasDrawableBorder(self: *const Table) bool {
+        const rect = self.widget.rect;
+        return self.border != .none and rect.width > 2 and rect.height > 2;
+    }
+
+    fn contentRect(self: *const Table) layout_module.Rect {
+        const rect = self.widget.rect;
+        if (self.hasDrawableBorder()) {
+            return rect.shrink(layout_module.EdgeInsets.all(1));
+        }
+        return rect;
+    }
+
+    fn headerHeight(self: *const Table, content_rect: layout_module.Rect) u16 {
+        if (!self.show_headers or content_rect.height == 0) return 0;
+        var rows: u16 = 1;
+        if (self.show_grid and content_rect.height > rows) {
+            rows += 1;
+        }
+        return rows;
+    }
+
     fn columnIndexAtX(self: *Table, x: u16) ?usize {
-        var cursor = self.widget.rect.x;
+        const content_rect = self.contentRect();
+        if (!content_rect.contains(x, content_rect.y)) return null;
+
+        var cursor: u32 = @as(u32, content_rect.x);
+        const x_u32: u32 = @as(u32, x);
+        const right: u32 = @as(u32, content_rect.x) + @as(u32, content_rect.width);
         for (self.columns.items, 0..) |column, idx| {
-            if (x >= cursor and x < cursor + column.width) {
+            const end = @min(cursor + @as(u32, column.width), right);
+            if (x_u32 >= cursor and x_u32 < end) {
                 return idx;
             }
-            cursor += column.width;
+            cursor = end;
+            if (cursor >= right) break;
         }
         return null;
     }
 
     fn tryStartResize(self: *Table, x: u16) bool {
-        var cursor = self.widget.rect.x;
+        const content_rect = self.contentRect();
+        if (!content_rect.contains(x, content_rect.y)) return false;
+
+        var cursor: u32 = @as(u32, content_rect.x);
+        const x_u32: u32 = @as(u32, x);
+        const right: u32 = @as(u32, content_rect.x) + @as(u32, content_rect.width);
         for (self.columns.items, 0..) |column, idx| {
-            const end = cursor + column.width;
-            if (column.resizable and x + 1 >= end and x <= end and column.width > 0) {
+            const end = @min(cursor + @as(u32, column.width), right);
+            if (column.resizable and x_u32 + 1 >= end and x_u32 <= end and column.width > 0) {
                 self.resizing_column = idx;
                 self.resize_anchor_x = x;
                 self.resize_original_width = column.width;
                 return true;
             }
-            cursor += column.width;
+            cursor = end;
+            if (cursor >= right) break;
         }
         return false;
     }
@@ -881,15 +916,16 @@ pub const Table = struct {
             self.first_visible_row = new_first;
         }
 
-        const has_border = self.border != .none and rect.width > 2 and rect.height > 2;
+        const has_border = self.hasDrawableBorder();
         if (has_border) {
             renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, self.fg, self.bg, render.Style{});
         }
 
-        const content_x = rect.x + @as(u16, if (has_border) 1 else 0);
-        const content_y = rect.y + @as(u16, if (has_border) 1 else 0);
-        const content_width = if (has_border) rect.width - 2 else rect.width;
-        const content_height = if (has_border) rect.height - 2 else rect.height;
+        const content_rect = self.contentRect();
+        const content_x = content_rect.x;
+        const content_y = content_rect.y;
+        const content_width = content_rect.width;
+        const content_height = content_rect.height;
         if (content_width == 0 or content_height == 0) return;
         const content_right = content_x + content_width;
 
@@ -1064,9 +1100,11 @@ pub const Table = struct {
         if (event == .mouse) {
             const mouse_event = event.mouse;
             const rect = self.widget.rect;
+            const content_rect = self.contentRect();
+            const header_rows = self.headerHeight(content_rect);
 
             // Header interactions: sorting and resize handles.
-            if (self.show_headers and mouse_event.y == rect.y and mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width) {
+            if (self.show_headers and content_rect.height > 0 and mouse_event.y == content_rect.y and content_rect.contains(mouse_event.x, mouse_event.y)) {
                 if (mouse_event.action == .press) {
                     if (self.tryStartResize(mouse_event.x)) return true;
                     if (self.columnIndexAtX(mouse_event.x)) |col| {
@@ -1091,16 +1129,12 @@ pub const Table = struct {
                 return true;
             }
 
-            // Ignore events on headers
-            const header_offset: i16 = if (self.show_headers) 1 else 0;
-
             // Check if mouse is within table row bounds
-            if (mouse_event.y >= rect.y + @as(u16, @intCast(header_offset)) and mouse_event.y < rect.y + rect.height and
-                mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width and total_rows > 0)
-            {
-
+            const row_start_y = @as(u32, content_rect.y) + @as(u32, header_rows);
+            const mouse_y = @as(u32, mouse_event.y);
+            if (content_rect.contains(mouse_event.x, mouse_event.y) and mouse_y >= row_start_y and total_rows > 0) {
                 // Convert y position to row index
-                const row_idx = self.first_visible_row + @as(usize, @intCast(mouse_event.y - rect.y)) - @as(usize, @intCast(header_offset));
+                const row_idx = self.first_visible_row + @as(usize, @intCast(mouse_y - row_start_y));
 
                 if (row_idx < self.view_rows.items.len) {
                     if (self.dataIndexForView(row_idx)) |data_row| {
@@ -1493,6 +1527,56 @@ test "table border preserves header and row content" {
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 1).codepoint());
     try std.testing.expectEqual(@as(u21, '─'), renderer.back.getCell(2, 2).codepoint());
     try std.testing.expectEqual(@as(u21, 'x'), renderer.back.getCell(2, 3).codepoint());
+}
+
+test "bordered table mouse header uses rendered content row" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 5, true);
+    try table.addColumn("B", 5, true);
+    try table.addRow(&.{ "x", "y" });
+    table.border = .single;
+    try table.widget.layout(layout_module.Rect.init(0, 0, 14, 6));
+
+    const top_border = input.Event{ .mouse = input.MouseEvent.init(.press, 2, 0, 1, 0) };
+    try std.testing.expect(!try table.widget.handleEvent(top_border));
+    try std.testing.expectEqual(@as(?usize, null), table.sort_column);
+    try std.testing.expectEqual(@as(?usize, null), table.resizing_column);
+
+    const header = input.Event{ .mouse = input.MouseEvent.init(.press, 2, 1, 1, 0) };
+    try std.testing.expect(try table.widget.handleEvent(header));
+    try std.testing.expectEqual(@as(?usize, 0), table.sort_column);
+
+    const resize_handle = input.Event{ .mouse = input.MouseEvent.init(.press, 6, 1, 1, 0) };
+    try std.testing.expect(try table.widget.handleEvent(resize_handle));
+    try std.testing.expectEqual(@as(?usize, 0), table.resizing_column);
+}
+
+test "bordered table mouse rows skip header separator" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 5, true);
+    try table.addColumn("B", 5, true);
+    try table.addRow(&.{ "x", "y" });
+    try table.addRow(&.{ "z", "w" });
+    table.border = .single;
+    try table.widget.layout(layout_module.Rect.init(0, 0, 14, 6));
+
+    const separator = input.Event{ .mouse = input.MouseEvent.init(.press, 2, 2, 1, 0) };
+    try std.testing.expect(!try table.widget.handleEvent(separator));
+    try std.testing.expectEqual(@as(?usize, null), table.selected_row);
+
+    const first_row = input.Event{ .mouse = input.MouseEvent.init(.press, 2, 3, 1, 0) };
+    try std.testing.expect(try table.widget.handleEvent(first_row));
+    try std.testing.expectEqual(@as(?usize, 0), table.selected_row);
+
+    const second_row = input.Event{ .mouse = input.MouseEvent.init(.press, 2, 4, 1, 0) };
+    try std.testing.expect(try table.widget.handleEvent(second_row));
+    try std.testing.expectEqual(@as(?usize, 1), table.selected_row);
 }
 
 test "table preferred size clamps large widths" {
