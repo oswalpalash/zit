@@ -24,7 +24,10 @@ pub const version = std.SemanticVersion{
 };
 
 test "zit basic tests" {
+    _ = @import("memory/tests/debug_test.zig");
     _ = @import("memory/tests/memory_test.zig");
     _ = @import("memory/tests/optimization_test.zig");
+    _ = @import("memory/tests/ownership_test.zig");
+    _ = @import("memory/tests/safety_test.zig");
     std.testing.refAllDecls(@This());
 }

@@ -71,6 +71,7 @@ pub const WidgetNode = struct {
     ref_count: RefCounted,
     weak_refs: std.ArrayList(WeakRef),
     allocator: Allocator,
+    mutex: compat.Mutex,
 
     pub fn init(allocator: Allocator) !Self {
         return Self{
@@ -82,6 +83,7 @@ pub const WidgetNode = struct {
             .ref_count = RefCounted.init(),
             .weak_refs = std.ArrayList(WeakRef).empty,
             .allocator = allocator,
+            .mutex = .{},
         };
     }
 
@@ -116,6 +118,9 @@ pub const WidgetNode = struct {
     }
 
     pub fn addChild(self: *Self, child: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         // Remove from current parent if any
         if (child.parent) |parent| {
             if (child.prev_sibling) |prev| {
@@ -144,6 +149,9 @@ pub const WidgetNode = struct {
     }
 
     pub fn removeChild(self: *Self, child: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         if (child.parent != self) return;
 
         if (child.prev_sibling) |prev| {
@@ -163,10 +171,16 @@ pub const WidgetNode = struct {
     }
 
     pub fn addWeakRef(self: *Self, weak_ref: WeakRef) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         try self.weak_refs.append(self.allocator, weak_ref);
     }
 
     pub fn removeWeakRef(self: *Self, ptr: *anyopaque) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         for (self.weak_refs.items, 0..) |weak_ref, i| {
             if (weak_ref.ptr == ptr) {
                 _ = self.weak_refs.swapRemove(i);

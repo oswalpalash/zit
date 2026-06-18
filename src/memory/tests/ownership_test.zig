@@ -4,6 +4,13 @@ const RefCounted = @import("../ownership.zig").RefCounted;
 const WeakRef = @import("../ownership.zig").WeakRef;
 const WidgetNode = @import("../ownership.zig").WidgetNode;
 
+var cleanup_called = false;
+
+fn markCleanup(ptr: *anyopaque) void {
+    _ = ptr;
+    cleanup_called = true;
+}
+
 test "RefCounted basic operations" {
     var rc = RefCounted.init();
     try testing.expectEqual(@as(usize, 1), rc.getCount());
@@ -21,16 +28,10 @@ test "RefCounted basic operations" {
 }
 
 test "WeakRef operations" {
-    var cleanup_called = false;
-    const cleanup_fn = struct {
-        fn cleanup(ptr: *anyopaque) void {
-            _ = ptr;
-            cleanup_called = true;
-        }
-    }.cleanup;
+    cleanup_called = false;
 
     var data: i32 = 42;
-    var weak_ref = WeakRef.init(&data, cleanup_fn);
+    var weak_ref = WeakRef.init(&data, markCleanup);
     try testing.expectEqual(@as(?*anyopaque, &data), weak_ref.getPtr());
 
     weak_ref.clear();
@@ -83,16 +84,10 @@ test "WidgetNode weak references" {
     var node = try WidgetNode.init(allocator);
     defer node.deinit();
 
-    var cleanup_called = false;
-    const cleanup_fn = struct {
-        fn cleanup(ptr: *anyopaque) void {
-            _ = ptr;
-            cleanup_called = true;
-        }
-    }.cleanup;
+    cleanup_called = false;
 
     var data: i32 = 42;
-    var weak_ref = WeakRef.init(&data, cleanup_fn);
+    const weak_ref = WeakRef.init(&data, markCleanup);
     try node.addWeakRef(weak_ref);
     try testing.expectEqual(@as(usize, 1), node.weak_refs.items.len);
 

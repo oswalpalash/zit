@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Table string interning now migrates existing text transactionally and keeps hash-map index storage out of the string arena, reducing retained arena capacity and making memory benchmark output comparable.
 - MemorySafety now frees and resizes the exact backing allocation length used for canary storage, uses byte-wise canaries for odd-sized allocations, and fails transactionally if allocation tracking cannot be recorded.
 - MemoryOptimizer now tracks live cache-line ownership instead of casting arbitrary small frees into cache nodes, preventing backing allocation corruption and freeing live optimized blocks on teardown.
+- Memory debugger, ownership, safety, optimizer, and memory-manager suites now compile through the primary `zig build test` target, preventing dormant memory regressions from bypassing release checks.
 - Background tasks are now owned by `Application`, joined on shutdown, and paired with queued custom-event destructor cleanup so teardown cannot leave detached workers using a destroyed event queue.
 
 ### Docs

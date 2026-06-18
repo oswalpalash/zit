@@ -36,6 +36,12 @@ pub const MemorySafety = struct {
     pub fn deinit(self: *Self) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        var it = self.checks.iterator();
+        while (it.next()) |entry| {
+            const check = entry.value_ptr.*;
+            self.parent_allocator.rawFree(check.ptr[0..check.backing_size], check.alignment, @returnAddress());
+        }
         self.checks.deinit();
     }
 
@@ -103,11 +109,13 @@ pub const MemorySafety = struct {
             if (buf_align != check.alignment or buf.len != check.size) return false;
             if (!isCanaryIntact(check.*)) @panic("Buffer overflow detected!");
 
-            const success = self.parent_allocator.rawResize(check.ptr[0..check.backing_size], check.alignment, new_backing_size, ret_addr);
-            if (!success) return false;
+            if (new_backing_size > check.backing_size) {
+                const success = self.parent_allocator.rawResize(check.ptr[0..check.backing_size], check.alignment, new_backing_size, ret_addr);
+                if (!success) return false;
+                check.backing_size = new_backing_size;
+            }
 
             check.size = new_len;
-            check.backing_size = new_backing_size;
             writeCanary(&check.canary, check.*);
             return true;
         }

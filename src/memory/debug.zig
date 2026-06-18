@@ -8,7 +8,7 @@ pub const MemoryDebugger = struct {
     const Allocation = struct {
         ptr: [*]u8,
         size: usize,
-        alignment: u8,
+        alignment: std.mem.Alignment,
         stack_trace: ?[]usize,
     };
 
@@ -47,6 +47,7 @@ pub const MemoryDebugger = struct {
             if (entry.value_ptr.stack_trace) |trace| {
                 self.parent_allocator.free(trace);
             }
+            self.parent_allocator.rawFree(entry.value_ptr.ptr[0..entry.value_ptr.size], entry.value_ptr.alignment, @returnAddress());
         }
         self.allocations.deinit();
     }
@@ -57,12 +58,13 @@ pub const MemoryDebugger = struct {
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
+                .remap = remap,
                 .free = free,
             },
         };
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -71,57 +73,106 @@ pub const MemoryDebugger = struct {
 
         var stack_trace: ?[]usize = null;
         if (builtin.mode == .Debug) {
-            var trace_buffer: [32]usize = undefined;
-            const trace = std.debug.captureStackTrace(ret_addr, &trace_buffer) catch null;
-            if (trace) |t| {
-                stack_trace = self.parent_allocator.dupe(usize, t) catch null;
-            }
+            stack_trace = self.parent_allocator.dupe(usize, &.{ret_addr}) catch null;
         }
 
-        try self.allocations.put(ptr, .{
+        self.allocations.put(ptr, .{
             .ptr = ptr,
             .size = len,
             .alignment = ptr_align,
             .stack_trace = stack_trace,
-        });
+        }) catch {
+            if (stack_trace) |trace| self.parent_allocator.free(trace);
+            self.parent_allocator.rawFree(ptr[0..len], ptr_align, ret_addr);
+            return null;
+        };
 
+        self.recordAllocation(len);
+        return ptr;
+    }
+
+    fn recordAllocation(self: *Self, len: usize) void {
         self.stats.total_allocations += 1;
         self.stats.current_memory_usage += len;
         if (self.stats.current_memory_usage > self.stats.peak_memory_usage) {
             self.stats.peak_memory_usage = self.stats.current_memory_usage;
         }
-
-        return ptr;
     }
 
-    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const old_size = if (self.allocations.get(buf.ptr)) |alloc| alloc.size else 0;
-        const success = self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
+        if (self.allocations.getPtr(buf.ptr)) |tracked| {
+            if (buf_align != tracked.alignment or buf.len != tracked.size) return false;
+            const success = self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
+            if (!success) return false;
 
-        if (success) {
-            if (self.allocations.getPtr(buf.ptr)) |alloc| {
-                self.stats.current_memory_usage -= alloc.size;
-                alloc.size = new_len;
+            self.stats.current_memory_usage -= tracked.size;
+            tracked.size = new_len;
+            self.stats.current_memory_usage += new_len;
+            if (self.stats.current_memory_usage > self.stats.peak_memory_usage) {
+                self.stats.peak_memory_usage = self.stats.current_memory_usage;
+            }
+            return true;
+        }
+
+        return self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
+    }
+
+    fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const tracked = self.allocations.get(buf.ptr) orelse {
+            return self.parent_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
+        };
+        if (buf_align != tracked.alignment or buf.len != tracked.size) return null;
+
+        if (self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+            if (self.allocations.getPtr(buf.ptr)) |entry| {
+                self.stats.current_memory_usage -= entry.size;
+                entry.size = new_len;
                 self.stats.current_memory_usage += new_len;
                 if (self.stats.current_memory_usage > self.stats.peak_memory_usage) {
                     self.stats.peak_memory_usage = self.stats.current_memory_usage;
                 }
             }
+            return buf.ptr;
         }
 
-        return success;
+        const new_ptr = self.parent_allocator.rawAlloc(new_len, buf_align, ret_addr) orelse return null;
+
+        var moved = tracked;
+        moved.ptr = new_ptr;
+        moved.size = new_len;
+        self.allocations.put(new_ptr, moved) catch {
+            self.parent_allocator.rawFree(new_ptr[0..new_len], buf_align, ret_addr);
+            return null;
+        };
+        @memcpy(new_ptr[0..@min(buf.len, new_len)], buf[0..@min(buf.len, new_len)]);
+        self.parent_allocator.rawFree(buf, buf_align, ret_addr);
+        _ = self.allocations.remove(buf.ptr);
+
+        self.stats.current_memory_usage -= tracked.size;
+        self.stats.current_memory_usage += new_len;
+        if (self.stats.current_memory_usage > self.stats.peak_memory_usage) {
+            self.stats.peak_memory_usage = self.stats.current_memory_usage;
+        }
+        return new_ptr;
     }
 
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+    fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
         if (self.allocations.fetchRemove(buf.ptr)) |entry| {
+            if (buf_align != entry.value.alignment or buf.len != entry.value.size) {
+                @panic("Invalid allocation metadata passed to MemoryDebugger.free");
+            }
             self.stats.total_deallocations += 1;
             self.stats.current_memory_usage -= entry.value.size;
             if (entry.value.stack_trace) |trace| {

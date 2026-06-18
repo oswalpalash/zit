@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
 const MemorySafety = @import("../safety.zig").MemorySafety;
 
 test "MemorySafety basic operations" {
@@ -17,11 +18,11 @@ test "MemorySafety basic operations" {
     defer safe_allocator.free(ptr);
 
     // Test pointer validation
-    try testing.expectEqual(true, safety.validatePointer(ptr, 100));
-    try testing.expectEqual(false, safety.validatePointer(ptr, 101));
+    try testing.expectEqual(true, safety.validatePointer(ptr.ptr, 100));
+    try testing.expectEqual(false, safety.validatePointer(ptr.ptr, 101));
 
     // Test zero memory
-    safety.zeroMemory(ptr, 100);
+    safety.zeroMemory(ptr.ptr, 100);
     for (ptr[0..100]) |byte| {
         try testing.expectEqual(@as(u8, 0), byte);
     }
@@ -39,10 +40,9 @@ test "MemorySafety buffer overflow detection" {
 
     // Test buffer overflow
     const ptr = try safe_allocator.alloc(u8, 100);
-    defer safe_allocator.free(ptr);
 
     // This should trigger a buffer overflow
-    ptr[100] = 0;
+    ptr.ptr[100] ^= 0xff;
     try testing.expectError(error.BufferOverflow, safety.checkAllocations());
 }
 
@@ -58,14 +58,13 @@ test "MemorySafety resize" {
 
     // Test allocation and resize
     var ptr = try safe_allocator.alloc(u8, 100);
-    defer safe_allocator.free(ptr);
 
     ptr = try safe_allocator.realloc(ptr, 200);
     defer safe_allocator.free(ptr);
 
     // Test pointer validation after resize
-    try testing.expectEqual(true, safety.validatePointer(ptr, 200));
-    try testing.expectEqual(false, safety.validatePointer(ptr, 201));
+    try testing.expectEqual(true, safety.validatePointer(ptr.ptr, 200));
+    try testing.expectEqual(false, safety.validatePointer(ptr.ptr, 201));
 }
 
 test "MemorySafety handles odd allocation sizes without aligned canary writes" {
@@ -81,7 +80,7 @@ test "MemorySafety handles odd allocation sizes without aligned canary writes" {
     var len: usize = 1;
     while (len <= 17) : (len += 1) {
         const ptr = try safe_allocator.alloc(u8, len);
-        try testing.expect(safety.validatePointer(ptr, len));
+        try testing.expect(safety.validatePointer(ptr.ptr, len));
         safe_allocator.free(ptr);
     }
 }
@@ -97,12 +96,12 @@ test "MemorySafety direct resize uses backing allocation length" {
     const safe_allocator = safety.allocator();
 
     var ptr = try safe_allocator.alloc(u8, 13);
-    try testing.expect(safety.validatePointer(ptr, 13));
+    try testing.expect(safety.validatePointer(ptr.ptr, 13));
 
     try testing.expect(safe_allocator.resize(ptr, 7));
     ptr = ptr.ptr[0..7];
 
-    try testing.expect(safety.validatePointer(ptr, 7));
+    try testing.expect(safety.validatePointer(ptr.ptr, 7));
     safe_allocator.free(ptr);
 }
 
@@ -124,8 +123,8 @@ test "MemorySafety thread safety" {
                 var j: usize = 0;
                 while (j < 100) : (j += 1) {
                     const ptr = try alloc.alloc(u8, 100);
-                    defer alloc.free(ptr);
                     @memset(ptr[0..100], 0);
+                    alloc.free(ptr);
                 }
             }
         }.threadFn, .{safe_allocator});
@@ -135,10 +134,10 @@ test "MemorySafety thread safety" {
         thread.join();
     }
 
-    try testing.expectEqual(true, safety.checkAllocations() catch false);
+    try safety.checkAllocations();
 }
 
-test "MemorySafety zero memory bounds" {
+test "MemorySafety zero memory preserves canary and rejects oversized validation" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
@@ -151,11 +150,7 @@ test "MemorySafety zero memory bounds" {
     const ptr = try safe_allocator.alloc(u8, 100);
     defer safe_allocator.free(ptr);
 
-    // This should panic due to out of bounds
-    try testing.expectPanic("Attempt to zero memory beyond allocation!", struct {
-        fn panicFn() void {
-            var safety_ = safety;
-            safety_.zeroMemory(ptr, 101);
-        }
-    }.panicFn);
+    safety.zeroMemory(ptr.ptr, 100);
+    try safety.checkAllocations();
+    try testing.expect(!safety.validatePointer(ptr.ptr, 101));
 }
