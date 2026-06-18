@@ -329,9 +329,8 @@ pub fn build(b: *std.Build) void {
     const contribution_gates_step = b.step("contribution-gates", "Check contribution docs and CI release-gate metadata");
     contribution_gates_step.dependOn(&contribution_gates_cmd.step);
 
-    const resize_smoke_input_install = b.addInstallArtifact(input_test, .{});
     const resize_smoke_cmd = b.addSystemCommand(&.{ "python3", "scripts/resize_smoke.py", "--no-build" });
-    resize_smoke_cmd.step.dependOn(&resize_smoke_input_install.step);
+    resize_smoke_cmd.step.dependOn(b.getInstallStep());
     const resize_smoke_step = b.step("resize-smoke", "Run PTY resize smoke against input handling");
     resize_smoke_step.dependOn(&resize_smoke_cmd.step);
 

@@ -243,5 +243,5 @@ Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.
 - Use `zig fmt --check src/ examples/ build.zig` and `zig build quality` locally before opening a PR.
-- Full release verification is `zig build release-check`; it runs quality, formatting, docs generation, public build steps, cross-target smoke, interactive PTY smoke, resize PTY smoke, memory cleanup checks, and visual repeat captures.
+- Full release verification is `zig build release-check`; it runs quality, formatting, docs generation, public build steps, cross-target smoke, interactive PTY smoke, resize PTY smoke over the input probe and real-world/gallery examples, memory cleanup checks, and visual repeat captures.
 - For TUI-facing changes, run `python3 scripts/visual_repeat_check.py --count 4`; it executes real-world and gallery binaries in `--snapshot` mode and writes a contact sheet for alignment, spacing, hierarchy, clipped or overlapping text, and frame-to-frame drift.

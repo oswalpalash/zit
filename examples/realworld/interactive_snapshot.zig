@@ -53,6 +53,15 @@ fn writeFrame(term: *zit.terminal.Terminal, text: []const u8) !void {
     }
 }
 
+fn writeResizeStatus(term: *zit.terminal.Terminal) !void {
+    if (term.height == 0) return;
+
+    var line_buf: [96]u8 = undefined;
+    const line = try std.fmt.bufPrint(&line_buf, "resize: {d}x{d} | q quit", .{ term.width, term.height });
+    try term.moveCursor(0, term.height - 1);
+    try term.writeUtf8(line);
+}
+
 fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
     var term = (try zit.terminal.initInteractive(allocator, example_name)) orelse return;
     defer term.deinit() catch {};
@@ -79,6 +88,7 @@ fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const
             try term.clear();
             try term.moveCursor(0, 0);
             try writeFrame(&term, text);
+            try writeResizeStatus(&term);
             dirty = false;
         }
 
