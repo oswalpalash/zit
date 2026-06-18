@@ -24,7 +24,12 @@ jobs:
         run: zig build quality
 
       - name: Check public build steps
+        if: runner.os != 'Windows'
         run: python3 scripts/check_build_steps.py --skip quality --skip release-check
+
+      - name: Check public build steps (Windows non-interactive)
+        if: runner.os == 'Windows'
+        run: python3 scripts/check_build_steps.py --skip quality --skip release-check --skip-interactive
 
       - name: Check widget coverage declarations
         run: python3 scripts/check_widget_coverage.py

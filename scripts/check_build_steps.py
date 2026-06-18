@@ -18,6 +18,32 @@ from pathlib import Path
 
 STEP_RE = re.compile(r"^\s{2}([A-Za-z0-9_-]+)\s{2,}")
 DEFAULT_SKIP = {"uninstall"}
+INTERACTIVE_STEPS = {
+    "terminal-test",
+    "input-test",
+    "render-test",
+    "layout-test",
+    "demo",
+    "widget-test",
+    "hello-world",
+    "button-example",
+    "dashboard-example",
+    "notifications-example",
+    "table-example",
+    "file-browser-example",
+    "file-manager-example",
+    "form-wizard-example",
+    "system-monitor-example",
+    "widget-showcase",
+    "htop-clone",
+    "file-manager",
+    "text-editor",
+    "dashboard-demo",
+    "widget-gallery",
+    "widget-gallery-extended",
+    "widget-gallery-layouts",
+    "resize-smoke",
+}
 
 
 def repo_root() -> Path:
@@ -87,6 +113,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=int, default=120, help="seconds allowed per build step")
     parser.add_argument("--skip", action="append", default=[], help="step to skip; may be repeated")
+    parser.add_argument("--skip-interactive", action="store_true", help="skip TUI run steps that require reliable PTY/non-TTY behavior")
     parser.add_argument("--only", action="append", default=[], help="step to run; may be repeated")
     parser.add_argument("--quiet", action="store_true", help="only print failures and final status")
     args = parser.parse_args()
@@ -95,6 +122,8 @@ def main() -> int:
     discovered = discover_steps(root)
     selected = args.only or discovered
     skip = DEFAULT_SKIP | set(args.skip)
+    if args.skip_interactive:
+        skip |= INTERACTIVE_STEPS
     steps = [step for step in selected if step not in skip]
 
     missing = [step for step in selected if step not in discovered]

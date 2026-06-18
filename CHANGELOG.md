@@ -27,6 +27,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
+- Public build-step checker supports `--skip-interactive` for Windows CI shells that cannot provide PTY semantics for TUI run targets.
 - DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
 - `Application.bindResize` and `Application.handleResize` provide automatic terminal resize handling for renderer buffers, root layout, and optional `ReflowManager` state.
 - `Application.bindInput`, `Application.pollInputOnce`, and `Application.tickOnce` now let the app loop own input polling so resize events automatically reach the renderer/reflow/root path without per-example resize forwarding.
@@ -60,6 +61,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Memory debugger, ownership, safety, optimizer, and memory-manager suites now compile through the primary `zig build test` target, preventing dormant memory regressions from bypassing release checks.
 - Background tasks are now owned by `Application`, joined on shutdown, and paired with queued custom-event destructor cleanup so teardown cannot leave detached workers using a destroyed event queue.
 - Event input binding tests now use cross-platform standard handles, fixing the Windows CI compile failure in `zig build quality`.
+- Windows CI now keeps compile/test/script coverage while avoiding non-PTY interactive run-target hangs in the matrix public build-step sweep.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.
