@@ -14,6 +14,7 @@ Features are welcome only when they preserve the first three tenets.
 - Supported compiler line: Zig 0.16.x.
 - `build.zig.zon` is the source of truth for the minimum supported compiler.
 - CI must compile and test on Linux, macOS, and Windows before a release tag is cut.
+- CI must run `zig build release-check` on pull requests, `main` pushes, and release tags so the strongest public gate is not reserved for releases only.
 
 ## Public API
 

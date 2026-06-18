@@ -27,6 +27,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
+- CI now runs the full `zig build release-check` verifier on pull requests and `main` pushes, with contribution-gate checks preventing release verification from becoming tag-only.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
 - Public build-step checker supports `--skip-interactive` for Windows CI shells that cannot provide PTY semantics for TUI run targets.
 - DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
