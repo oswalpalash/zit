@@ -122,7 +122,16 @@ def capture_ansi_target(root: Path, target: str) -> bytes:
     return proc.stdout
 
 
-def validate_ansi_capture_quality(capture: bytes, target: str) -> None:
+def ansi_visible_lines(capture: bytes, cols: int, rows: int) -> list[str]:
+    if TerminalEmulator is None:
+        return []
+
+    screen = TerminalEmulator(cols, rows)
+    screen.feed(capture)
+    return ["".join(cell.ch for cell in row) for row in screen.cells]
+
+
+def validate_ansi_capture_quality(capture: bytes, text_capture: bytes, target: str) -> None:
     try:
         capture.decode("utf-8")
     except UnicodeDecodeError as err:
@@ -134,6 +143,31 @@ def validate_ansi_capture_quality(capture: bytes, target: str) -> None:
         raise RuntimeError(
             f"{target}: --ansi-snapshot did not emit terminal escape sequences; "
             "use the renderer-backed frame so PNG visual review sees real styling"
+        )
+
+    if TerminalEmulator is None:
+        return
+
+    expected_lines = text_capture.decode("utf-8").splitlines()
+    cols = max((len(line) for line in expected_lines), default=1)
+    rows = max(len(expected_lines), 1)
+    actual_lines = ansi_visible_lines(capture, cols, rows)
+    if actual_lines != expected_lines:
+        diff = "\n".join(
+            list(
+                difflib.unified_diff(
+                    expected_lines,
+                    actual_lines,
+                    fromfile=f"{target}-snapshot",
+                    tofile=f"{target}-ansi-visible",
+                    lineterm="",
+                    n=3,
+                )
+            )[:80]
+        )
+        raise RuntimeError(
+            f"{target}: ANSI snapshot visible cells do not match the plain snapshot; "
+            f"PNG review would inspect a different frame\n{diff}"
         )
 
 
@@ -440,7 +474,7 @@ def main() -> int:
             (target_dir / f"{run_index:02d}.txt").write_bytes(data)
 
             ansi_data = capture_ansi_target(root, target)
-            validate_ansi_capture_quality(ansi_data, target)
+            validate_ansi_capture_quality(ansi_data, data, target)
             target_ansi_captures.append(ansi_data)
             (target_dir / f"{run_index:02d}.ansi").write_bytes(ansi_data)
 

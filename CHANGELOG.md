@@ -22,6 +22,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
 - Repeat visual capture checker now also captures deterministic `--ansi-snapshot` frames and renders PNG contact sheets with terminal foreground/background colors for visual polish review.
 - Repeat visual capture checker now rejects `--ansi-snapshot` fallbacks that do not emit real terminal escape sequences, preventing color contact sheets from silently reviewing plain text.
+- Repeat visual capture checker now decodes ANSI frames and requires their visible terminal cells to match the corresponding plain snapshot, preventing screenshot review from drifting away from deterministic text regressions.
 - Repeat visual capture checker now rejects malformed public frames: invalid UTF-8, terminal control bytes, missing trailing newline, non-rectangular rows, and oversized snapshots.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires live-size examples to redraw with the new dimensions.
@@ -54,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Bordered tables now preserve headers and row content instead of drawing borders or separators over them.
 - Modals now render with proper rounded borders, respect no-border mode, and tolerate tiny layouts without underflow-prone drawing math.
 - Gauges now render visible filled/empty glyphs in addition to color, so progress remains legible in screenshots and monochrome terminals.
+- BatteryIndicator now uses a deterministic single-cell charging marker, avoiding ambiguous-width glyph drift between text snapshots, ANSI screenshots, and real terminals.
 - Labels, buttons, and checkboxes now clip by grapheme and terminal-cell width, preserving UTF-8 while avoiding premature ellipsizing for exact-fit text.
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.

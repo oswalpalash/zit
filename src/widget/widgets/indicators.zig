@@ -82,7 +82,7 @@ pub const BatteryIndicator = struct {
         if (self.charging and inset_w > 2 and inset_h > 1) {
             const bolt_x = inset_x + inset_w / 2;
             const bolt_y = inset_y + inset_h / 2;
-            renderer.drawChar(bolt_x, bolt_y, '⚡', fg, charge_color, render.Style{ .bold = true });
+            renderer.drawChar(bolt_x, bolt_y, '+', fg, charge_color, render.Style{ .bold = true });
         }
     }
 
@@ -388,6 +388,30 @@ test "battery indicator renders fill" {
         }
     }
     try std.testing.expect(filled > 0);
+}
+
+test "battery indicator uses deterministic single-cell charging marker" {
+    const alloc = std.testing.allocator;
+    var battery = try BatteryIndicator.init(alloc);
+    defer battery.deinit();
+
+    battery.setLevel(0.8);
+    battery.setCharging(true);
+    try battery.widget.layout(layout_module.Rect.init(0, 0, 14, 4));
+
+    var renderer = try render.Renderer.init(alloc, 14, 4);
+    defer renderer.deinit();
+    try battery.widget.draw(&renderer);
+
+    var found_marker = false;
+    for (0..14) |x| {
+        for (0..4) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            if (cell.char == '+') found_marker = true;
+            try std.testing.expect(cell.char != '⚡');
+        }
+    }
+    try std.testing.expect(found_marker);
 }
 
 test "signal strength paints multiple bars" {
