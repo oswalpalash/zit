@@ -4,7 +4,9 @@
 The real-world examples and widget galleries are interactive by default. This
 script runs each target in explicit ``--snapshot`` mode multiple times, compares
 the raw frame output, and writes all captures to a contact sheet so visual review
-can catch layout drift.
+can catch layout drift. It also enforces plain-text frame invariants that keep
+public screenshots reviewable: valid UTF-8, newline-terminated output, no
+terminal control bytes, rectangular rows, and bounded dimensions.
 """
 
 from __future__ import annotations
@@ -40,6 +42,9 @@ DEFAULT_TARGETS = [
     "widget-gallery-extended",
     "widget-gallery-layouts",
 ]
+
+DEFAULT_MAX_COLS = 160
+DEFAULT_MAX_ROWS = 80
 
 
 def repo_root() -> Path:
@@ -108,6 +113,57 @@ def first_diff(expected: bytes, actual: bytes, target: str, run_index: int) -> s
 def text_dimensions(capture: bytes) -> tuple[int, int]:
     lines = capture.decode("utf-8", errors="replace").splitlines()
     return max((len(line) for line in lines), default=1), max(len(lines), 1)
+
+
+def capture_lines(capture: bytes, target: str) -> list[str]:
+    try:
+        text = capture.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise RuntimeError(f"{target}: snapshot is not valid UTF-8: {err}") from err
+
+    if not text:
+        raise RuntimeError(f"{target}: snapshot is empty")
+    if not text.endswith("\n"):
+        raise RuntimeError(f"{target}: snapshot must end with a newline")
+
+    forbidden_bytes = {
+        b"\x00": "NUL",
+        b"\x1b": "ESC/ANSI",
+        b"\r": "carriage return",
+        b"\t": "tab",
+    }
+    for needle, label in forbidden_bytes.items():
+        if needle in capture:
+            raise RuntimeError(f"{target}: snapshot contains {label} byte(s); visual-repeat requires plain text")
+
+    for index, ch in enumerate(text):
+        if ch == "\n":
+            continue
+        if ord(ch) < 32:
+            raise RuntimeError(f"{target}: snapshot contains control character U+{ord(ch):04X} at byte/char offset {index}")
+
+    lines = text.splitlines()
+    if not lines:
+        raise RuntimeError(f"{target}: snapshot has no rows")
+    return lines
+
+
+def validate_capture_quality(capture: bytes, target: str, max_cols: int, max_rows: int) -> tuple[int, int]:
+    lines = capture_lines(capture, target)
+    widths = {len(line) for line in lines}
+    if len(widths) != 1:
+        preview = ", ".join(str(width) for width in sorted(widths)[:8])
+        raise RuntimeError(f"{target}: snapshot rows are not rectangular; observed widths: {preview}")
+
+    cols = widths.pop()
+    rows = len(lines)
+    if cols == 0:
+        raise RuntimeError(f"{target}: snapshot has zero-width rows")
+    if cols > max_cols:
+        raise RuntimeError(f"{target}: snapshot width {cols} exceeds --max-cols={max_cols}")
+    if rows > max_rows:
+        raise RuntimeError(f"{target}: snapshot height {rows} exceeds --max-rows={max_rows}")
+    return cols, rows
 
 
 def render_panel(target: str, run_index: int, capture: bytes, x: int, y: int, width: int, cell_h: int) -> list[str]:
@@ -227,10 +283,16 @@ def main() -> int:
     parser.add_argument("--count", type=int, default=4, help="captures per target")
     parser.add_argument("--out-dir", type=Path, default=Path("zig-out/visual-repeat"), help="output directory")
     parser.add_argument("--target", action="append", dest="targets", help="target to capture; may be repeated")
+    parser.add_argument("--max-cols", type=int, default=DEFAULT_MAX_COLS, help="maximum allowed snapshot width")
+    parser.add_argument("--max-rows", type=int, default=DEFAULT_MAX_ROWS, help="maximum allowed snapshot height")
     args = parser.parse_args()
 
     if args.count < 2:
         parser.error("--count must be at least 2")
+    if args.max_cols < 1:
+        parser.error("--max-cols must be positive")
+    if args.max_rows < 1:
+        parser.error("--max-rows must be positive")
 
     root = repo_root()
     targets = args.targets or DEFAULT_TARGETS
@@ -249,6 +311,7 @@ def main() -> int:
         print(f"capturing {target} x{args.count}")
         for run_index in range(1, args.count + 1):
             data = capture_target(root, target)
+            cols, rows = validate_capture_quality(data, target, args.max_cols, args.max_rows)
             target_captures.append(data)
             (target_dir / f"{run_index:02d}.txt").write_bytes(data)
 
@@ -263,6 +326,9 @@ def main() -> int:
         manifest["targets"][target] = {
             "sha256": digest,
             "bytes": len(expected),
+            "cols": cols,
+            "rows": rows,
+            "rectangular": True,
             "frames": [str(target_dir / f"{idx:02d}.txt") for idx in range(1, args.count + 1)],
         }
         captures[target] = target_captures
