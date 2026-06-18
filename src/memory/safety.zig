@@ -5,21 +5,25 @@ const compat = @import("../compat.zig");
 
 pub const MemorySafety = struct {
     const Self = @This();
+    const canary_len = @sizeOf(u64);
+
     const SafetyCheck = struct {
         ptr: [*]u8,
         size: usize,
-        alignment: u8,
-        canary: u64,
+        backing_size: usize,
+        alignment: std.mem.Alignment,
+        canary: [canary_len]u8,
     };
 
     parent_allocator: Allocator,
     checks: std.AutoHashMap([*]u8, SafetyCheck),
     mutex: compat.Mutex,
-    canary_value: u64,
+    canary_value: [canary_len]u8,
 
     pub fn init(parent_allocator: Allocator) !Self {
         var prng = std.Random.DefaultPrng.init(@bitCast(compat.nowMillis()));
-        const canary = prng.random().int(u64);
+        var canary: [canary_len]u8 = undefined;
+        std.mem.writeInt(u64, &canary, prng.random().int(u64), .little);
 
         return Self{
             .parent_allocator = parent_allocator,
@@ -41,75 +45,100 @@ pub const MemorySafety = struct {
             .vtable = &.{
                 .alloc = alloc,
                 .resize = resize,
+                .remap = remap,
                 .free = free,
             },
         };
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn backingSize(len: usize) ?usize {
+        return std.math.add(usize, len, canary_len) catch null;
+    }
+
+    fn canarySlice(check: SafetyCheck) []u8 {
+        return check.ptr[check.size..][0..canary_len];
+    }
+
+    fn writeCanary(canary: *const [canary_len]u8, check: SafetyCheck) void {
+        @memcpy(canarySlice(check), canary);
+    }
+
+    fn isCanaryIntact(check: SafetyCheck) bool {
+        return std.mem.eql(u8, canarySlice(check), &check.canary);
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Add canary size to allocation
-        const total_size = len + @sizeOf(u64);
+        const total_size = backingSize(len) orelse return null;
         const ptr = self.parent_allocator.rawAlloc(total_size, ptr_align, ret_addr) orelse return null;
 
-        // Write canary at the end of the allocation
-        const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), ptr + len));
-        canary_ptr.* = self.canary_value;
-
-        try self.checks.put(ptr, .{
+        const check = SafetyCheck{
             .ptr = ptr,
             .size = len,
+            .backing_size = total_size,
             .alignment = ptr_align,
             .canary = self.canary_value,
-        });
+        };
+        writeCanary(&self.canary_value, check);
+
+        self.checks.put(ptr, check) catch {
+            self.parent_allocator.rawFree(ptr[0..total_size], ptr_align, ret_addr);
+            return null;
+        };
 
         return ptr;
     }
 
-    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Check if the canary is still intact
-        if (self.checks.get(buf.ptr)) |check| {
-            const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), buf.ptr + check.size));
-            if (canary_ptr.* != self.canary_value) {
-                @panic("Buffer overflow detected!");
-            }
+        const new_backing_size = backingSize(new_len) orelse return false;
+
+        if (self.checks.getPtr(buf.ptr)) |check| {
+            if (buf_align != check.alignment or buf.len != check.size) return false;
+            if (!isCanaryIntact(check.*)) @panic("Buffer overflow detected!");
+
+            const success = self.parent_allocator.rawResize(check.ptr[0..check.backing_size], check.alignment, new_backing_size, ret_addr);
+            if (!success) return false;
+
+            check.size = new_len;
+            check.backing_size = new_backing_size;
+            writeCanary(&check.canary, check.*);
+            return true;
         }
 
-        const total_size = new_len + @sizeOf(u64);
-        const success = self.parent_allocator.rawResize(buf, buf_align, total_size, ret_addr);
-
-        if (success) {
-            if (self.checks.getPtr(buf.ptr)) |check| {
-                // Update canary position
-                const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), buf.ptr + new_len));
-                canary_ptr.* = self.canary_value;
-                check.size = new_len;
-            }
-        }
-
-        return success;
+        return self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr);
     }
 
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+    fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        _ = ctx;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = ret_addr;
+        return null;
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.checks.get(buf.ptr)) |check| {
-            // Check if the canary is still intact
-            const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), buf.ptr + check.size));
-            if (canary_ptr.* != self.canary_value) {
-                @panic("Buffer overflow detected!");
-            }
+        if (self.checks.fetchRemove(buf.ptr)) |entry| {
+            const check = entry.value;
 
-            _ = self.checks.remove(buf.ptr);
+            if (buf_align != check.alignment or buf.len != check.size) {
+                @panic("Invalid allocation metadata passed to MemorySafety.free");
+            }
+            if (!isCanaryIntact(check)) @panic("Buffer overflow detected!");
+
+            self.parent_allocator.rawFree(check.ptr[0..check.backing_size], check.alignment, ret_addr);
+            return;
         }
 
         self.parent_allocator.rawFree(buf, buf_align, ret_addr);
@@ -122,8 +151,7 @@ pub const MemorySafety = struct {
         var it = self.checks.iterator();
         while (it.next()) |entry| {
             const check = entry.value_ptr;
-            const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), check.ptr + check.size));
-            if (canary_ptr.* != self.canary_value) {
+            if (!isCanaryIntact(check.*)) {
                 return error.BufferOverflow;
             }
         }
@@ -150,8 +178,7 @@ pub const MemorySafety = struct {
             if (len > check.size) {
                 return false;
             }
-            const canary_ptr = @ptrCast(*u64, @alignCast(@alignOf(u64), ptr + check.size));
-            return canary_ptr.* == self.canary_value;
+            return isCanaryIntact(check);
         }
         return false;
     }

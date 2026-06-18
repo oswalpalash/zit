@@ -52,6 +52,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - File browser path normalization now frees realpath sentinel allocations with the correct allocation shape.
 - Examples and memory tests now assert `DebugAllocator.deinit() == .ok` so leaks and allocator misuse fail deterministically.
 - Table string interning now migrates existing text transactionally and keeps hash-map index storage out of the string arena, reducing retained arena capacity and making memory benchmark output comparable.
+- MemorySafety now frees and resizes the exact backing allocation length used for canary storage, uses byte-wise canaries for odd-sized allocations, and fails transactionally if allocation tracking cannot be recorded.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

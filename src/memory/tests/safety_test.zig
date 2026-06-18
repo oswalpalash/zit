@@ -68,6 +68,44 @@ test "MemorySafety resize" {
     try testing.expectEqual(false, safety.validatePointer(ptr, 201));
 }
 
+test "MemorySafety handles odd allocation sizes without aligned canary writes" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var safety = try MemorySafety.init(allocator);
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+
+    var len: usize = 1;
+    while (len <= 17) : (len += 1) {
+        const ptr = try safe_allocator.alloc(u8, len);
+        try testing.expect(safety.validatePointer(ptr, len));
+        safe_allocator.free(ptr);
+    }
+}
+
+test "MemorySafety direct resize uses backing allocation length" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var safety = try MemorySafety.init(allocator);
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+
+    var ptr = try safe_allocator.alloc(u8, 13);
+    try testing.expect(safety.validatePointer(ptr, 13));
+
+    try testing.expect(safe_allocator.resize(ptr, 7));
+    ptr = ptr.ptr[0..7];
+
+    try testing.expect(safety.validatePointer(ptr, 7));
+    safe_allocator.free(ptr);
+}
+
 test "MemorySafety thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
