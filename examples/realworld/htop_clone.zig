@@ -23,11 +23,21 @@ fn drawCore(renderer: *render.Renderer, x: u16, y: u16, label: []const u8, value
     renderer.drawSmartStr(x, y, label, palette.muted, palette.surface, render.Style{ .bold = true });
     const width: u16 = 18;
     const filled: u16 = @intFromFloat(@as(f32, @floatFromInt(width)) * std.math.clamp(value, 0.0, 1.0));
-    renderer.fillRect(x + 5, y, width, 1, ' ', palette.border, render.Color.rgb(19, 27, 43), render.Style{});
-    if (filled > 0) renderer.fillRect(x + 5, y, filled, 1, ' ', palette.text, fill, render.Style{ .bold = true });
+    renderer.fillRect(x + 5, y, width, 1, '░', palette.border, palette.surface, render.Style{});
+    if (filled > 0) renderer.fillRect(x + 5, y, filled, 1, '█', fill, palette.surface, render.Style{ .bold = true });
     var buf: [8]u8 = undefined;
     const pct = std.fmt.bufPrint(&buf, "{d:>3}%", .{@as(u8, @intFromFloat(value * 100.0))}) catch " --%";
     renderer.drawSmartStr(x + 25, y, pct, palette.text, palette.surface, render.Style{ .bold = true });
+}
+
+fn drawHeaderStrip(renderer: *render.Renderer, palette: style.Palette) void {
+    if (renderer.back.width < 4 or renderer.back.height < 3) return;
+
+    renderer.fillRect(1, 2, renderer.back.width - 2, 1, ' ', palette.text, palette.surface_alt, render.Style{});
+    renderer.drawSmartStr(3, 2, "1[████████████████░░] 88%  2[████████████░░░░░░] 64%  3[████████░░░░░░░░░░] 42%", palette.text, palette.surface_alt, render.Style{ .bold = true });
+    if (renderer.back.width > 96) {
+        renderer.drawSmartStr(84, 2, "Tasks 145/2 | Load 1.44 1.12 0.88", palette.muted, palette.surface_alt, render.Style{ .bold = true });
+    }
 }
 
 fn drawStat(renderer: *render.Renderer, x: u16, y: u16, label: []const u8, value: []const u8, palette: style.Palette, accent: render.Color) void {
@@ -48,24 +58,24 @@ pub fn main(init: std.process.Init) !void {
     const renderer = &mock.renderer;
     renderer.back.clear();
     const content = style.drawChrome(renderer, palette, "zit process monitor", "htop-style / q quits");
+    drawHeaderStrip(renderer, palette);
 
-    const left = layout.Rect.init(content.x, content.y, 32, 13);
-    const right = layout.Rect.init(content.x + 34, content.y, content.width - 34, 13);
-    const table_rect = layout.Rect.init(content.x, content.y + 15, content.width, content.height - 15);
+    const left = layout.Rect.init(content.x, content.y + 1, 32, 12);
+    const right = layout.Rect.init(content.x + 34, content.y + 1, content.width - 34, 12);
+    const table_rect = layout.Rect.init(content.x, content.y + 14, content.width, content.height - 14);
 
     style.drawPanel(renderer, left, palette, "CPU Cores", palette.danger);
     drawCore(renderer, left.x + 3, left.y + 3, "1", 0.88, palette, palette.danger);
     drawCore(renderer, left.x + 3, left.y + 5, "2", 0.64, palette, palette.warning);
     drawCore(renderer, left.x + 3, left.y + 7, "3", 0.42, palette, palette.success);
     drawCore(renderer, left.x + 3, left.y + 9, "4", 0.31, palette, palette.accent);
-    renderer.drawSmartStr(left.x + 3, left.y + 11, "load avg  1.44  1.12  0.88", palette.muted, palette.surface, render.Style{ .bold = true });
 
     style.drawPanel(renderer, right, palette, "Memory / System", palette.accent);
     style.drawMeter(renderer, right.x + 3, right.y + 3, right.width - 6, "RAM  7.8G / 16.0G", 0.49, palette, palette.accent);
     style.drawMeter(renderer, right.x + 3, right.y + 6, right.width - 6, "Swap 1.1G / 4.0G", 0.28, palette, palette.warning);
-    drawStat(renderer, right.x + 3, right.y + 9, "Tasks", "145 total / 2 running", palette, palette.success);
-    drawStat(renderer, right.x + 30, right.y + 9, "Uptime", "8d 04:31", palette, palette.accent);
-    drawStat(renderer, right.x + 50, right.y + 9, "Temp", "61C", palette, palette.warning);
+    drawStat(renderer, right.x + 3, right.y + 9, "Uptime", "8d 04:31", palette, palette.accent);
+    drawStat(renderer, right.x + 25, right.y + 9, "Temp", "61C", palette, palette.warning);
+    drawStat(renderer, right.x + 42, right.y + 9, "Threads", "612", palette, palette.success);
 
     var table = try widget.Table.init(allocator);
     defer table.deinit();
@@ -112,7 +122,7 @@ pub fn main(init: std.process.Init) !void {
     table.widget.markDirty();
     try table.widget.draw(renderer);
 
-    renderer.drawSmartStr(table_rect.x + 3, table_rect.y + table_rect.height - 2, "F1 Help  F2 Setup  F3 Search  F4 Filter  F6 SortBy  F9 Kill", palette.muted, palette.surface, render.Style{ .bold = true });
+    renderer.drawSmartStr(table_rect.x + 3, table_rect.y + table_rect.height - 2, "F1 Help  F2 Setup  F3 Search  F4 Filter  F5 Tree  F6 SortBy  F9 Kill  F10 Quit", palette.muted, palette.surface, render.Style{ .bold = true });
     style.drawStatus(renderer, palette, "load: 1.44 1.12 0.88 | htop-clone | q quit");
 
     var snap = try mock.snapshot(allocator);

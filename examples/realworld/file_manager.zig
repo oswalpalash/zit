@@ -36,11 +36,19 @@ fn drawPath(renderer: *render.Renderer, x: u16, y: u16, palette: style.Palette) 
 fn drawFileRow(renderer: *render.Renderer, rect: layout.Rect, row: FileRow, palette: style.Palette) void {
     const bg = if (row.selected) render.Color.rgb(16, 51, 34) else palette.surface;
     const name_fg = if (std.mem.eql(u8, row.kind, "dir")) palette.accent else palette.text;
+    const icon = if (std.mem.eql(u8, row.kind, "dir")) "▸ " else "• ";
     renderer.fillRect(rect.x, rect.y, rect.width, 1, ' ', palette.text, bg, render.Style{});
-    renderer.drawSmartStr(rect.x + 1, rect.y, row.name, name_fg, bg, render.Style{ .bold = row.selected });
+    renderer.drawSmartStr(rect.x + 1, rect.y, icon, name_fg, bg, render.Style{ .bold = row.selected });
+    renderer.drawSmartStr(rect.x + 3, rect.y, row.name, name_fg, bg, render.Style{ .bold = row.selected });
     if (rect.width > 38) renderer.drawSmartStr(rect.x + 34, rect.y, row.kind, palette.muted, bg, render.Style{});
     if (rect.width > 50) renderer.drawSmartStr(rect.x + 46, rect.y, row.size, palette.text, bg, render.Style{});
     if (rect.width > 64) renderer.drawSmartStr(rect.x + 58, rect.y, row.modified, palette.muted, bg, render.Style{});
+}
+
+fn drawPreviewLine(renderer: *render.Renderer, x: u16, y: u16, line_no: []const u8, text: []const u8, palette: style.Palette) void {
+    renderer.drawSmartStr(x, y, line_no, palette.muted, palette.surface, render.Style{});
+    renderer.drawSmartStr(x + 4, y, "│", palette.border, palette.surface, render.Style{});
+    renderer.drawSmartStr(x + 6, y, text, palette.text, palette.surface, render.Style{});
 }
 
 /// File manager screen rendered interactively by default and as a deterministic snapshot with --snapshot.
@@ -61,9 +69,9 @@ pub fn main(init: std.process.Init) !void {
     renderer.drawSmartStr(content.x, content.y + 2, "Tab focus  Enter open  / search  Space mark  m actions", palette.muted, palette.bg, render.Style{ .bold = true });
 
     const top_offset: u16 = 4;
-    const left = layout.Rect.init(content.x, content.y + top_offset, 28, content.height - top_offset);
-    const center = layout.Rect.init(content.x + 30, content.y + top_offset, 52, content.height - top_offset);
-    const right = layout.Rect.init(content.x + 84, content.y + top_offset, content.width - 84, content.height - top_offset);
+    const left = layout.Rect.init(content.x, content.y + top_offset, 24, content.height - top_offset);
+    const center = layout.Rect.init(content.x + 26, content.y + top_offset, 46, content.height - top_offset);
+    const right = layout.Rect.init(content.x + 74, content.y + top_offset, content.width - 74, content.height - top_offset);
 
     style.drawPanel(renderer, left, palette, "Places", palette.accent);
     style.drawPanel(renderer, center, palette, "Directory", palette.accent);
@@ -106,14 +114,18 @@ pub fn main(init: std.process.Init) !void {
     }
 
     renderer.drawSmartStr(right.x + 2, right.y + 3, "file_manager.zig", palette.accent, palette.surface, render.Style{ .bold = true });
-    renderer.drawSmartStr(right.x + 2, right.y + 5, "dual-pane file manager", palette.text, palette.surface, render.Style{});
-    renderer.drawSmartStr(right.x + 2, right.y + 7, "widgets used", palette.muted, palette.surface, render.Style{ .bold = true });
-    renderer.drawSmartStr(right.x + 4, right.y + 9, "Tree/List focus", palette.text, palette.surface, render.Style{});
-    renderer.drawSmartStr(right.x + 4, right.y + 10, "Context menu", palette.text, palette.surface, render.Style{});
-    renderer.drawSmartStr(right.x + 4, right.y + 11, "Typeahead search", palette.text, palette.surface, render.Style{});
-    renderer.drawSmartStr(right.x + 4, right.y + 12, "Resize-safe layout", palette.text, palette.surface, render.Style{});
-    renderer.fillRect(right.x + 2, right.y + 15, right.width - 4, 1, ' ', palette.accent_text, palette.accent, render.Style{ .bold = true });
-    renderer.drawSmartStr(right.x + 3, right.y + 15, "ready", palette.accent_text, palette.accent, render.Style{ .bold = true });
+    renderer.drawSmartStr(right.x + 2, right.y + 4, "zig source  9 KB  modified 2m ago", palette.muted, palette.surface, render.Style{});
+    renderer.fillRect(right.x + 2, right.y + 6, right.width - 4, 1, ' ', palette.accent_text, palette.accent, render.Style{ .bold = true });
+    renderer.drawSmartStr(right.x + 3, right.y + 6, "preview", palette.accent_text, palette.accent, render.Style{ .bold = true });
+    drawPreviewLine(renderer, right.x + 2, right.y + 8, " 1", "const std = @import(\"std\");", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 9, " 2", "const zit = @import(\"zit\");", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 10, " 3", "const widget = zit.widget;", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 11, " 4", "", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 12, " 5", "pub fn main(...) !void {", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 13, " 6", "    // panes resize with term", palette);
+    drawPreviewLine(renderer, right.x + 2, right.y + 14, " 7", "}", palette);
+    renderer.fillRect(right.x + 2, right.y + 16, right.width - 4, 1, ' ', palette.text, palette.surface_alt, render.Style{});
+    renderer.drawSmartStr(right.x + 3, right.y + 16, "type: file  |  enter open  |  space mark", palette.text, palette.surface_alt, render.Style{ .bold = true });
 
     var table = try widget.Table.init(allocator);
     defer table.deinit();
@@ -132,7 +144,7 @@ pub fn main(init: std.process.Init) !void {
     table.selected_bg = render.Color.rgb(16, 51, 34);
     table.selected_fg = palette.text;
     table.selected_row = 0;
-    try table.widget.layout(layout.Rect.init(right.x + 2, right.y + 18, right.width - 4, 6));
+    try table.widget.layout(layout.Rect.init(right.x + 2, right.y + 19, right.width - 4, 6));
     table.widget.markDirty();
     try table.widget.draw(renderer);
 

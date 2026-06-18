@@ -288,15 +288,18 @@ pub const TextArea = struct {
     }
 
     fn setValidationFieldName(self: *TextArea, name: []const u8) !void {
-        if (self.validation_field_owned and self.validation_field_name.len > 0) {
-            self.allocator.free(self.validation_field_name);
-        }
-
         if (name.len == 0) {
+            if (self.validation_field_owned and self.validation_field_name.len > 0) {
+                self.allocator.free(self.validation_field_name);
+            }
             self.validation_field_name = "value";
             self.validation_field_owned = false;
         } else {
-            self.validation_field_name = try self.allocator.dupe(u8, name);
+            const next_name = try self.allocator.dupe(u8, name);
+            if (self.validation_field_owned and self.validation_field_name.len > 0) {
+                self.allocator.free(self.validation_field_name);
+            }
+            self.validation_field_name = next_name;
             self.validation_field_owned = true;
         }
     }
@@ -1221,10 +1224,30 @@ test "text area placeholder survives allocation failure" {
 
     try area.setPlaceholder("stable");
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
     area.allocator = failing.allocator();
+    defer area.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, area.setPlaceholder("replacement"));
     try std.testing.expectEqualStrings("stable", area.placeholder);
+}
+
+test "text area validation name survives allocation failure" {
+    const alloc = std.testing.allocator;
+    var area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    const rules = [_]form.Rule{form.required("needed")};
+    try area.setValidation("stable", &rules, false);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
+    area.allocator = failing.allocator();
+    defer area.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, area.setValidation("replacement", &rules, false));
+    try std.testing.expectEqualStrings("stable", area.validation_field_name);
+    try std.testing.expect(area.validation_field_owned);
 }
 
 test "text area inserts moves and deletes UTF-8 text input atomically" {

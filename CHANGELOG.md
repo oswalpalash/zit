@@ -70,11 +70,13 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Windows CI now keeps compile/test/script coverage while avoiding non-PTY interactive run-target hangs in the matrix public build-step sweep.
 - Label, button, checkbox, progress bar, paragraph, markdown, popup, input-field placeholder, and text-area placeholder setters now invalidate retained render state after visible changes.
 - Text-owning widget setters now duplicate replacement buffers before releasing current buffers, with allocation-failure regression coverage for stable rollback behavior.
+- InputField and TextArea validation field-name setters now preserve the previous owned name on allocation failure, preventing dangling pointers during failed validation reconfiguration.
 - The interactive demo layout now presents a structured application frame while continuing to stay live until `q`.
 - System monitor, file manager, and widget showcase examples now use the polished panel language from the README references and keep manually redrawn widgets dirty across full-frame repaint loops.
 - Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.
 - UTF-8 text input now decodes to a single key event, and `InputField`/`TextArea` insert, move, delete, and clamp capacity on codepoint boundaries instead of corrupting multibyte input.
 - Real-world htop and file-manager examples now render richer reference-style frames in interactive terminals while keeping plain deterministic snapshots for visual repeat checks.
+- Real-world and widget example meters now render filled/empty glyphs rather than relying on color-only backgrounds, keeping progress visible in monochrome screenshots and terminal captures.
 - Release verification now creates the docs output parent directory before generating API docs, fixing clean-checkout CI runs without a preexisting `zig-out`.
 - Real-world snapshot-backed examples now display a live terminal-size status line in interactive mode, giving users and PTY smoke tests visible proof that resize events redraw the frame.
 - Resize PTY smoke now drains child output while waiting for `q` shutdown, preventing high-output examples from blocking on a full pseudo-terminal buffer during release verification.

@@ -111,8 +111,8 @@ pub fn drawMeter(renderer: *render.Renderer, x: u16, y: u16, width: u16, label: 
     renderer.drawSmartStr(x, y, label, palette.muted, palette.surface, render.Style{ .bold = true });
     const bar_y = y + 1;
     const filled: u16 = @intFromFloat(@as(f32, @floatFromInt(width)) * @max(@as(f32, 0), @min(@as(f32, 1), value)));
-    renderer.fillRect(x, bar_y, width, 1, '━', palette.border, palette.surface, render.Style{});
-    if (filled > 0) renderer.fillRect(x, bar_y, filled, 1, '━', fill, palette.surface, render.Style{ .bold = true });
+    renderer.fillRect(x, bar_y, width, 1, '░', palette.border, palette.surface, render.Style{});
+    if (filled > 0) renderer.fillRect(x, bar_y, filled, 1, '█', fill, palette.surface, render.Style{ .bold = true });
 }
 
 pub fn drawBadge(renderer: *render.Renderer, x: u16, y: u16, label: []const u8, fg: render.Color, bg: render.Color) void {

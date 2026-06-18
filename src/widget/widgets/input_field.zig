@@ -218,15 +218,18 @@ pub const InputField = struct {
     }
 
     fn setValidationFieldName(self: *InputField, name: []const u8) !void {
-        if (self.validation_field_owned and self.validation_field_name.len > 0) {
-            self.allocator.free(self.validation_field_name);
-        }
-
         if (name.len == 0) {
+            if (self.validation_field_owned and self.validation_field_name.len > 0) {
+                self.allocator.free(self.validation_field_name);
+            }
             self.validation_field_name = "value";
             self.validation_field_owned = false;
         } else {
-            self.validation_field_name = try self.allocator.dupe(u8, name);
+            const next_name = try self.allocator.dupe(u8, name);
+            if (self.validation_field_owned and self.validation_field_name.len > 0) {
+                self.allocator.free(self.validation_field_name);
+            }
+            self.validation_field_name = next_name;
             self.validation_field_owned = true;
         }
     }
@@ -779,10 +782,30 @@ test "input field placeholder survives allocation failure" {
 
     try field.setPlaceholder("stable");
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.allocator;
     field.allocator = failing.allocator();
+    defer field.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, field.setPlaceholder("replacement"));
     try std.testing.expectEqualStrings("stable", field.placeholder);
+}
+
+test "input field validation name survives allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    const rules = [_]form.Rule{form.required("needed")};
+    try field.setValidation("stable", &rules, false);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.allocator;
+    field.allocator = failing.allocator();
+    defer field.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, field.setValidation("replacement", &rules, false));
+    try std.testing.expectEqualStrings("stable", field.validation_field_name);
+    try std.testing.expect(field.validation_field_owned);
 }
 
 test "input field supports undo and redo shortcuts" {
