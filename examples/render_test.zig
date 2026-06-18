@@ -99,7 +99,9 @@ fn drawUI(renderer: *zit.render.Renderer) void {
     renderer.drawStr(title_x, 0, title, zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.blue), zit.render.Style.init(true, false, false));
 
     // Draw border around the screen
-    renderer.drawBox(0, 1, width, height - 1, zit.render.BorderStyle.single, zit.render.Color.named(zit.render.NamedColor.white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{});
+    if (height > 1) {
+        renderer.drawBox(0, 1, width, height - 1, zit.render.BorderStyle.single, zit.render.Color.named(zit.render.NamedColor.white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{});
+    }
 
     // Draw color palette
     drawColorPalette(renderer, 2, 3);
@@ -114,7 +116,9 @@ fn drawUI(renderer: *zit.render.Renderer) void {
     drawRgbGradient(renderer, 40, 12, 30, 5);
 
     // Draw instructions
-    renderer.drawStr(2, height - 2, "Press 'q' to quit", zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{});
+    if (height > 1) {
+        renderer.drawStr(2, height - 2, "Press 'q' to quit", zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{});
+    }
     renderer.drawResizeStatus(zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{ .bold = true });
 }
 
@@ -214,14 +218,19 @@ fn drawBoxStyles(renderer: *zit.render.Renderer, x: u16, y: u16) void {
 }
 
 fn drawRgbGradient(renderer: *zit.render.Renderer, x: u16, y: u16, width: u16, height: u16) void {
+    if (width == 0 or height == 0) return;
+    if (x >= renderer.back.width or y >= renderer.back.height) return;
+
     // Draw title
     renderer.drawStr(x, y, "RGB Color Gradient:", zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style.init(true, false, false));
 
     // Draw RGB gradient
-    for (0..@min(width, renderer.back.width - x)) |i| {
+    const available_width = renderer.back.width - x;
+    const available_height = if (renderer.back.height > y + 1) renderer.back.height - y - 1 else 0;
+    for (0..@min(width, available_width)) |i| {
         const r: u8 = @intCast(@min(255, (i * 255) / width));
 
-        for (0..@min(height, renderer.back.height - y - 1)) |j| {
+        for (0..@min(height, available_height)) |j| {
             const g: u8 = @intCast(@min(255, (j * 255) / height));
             const b: u8 = @intCast(@min(255, ((i + j) * 255) / (width + height)));
 
