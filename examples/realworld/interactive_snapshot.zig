@@ -10,6 +10,21 @@ pub fn finish(init: std.process.Init, allocator: std.mem.Allocator, example_name
     try runText(allocator, example_name, text);
 }
 
+pub fn finishFrames(
+    init: std.process.Init,
+    allocator: std.mem.Allocator,
+    example_name: []const u8,
+    snapshot_text: []const u8,
+    terminal_frame: []const u8,
+) !void {
+    if (try isSnapshotMode(init, allocator)) {
+        std.debug.print("{s}", .{snapshot_text});
+        return;
+    }
+
+    try runText(allocator, example_name, terminal_frame);
+}
+
 fn isSnapshotMode(init: std.process.Init, allocator: std.mem.Allocator) !bool {
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
     defer args.deinit();

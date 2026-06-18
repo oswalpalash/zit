@@ -71,6 +71,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - System monitor, file manager, and widget showcase examples now use the polished panel language from the README references and keep manually redrawn widgets dirty across full-frame repaint loops.
 - Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.
 - UTF-8 text input now decodes to a single key event, and `InputField`/`TextArea` insert, move, delete, and clamp capacity on codepoint boundaries instead of corrupting multibyte input.
+- Real-world htop and file-manager examples now render richer reference-style frames in interactive terminals while keeping plain deterministic snapshots for visual repeat checks.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.
