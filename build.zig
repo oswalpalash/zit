@@ -325,6 +325,12 @@ pub fn build(b: *std.Build) void {
     const memory_cleanup_step = b.step("memory-cleanup", "Check DebugAllocator users assert clean deinit");
     memory_cleanup_step.dependOn(&memory_cleanup_cmd.step);
 
+    const resize_smoke_input_install = b.addInstallArtifact(input_test, .{});
+    const resize_smoke_cmd = b.addSystemCommand(&.{ "python3", "scripts/resize_smoke.py", "--no-build" });
+    resize_smoke_cmd.step.dependOn(&resize_smoke_input_install.step);
+    const resize_smoke_step = b.step("resize-smoke", "Run PTY resize smoke against input handling");
+    resize_smoke_step.dependOn(&resize_smoke_cmd.step);
+
     const release_check_cmd = b.addSystemCommand(&.{ "python3", "scripts/release_verify.py" });
     const release_check_step = b.step("release-check", "Run the full public release verification gate");
     release_check_step.dependOn(&release_check_cmd.step);

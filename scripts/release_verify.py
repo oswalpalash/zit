@@ -3,7 +3,8 @@
 
 This is intentionally broader than ``zig build quality``. It compiles docs,
 checks public build targets, runs cross-target smoke builds, exercises
-interactive examples under a PTY, and repeats deterministic visual captures.
+interactive examples and resize handling under a PTY, and repeats deterministic
+visual captures.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ SCRIPT_COMPILE_TARGETS = (
     "scripts/check_widget_coverage.py",
     "scripts/interactive_example_smoke.py",
     "scripts/release_verify.py",
+    "scripts/resize_smoke.py",
     "scripts/visual_repeat_check.py",
 )
 
@@ -83,6 +85,7 @@ def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
         Command("debug allocator cleanup", ("python3", "scripts/check_debug_allocator_cleanup.py"), 120),
         Command("widget coverage", ("python3", "scripts/check_widget_coverage.py"), 120),
         Command("interactive PTY smoke", ("python3", "scripts/interactive_example_smoke.py"), 300),
+        Command("resize PTY smoke", ("python3", "scripts/resize_smoke.py", "--no-build"), 120),
     ]
     if not args.skip_visual:
         out.append(Command("visual repeat", ("python3", "scripts/visual_repeat_check.py", "--count", str(args.visual_count)), 300))
