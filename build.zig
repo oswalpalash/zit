@@ -325,6 +325,10 @@ pub fn build(b: *std.Build) void {
     const widget_owner_casts_step = b.step("widget-owner-casts", "Check widget vtable callbacks use safe owner recovery");
     widget_owner_casts_step.dependOn(&widget_owner_casts_cmd.step);
 
+    const example_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_example_coverage.py" });
+    const example_coverage_step = b.step("example-coverage", "Check public examples are covered by PTY and visual gates");
+    example_coverage_step.dependOn(&example_coverage_cmd.step);
+
     const memory_cleanup_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_debug_allocator_cleanup.py" });
     const memory_cleanup_step = b.step("memory-cleanup", "Check DebugAllocator users assert clean deinit");
     memory_cleanup_step.dependOn(&memory_cleanup_cmd.step);
@@ -353,6 +357,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(bench_step);
     quality_step.dependOn(widget_coverage_step);
     quality_step.dependOn(widget_owner_casts_step);
+    quality_step.dependOn(example_coverage_step);
     quality_step.dependOn(memory_cleanup_step);
     quality_step.dependOn(contribution_gates_step);
 }

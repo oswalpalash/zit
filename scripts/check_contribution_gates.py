@@ -15,6 +15,7 @@ REQUIRED_WORKFLOW_GATES = (
     "python3 scripts/interactive_example_smoke.py",
     "python3 scripts/resize_smoke.py",
     "python3 scripts/mouse_alignment_smoke.py",
+    "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )
@@ -26,6 +27,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/resize_smoke.py --no-build",
     "python3 scripts/mouse_alignment_smoke.py --no-build",
     "python3 scripts/visual_repeat_check.py --count 4",
+    "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )
@@ -36,6 +38,7 @@ REQUIRED_STABILITY_GATES = REQUIRED_PR_GATES + (
 
 REQUIRED_RELEASE_VERIFY_GATES = (
     '"contribution gates", ("python3", "scripts/check_contribution_gates.py")',
+    '"example coverage", ("python3", "scripts/check_example_coverage.py")',
     '"mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build")',
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
 )
@@ -47,6 +50,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/resize_smoke.py --no-build",
     "python3 scripts/mouse_alignment_smoke.py --no-build",
     "python3 scripts/visual_repeat_check.py --count 4",
+    "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )
