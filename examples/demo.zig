@@ -208,6 +208,7 @@ pub fn main() !void {
         const status_rect = layout.Rect.init(3, if (height > 2) height - 2 else 0, if (width > 6) width - 6 else width, 1);
         try status.widget.layout(status_rect);
         try status.widget.draw(&renderer);
+        renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         // Render to screen
         try renderer.render();

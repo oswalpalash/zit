@@ -67,6 +67,7 @@ pub fn main() !void {
         const label_y: u16 = if (height > 0) height / 2 else 0;
         try label.widget.layout(layout.Rect.init(label_x, label_y, label_width, 1));
         try label.widget.draw(&renderer);
+        renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         try renderer.render();
 

@@ -1,3 +1,4 @@
+const std = @import("std");
 const zit = @import("zit");
 const render = zit.render;
 const layout = zit.layout;
@@ -96,6 +97,13 @@ pub fn drawStatus(renderer: *render.Renderer, palette: Palette, text: []const u8
     const y = renderer.back.height - 2;
     renderer.fillRect(1, y, renderer.back.width - 2, 1, ' ', palette.accent_text, palette.accent, render.Style{});
     renderer.drawSmartStr(3, y, text, palette.accent_text, palette.accent, render.Style{ .bold = true });
+    var marker_buf: [32]u8 = undefined;
+    const marker = std.fmt.bufPrint(&marker_buf, "resize: {d}x{d}", .{ renderer.back.width, renderer.back.height }) catch return;
+    const marker_width: u16 = @intCast(marker.len);
+    if (renderer.back.width > marker_width + 4) {
+        const x: u16 = renderer.back.width - marker_width - 3;
+        renderer.drawSmartStr(x, y, marker, palette.accent_text, palette.accent, render.Style{ .bold = true });
+    }
 }
 
 pub fn drawMeter(renderer: *render.Renderer, x: u16, y: u16, width: u16, label: []const u8, value: f32, palette: Palette, fill: render.Color) void {

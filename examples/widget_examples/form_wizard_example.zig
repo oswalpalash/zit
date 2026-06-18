@@ -255,6 +255,7 @@ pub fn main() !void {
             renderer.fillRect(0, status_y, renderer.back.width, 1, ' ', render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{});
             renderer.drawSmartStr(1, status_y, status.text, render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{});
         }
+        renderer.drawResizeStatus(render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{ .bold = true });
 
         try renderer.render();
 

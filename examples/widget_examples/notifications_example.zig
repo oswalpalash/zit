@@ -117,6 +117,7 @@ pub fn main() !void {
         if (height > 0) {
             renderer.drawSmartStr(2, height - 1, "Notifications demo: n = new toast, q = quit", muted, bg, render.Style{});
         }
+        renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         try renderer.render();
 

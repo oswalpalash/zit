@@ -104,6 +104,7 @@ pub fn main() !void {
         try main_split.widget.layout(split_rect);
         sparkline.setMaxSamples(@max(8, @as(usize, @intCast(sparkline.widget.rect.width))));
         try main_split.widget.draw(&renderer);
+        renderer.drawResizeStatus(text, bg, render.Style{ .bold = true });
 
         try renderer.render();
 

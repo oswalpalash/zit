@@ -260,6 +260,7 @@ pub fn main() !void {
             try modal.widget.layout(zit.layout.Rect.init(0, 0, width, height));
             try modal.widget.draw(&renderer);
         }
+        renderer.drawResizeStatus(muted, bg, zit.render.Style{ .bold = true });
 
         // Render to screen
         try renderer.render();

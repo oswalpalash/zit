@@ -754,6 +754,7 @@ pub fn main(init: std.process.Init) !void {
             },
         ) catch "status";
         renderer.drawSmartStr(inner.x + 1, log_rect.y + log_rect.height, status, muted, bg, render.Style{});
+        renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         try renderer.render();
 

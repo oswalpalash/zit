@@ -115,6 +115,7 @@ fn drawUI(renderer: *zit.render.Renderer) void {
 
     // Draw instructions
     renderer.drawStr(2, height - 2, "Press 'q' to quit", zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{});
+    renderer.drawResizeStatus(zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{ .bold = true });
 }
 
 fn drawColorPalette(renderer: *zit.render.Renderer, x: u16, y: u16) void {

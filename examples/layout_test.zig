@@ -68,6 +68,7 @@ pub fn main() !void {
         const layout_height = if (height > 3) height - 3 else 0;
         const layout_rect = zit.layout.Rect.init(0, 1, width, layout_height);
         layout_example.render(&renderer, layout_rect);
+        renderer.drawResizeStatus(zit.render.Color.named(zit.render.NamedColor.bright_white), zit.render.Color.named(zit.render.NamedColor.default), zit.render.Style{ .bold = true });
 
         // Render to screen
         try renderer.render();

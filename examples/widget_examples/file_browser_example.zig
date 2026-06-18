@@ -72,6 +72,7 @@ pub fn main() !void {
             const status_slice = status[0..@min(status.len, @as(usize, width - 1))];
             renderer.drawStr(1, status_y, status_slice, text, surface, zit.render.Style{});
         }
+        renderer.drawResizeStatus(text, surface, zit.render.Style{ .bold = true });
 
         try renderer.render();
 

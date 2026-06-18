@@ -1044,6 +1044,23 @@ pub const Renderer = struct {
         self.primeBuffers();
     }
 
+    /// Draw a compact live geometry marker on the bottom line.
+    ///
+    /// Interactive examples use this marker so PTY smoke tests can prove that
+    /// resize events caused a visible redraw at the new terminal size.
+    pub fn drawResizeStatus(self: *Renderer, fg: Color, bg: Color, style: Style) void {
+        const width = self.back.width;
+        const height = self.back.height;
+        if (width == 0 or height == 0) return;
+
+        var buf: [32]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "resize: {d}x{d}", .{ width, height }) catch return;
+        const clipped = text[0..@min(text.len, @as(usize, width))];
+        const clipped_width: u16 = @intCast(clipped.len);
+        const x: u16 = if (width > clipped_width + 1) width - clipped_width - 1 else 0;
+        self.drawSmartStr(x, height - 1, clipped, fg, bg, style);
+    }
+
     fn resetDirtyRows(self: *Renderer) void {
         if (self.dirty_rows.len == 0) return;
         for (self.dirty_rows) |*row| {
@@ -2039,6 +2056,24 @@ test "runtime color constructors clamp invalid input without trapping" {
     try std.testing.expectEqual(@as(u8, 0), low_index.ansi_256);
     try std.testing.expectEqual(@as(u8, 255), high_index.ansi_256);
     try std.testing.expectEqual(@as(u8, 0), nan_index.ansi_256);
+}
+
+test "drawResizeStatus writes visible geometry marker and tolerates zero size" {
+    var renderer = try Renderer.init(std.testing.allocator, 20, 4);
+    defer renderer.deinit();
+
+    renderer.drawResizeStatus(Color.named(NamedColor.white), Color.named(NamedColor.black), Style{ .bold = true });
+
+    const marker = "resize: 20x4";
+    const x: u16 = @intCast(renderer.back.width - marker.len - 1);
+    for (marker, 0..) |byte, idx| {
+        const cell = renderer.back.getCell(x + @as(u16, @intCast(idx)), renderer.back.height - 1).*;
+        try std.testing.expectEqual(@as(u21, byte), cell.codepoint());
+        try std.testing.expect(cell.style.bold);
+    }
+
+    try renderer.resize(0, 0);
+    renderer.drawResizeStatus(Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
 }
 
 test "capability detection degrades gracefully on allocation failure" {

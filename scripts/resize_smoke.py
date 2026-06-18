@@ -5,8 +5,7 @@ The normal interactive smoke proves examples render and quit. This probe changes
 the pseudo-terminal window size while `input_test` is running and requires the
 example to print the new resize dimensions before it can pass. It then launches
 every public interactive example, changes the PTY geometry, and requires the
-process to remain healthy and quit on `q`. Examples that expose the live resize
-status line are additionally required to redraw with the new geometry.
+process to redraw a live resize marker with the new geometry and quit on `q`.
 """
 
 from __future__ import annotations
@@ -58,17 +57,6 @@ DEFAULT_RESIZE_EXAMPLES = (
     "widget_gallery_extended",
     "widget_gallery_layouts",
 )
-
-STRICT_GEOMETRY_EXAMPLES = frozenset((
-    "htop_clone",
-    "file_manager",
-    "text_editor",
-    "dashboard_demo",
-    "widget_gallery",
-    "widget_gallery_extended",
-    "widget_gallery_layouts",
-))
-
 
 def wait_for_text(master_fd: int, pid: int, output: bytearray, marker: str, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
@@ -180,8 +168,6 @@ def run_example_resize_probe(
     new_cols: int,
     timeout: float,
     quit_timeout: float,
-    settle_time: float,
-    require_geometry_marker: bool,
 ) -> bytes:
     if pty is None:
         print("resize smoke skipped: pty module is unavailable on this platform")
@@ -216,22 +202,13 @@ def run_example_resize_probe(
                 )
 
         set_window_size(master_fd, new_rows, new_cols)
-        if require_geometry_marker:
-            resized_marker = f"resize: {new_cols}x{new_rows}"
-            if not wait_for_text(master_fd, pid, output, resized_marker, timeout):
-                terminate(pid)
-                raise RuntimeError(
-                    f"{example.binary} did not redraw resize marker {resized_marker!r} within {timeout:.1f}s\n"
-                    f"--- terminal tail ---\n{tail_text(bytes(output))}"
-                )
-        else:
-            output.extend(read_available(master_fd, settle_time))
-            exit_code = wait_for_pid(pid, 0.0)
-            if exit_code is not None:
-                raise RuntimeError(
-                    f"{example.binary} exited after PTY resize before q with code {exit_code}\n"
-                    f"--- terminal tail ---\n{tail_text(bytes(output))}"
-                )
+        resized_marker = f"resize: {new_cols}x{new_rows}"
+        if not wait_for_text(master_fd, pid, output, resized_marker, timeout):
+            terminate(pid)
+            raise RuntimeError(
+                f"{example.binary} did not redraw resize marker {resized_marker!r} within {timeout:.1f}s\n"
+                f"--- terminal tail ---\n{tail_text(bytes(output))}"
+            )
 
         exit_code = quit_child(master_fd, pid, quit_timeout, output)
         output.extend(read_available(master_fd, 0.2))
@@ -289,7 +266,6 @@ def main() -> int:
     parser.add_argument("--new-cols", type=int, default=91, help="resized PTY column count")
     parser.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for render and resize markers")
     parser.add_argument("--quit-timeout", type=float, default=3.0, help="seconds to wait for q to terminate")
-    parser.add_argument("--settle-time", type=float, default=0.25, help="seconds to observe non-marker examples after resize")
     parser.add_argument("--example", action="append", dest="examples", help="resizable example binary to probe; may be repeated")
     args = parser.parse_args()
 
@@ -303,7 +279,6 @@ def main() -> int:
 
     examples = select_resize_examples(args.examples)
     for example in examples:
-        requires_geometry = example.binary in STRICT_GEOMETRY_EXAMPLES
         example_data = run_example_resize_probe(
             root,
             example,
@@ -313,14 +288,9 @@ def main() -> int:
             args.new_cols,
             args.timeout,
             args.quit_timeout,
-            args.settle_time,
-            requires_geometry,
         )
         if pty is not None:
-            if requires_geometry:
-                print(f"ok resize smoke: {example.binary} redrew at {args.new_cols}x{args.new_rows} and quit ({len(example_data)} bytes)")
-            else:
-                print(f"ok resize smoke: {example.binary} survived resize to {args.new_cols}x{args.new_rows} and quit ({len(example_data)} bytes)")
+            print(f"ok resize smoke: {example.binary} redrew at {args.new_cols}x{args.new_rows} and quit ({len(example_data)} bytes)")
     return 0
 
 

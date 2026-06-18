@@ -84,19 +84,28 @@ pub fn main() !void {
     try writer.writeAll("Press any key to see its ASCII value (press 'q' to quit)");
     try stdout_writer.flush();
 
-    // Input loop
-    var stdin_file = std.Io.File.stdin();
-    var stdin_buffer: [32]u8 = undefined;
-    var stdin_reader = stdin_file.readerStreaming(io, &stdin_buffer);
-
+    var input_handler = zit.input.InputHandler.init(allocator, &term);
     while (true) {
-        const byte = stdin_reader.interface.takeByte() catch continue;
+        const event = try input_handler.pollEvent(100) orelse continue;
+        switch (event) {
+            .key => |key| {
+                try term.moveCursor(0, if (term.height > 0) term.height - 1 else 0);
+                try writer.print("Key codepoint: {d}   ", .{key.key});
+                try stdout_writer.flush();
 
-        try term.moveCursor(0, term.height - 1);
-        try writer.print("Key pressed: '{c}' (ASCII: {d})   ", .{ byte, byte });
-        try stdout_writer.flush();
-
-        if (byte == 'q') break;
+                if (key.key == 'q') break;
+            },
+            .resize => |resize| {
+                const prompt_y: u16 = if (resize.height > 1) resize.height - 2 else 0;
+                const status_y: u16 = if (resize.height > 0) resize.height - 1 else 0;
+                try term.moveCursor(0, prompt_y);
+                try writer.writeAll("Press any key to see its codepoint (press 'q' to quit)");
+                try term.moveCursor(0, status_y);
+                try writer.print("resize: {d}x{d}   ", .{ resize.width, resize.height });
+                try stdout_writer.flush();
+            },
+            else => {},
+        }
     }
 
     // Clean up

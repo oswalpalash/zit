@@ -25,7 +25,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Repeat visual capture checker now decodes ANSI frames and requires their visible terminal cells to match the corresponding plain snapshot, preventing screenshot review from drifting away from deterministic text regressions.
 - Repeat visual capture checker now rejects malformed public frames: invalid UTF-8, terminal control bytes, missing trailing newline, non-rectangular rows, and oversized snapshots.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
-- Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires live-size examples to redraw with the new dimensions.
+- Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires each example to redraw a visible `resize: WxH` marker with the new dimensions.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
@@ -44,6 +44,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Polished widget examples (`system-monitor`, `file-manager-example`, `widget-showcase`) now expose deterministic `--snapshot` frames and are included in the default four-pass visual repeat gate.
 
 ### Fixed
+- Interactive examples now render a shared live resize marker, and `terminal_test` uses `InputHandler` so its resize handling follows the same event path as the rest of the public examples.
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
 - Migrated the library, examples, benchmarks, and CI baseline to Zig 0.16.x.
 - Made network I/O fail explicitly with a `.network_error` event while the Zig 0.16 transport layer is rebuilt.

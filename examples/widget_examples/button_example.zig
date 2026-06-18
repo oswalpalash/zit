@@ -268,6 +268,7 @@ pub fn main() !void {
         // Layout and render the root container
         try root.widget.layout(layout.Rect.init(0, 0, width, height));
         try root.widget.draw(&renderer);
+        renderer.drawResizeStatus(muted, bg, render.Style{ .bold = true });
 
         // Present the frame
         try renderer.render();
