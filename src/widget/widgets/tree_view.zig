@@ -70,6 +70,14 @@ pub const TreeView = struct {
     }
 
     fn addNode(self: *TreeView, parent_index: ?usize, label: []const u8) !usize {
+        if (parent_index) |idx| {
+            if (idx >= self.nodes.items.len) return error.InvalidParent;
+            try self.nodes.ensureUnusedCapacity(self.allocator, 1);
+            try self.nodes.items[idx].children.ensureUnusedCapacity(self.allocator, 1);
+        } else {
+            try self.nodes.ensureUnusedCapacity(self.allocator, 1);
+        }
+
         const children = std.ArrayList(usize).empty;
         const owned = try self.allocator.dupe(u8, label);
         const depth = if (parent_index) |idx| self.nodes.items[idx].depth + 1 else 0;
@@ -81,9 +89,9 @@ pub const TreeView = struct {
             .depth = depth,
         };
         const index = self.nodes.items.len;
-        try self.nodes.append(self.allocator, node);
+        self.nodes.appendAssumeCapacity(node);
         if (parent_index) |idx| {
-            try self.nodes.items[idx].children.append(self.allocator, index);
+            self.nodes.items[idx].children.appendAssumeCapacity(index);
         }
         self.visible_dirty = true;
         return index;
@@ -344,6 +352,43 @@ test "tree view lazily rebuilds visible cache" {
     tree.nodes.items[0].expanded = true;
     tree.visible_dirty = true;
     try std.testing.expectEqual(@as(usize, 3), tree.visibleCount());
+}
+
+fn treeViewAddChildAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var tree = try TreeView.init(allocator);
+    defer tree.deinit();
+
+    const root = try tree.addRoot("root");
+    _ = try tree.addChild(root, "child");
+}
+
+test "tree view addChild cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, treeViewAddChildAllocationFailureHarness, .{});
+}
+
+test "tree view addChild preserves state on allocation failure" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    const root = try tree.addRoot("root");
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = tree.allocator;
+    tree.allocator = failing.allocator();
+    defer tree.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, tree.addChild(root, "child"));
+    try std.testing.expectEqual(@as(usize, 1), tree.nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), tree.nodes.items[root].children.items.len);
+}
+
+test "tree view rejects invalid parent index" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    try std.testing.expectError(error.InvalidParent, tree.addChild(42, "missing"));
+    try std.testing.expectEqual(@as(usize, 0), tree.nodes.items.len);
 }
 
 test "tree view preferred size defaults when empty" {

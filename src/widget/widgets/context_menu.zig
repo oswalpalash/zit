@@ -35,10 +35,15 @@ pub const ContextMenu = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*ContextMenu {
         const self = try allocator.create(ContextMenu);
+        errdefer allocator.destroy(self);
+
+        var items = try std.ArrayList(MenuItem).initCapacity(allocator, 0);
+        errdefer items.deinit(allocator);
+
         self.* = ContextMenu{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
-            .items = try std.ArrayList(MenuItem).initCapacity(allocator, 0),
+            .items = items,
             .theme_value = theme.Theme.dark(),
         };
         return self;
@@ -51,8 +56,10 @@ pub const ContextMenu = struct {
     }
 
     pub fn addItem(self: *ContextMenu, label: []const u8, enabled: bool, data: ?*anyopaque) !void {
+        try self.items.ensureUnusedCapacity(self.allocator, 1);
         const copy = try self.allocator.dupe(u8, label);
-        try self.items.append(self.allocator, .{ .label = copy, .enabled = enabled, .data = data });
+        self.items.appendAssumeCapacity(.{ .label = copy, .enabled = enabled, .data = data });
+        self.widget.markDirty();
     }
 
     pub fn clear(self: *ContextMenu) void {
@@ -258,6 +265,34 @@ test "context menu selection via keyboard" {
     try std.testing.expect(try menu.widget.handleEvent(enter));
     try std.testing.expectEqual(@as(usize, 1), selection);
     try std.testing.expect(!menu.open);
+}
+
+fn contextMenuAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var menu = try ContextMenu.init(allocator);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+}
+
+test "context menu addItem cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, contextMenuAddItemAllocationFailureHarness, .{});
+}
+
+test "context menu addItem preserves items on allocation failure" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = menu.allocator;
+    menu.allocator = failing.allocator();
+    defer menu.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, menu.addItem("Two", true, null));
+    try std.testing.expectEqual(@as(usize, 1), menu.items.items.len);
+    try std.testing.expectEqualStrings("One", menu.items.items[0].label);
 }
 
 test "context menu closes on outside click" {

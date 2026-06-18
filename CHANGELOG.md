@@ -73,6 +73,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - InputField and TextArea validation field-name setters now preserve the previous owned name on allocation failure, preventing dangling pointers during failed validation reconfiguration.
 - InputField, TextArea, and AutocompleteInput initialization now clean up every intermediate allocation on induced OOM, with `checkAllAllocationFailures` regression coverage.
 - AutocompleteInput suggestion and filter rebuilds are now transactional, preserving the previous suggestion/filter state if allocation fails during replacement or typeahead filtering.
+- TreeView child insertion and ContextMenu item insertion now reserve storage before taking ownership of labels, preserving existing state on allocation failure and preventing leaked labels.
+- TreeView now rejects invalid parent indexes with `error.InvalidParent` instead of trapping on out-of-bounds access.
 - The interactive demo layout now presents a structured application frame while continuing to stay live until `q`.
 - System monitor, file manager, and widget showcase examples now use the polished panel language from the README references and keep manually redrawn widgets dirty across full-frame repaint loops.
 - Actual screenshot capture now points at the installed widget example binaries and renders terminal cells individually so box-drawing layouts stay aligned in SVG previews.
