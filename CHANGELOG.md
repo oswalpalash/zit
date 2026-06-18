@@ -44,6 +44,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Grapheme rendering no longer returns slices into by-value temporaries, fixing corrupted terminal frames and invalid borrowed memory during render output assembly.
 - File browser path normalization now frees realpath sentinel allocations with the correct allocation shape.
 - Examples and memory tests now assert `DebugAllocator.deinit() == .ok` so leaks and allocator misuse fail deterministically.
+- Table string interning now migrates existing text transactionally and keeps hash-map index storage out of the string arena, reducing retained arena capacity and making memory benchmark output comparable.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

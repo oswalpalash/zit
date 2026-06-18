@@ -384,19 +384,34 @@ pub const Table = struct {
         if (self.string_intern != null) return;
 
         var intern = try memory.StringInterner.init(self.allocator);
+        errdefer intern.deinit();
 
-        // Migrate existing headers and cells so deinit keeps ownership clear.
+        // First populate the interner without mutating ownership. If an
+        // allocation fails, the table remains a normal non-interned table.
         for (self.columns.items) |*column| {
-            const interned = try intern.intern(column.header);
-            self.allocator.free(column.header);
-            column.header = interned;
+            _ = try intern.intern(column.header);
         }
 
         for (self.rows.items) |*row| {
             for (row.items) |*cell| {
-                const interned = try intern.intern(cell.text);
-                self.allocator.free(cell.text);
+                _ = try intern.intern(cell.text);
+            }
+        }
+
+        // All interning succeeded, so ownership can be migrated in place.
+        for (self.columns.items) |*column| {
+            const previous = column.header;
+            const interned = try intern.intern(previous);
+            column.header = interned;
+            self.allocator.free(previous);
+        }
+
+        for (self.rows.items) |*row| {
+            for (row.items) |*cell| {
+                const previous = cell.text;
+                const interned = try intern.intern(previous);
                 cell.text = interned;
+                self.allocator.free(previous);
             }
         }
 
@@ -1551,6 +1566,26 @@ test "table inline edit updates cell" {
 
     const updated = table.cellView(0, 1).text;
     try std.testing.expectEqualStrings("idle x", updated);
+}
+
+test "table string interning migration is transactional on allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "api", "ready" });
+    try table.addRow(&.{ "web", "ready" });
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    table.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, table.enableStringInterning());
+    try std.testing.expect(table.stringInternStats() == null);
+    try std.testing.expectEqualStrings("Name", table.columns.items[0].header);
+    try std.testing.expectEqualStrings("api", table.rows.items[0].items[0].text);
+    try std.testing.expectEqualStrings("ready", table.rows.items[1].items[1].text);
 }
 
 test "table resizes columns from header drag handles" {

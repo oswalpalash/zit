@@ -36,7 +36,7 @@ pub fn main() !void {
         \\Render throughput: {d} frames, avg {d} ns ({d:.2} fps), wrote {d} bytes
         \\Table scroll (10k rows): {d} iterations in {d} ms (avg {d} ns)
         \\Input decode latency: {d} events, avg {d} ns
-        \\Memory (table, 10k rows): plain {d} bytes vs interned {d} bytes
+        \\Memory (table text, 10k rows): plain payload {d} bytes vs interned unique payload {d} bytes across {d} strings (string arena capacity {d} bytes)
         \\
     , .{
         render_result.frames,
@@ -48,8 +48,10 @@ pub fn main() !void {
         table_result.avg_ns,
         input_result.decoded,
         input_result.avg_ns,
-        memory_result.plain_bytes,
-        memory_result.interned_bytes,
+        memory_result.plain_payload_bytes,
+        memory_result.interned_unique_bytes,
+        memory_result.interned_unique_strings,
+        memory_result.interned_allocated_bytes,
     });
 }
 
@@ -181,8 +183,10 @@ fn benchmarkInputLatency() !InputBench {
 }
 
 const MemoryBench = struct {
-    plain_bytes: usize,
-    interned_bytes: usize,
+    plain_payload_bytes: usize,
+    interned_unique_bytes: usize,
+    interned_unique_strings: usize,
+    interned_allocated_bytes: usize,
 };
 
 fn benchmarkMemoryUsage(allocator: std.mem.Allocator) !MemoryBench {
@@ -193,7 +197,7 @@ fn benchmarkMemoryUsage(allocator: std.mem.Allocator) !MemoryBench {
     var plain_table = try widget.Table.init(arena_plain.allocator());
     defer plain_table.deinit();
     try seedTable(plain_table, row_count);
-    const plain_bytes = estimateTablePayloadBytes(plain_table);
+    const plain_payload_bytes = estimateTablePayloadBytes(plain_table);
 
     var arena_intern = std.heap.ArenaAllocator.init(allocator);
     defer arena_intern.deinit();
@@ -201,14 +205,13 @@ fn benchmarkMemoryUsage(allocator: std.mem.Allocator) !MemoryBench {
     defer intern_table.deinit();
     try intern_table.enableStringInterning();
     try seedTable(intern_table, row_count);
-    const intern_bytes = if (intern_table.stringInternStats()) |stats|
-        stats.pooled_bytes
-    else
-        estimateTablePayloadBytes(intern_table);
+    const stats = intern_table.stringInternStats() orelse return error.ExpectedInternedTable;
 
     return .{
-        .plain_bytes = plain_bytes,
-        .interned_bytes = intern_bytes,
+        .plain_payload_bytes = plain_payload_bytes,
+        .interned_unique_bytes = stats.unique_bytes,
+        .interned_unique_strings = stats.unique_strings,
+        .interned_allocated_bytes = stats.pooled_bytes,
     };
 }
 

@@ -7,6 +7,7 @@ pub const StringInterner = struct {
     arena: std.heap.ArenaAllocator,
     table: std.StringHashMapUnmanaged([]const u8) = .{},
     parent: std.mem.Allocator,
+    unique_bytes: usize = 0,
 
     /// Create a new interner backed by the provided allocator.
     pub fn init(allocator: std.mem.Allocator) !StringInterner {
@@ -18,14 +19,14 @@ pub const StringInterner = struct {
 
     /// Release all interned strings and backing storage.
     pub fn deinit(self: *StringInterner) void {
-        const alloc = self.arena.allocator();
-        self.table.deinit(alloc);
+        self.table.deinit(self.parent);
         self.arena.deinit();
     }
 
     /// Clear interned strings but keep capacity for reuse.
     pub fn clearRetainingCapacity(self: *StringInterner) void {
         self.table.clearRetainingCapacity();
+        self.unique_bytes = 0;
         _ = self.arena.reset(.retain_capacity);
     }
 
@@ -36,22 +37,47 @@ pub const StringInterner = struct {
             return existing;
         }
 
+        try self.table.ensureUnusedCapacity(self.parent, 1);
         const alloc = self.arena.allocator();
         const dup = try alloc.dupe(u8, value);
-        try self.table.put(alloc, dup, dup);
+        self.table.putAssumeCapacityNoClobber(dup, dup);
+        self.unique_bytes += dup.len;
         return dup;
     }
 
     pub const Stats = struct {
         unique_strings: usize,
+        unique_bytes: usize,
         pooled_bytes: usize,
+        index_slots: usize,
     };
 
     /// Inspect current memory use of the interner.
     pub fn stats(self: *StringInterner) Stats {
         return .{
             .unique_strings = self.table.count(),
+            .unique_bytes = self.unique_bytes,
             .pooled_bytes = self.arena.queryCapacity(),
+            .index_slots = self.table.capacity(),
         };
     }
 };
+
+test "string interner reports unique logical bytes" {
+    const alloc = std.testing.allocator;
+    var interner = try StringInterner.init(alloc);
+    defer interner.deinit();
+
+    const first = try interner.intern("ready");
+    const second = try interner.intern("ready");
+    const third = try interner.intern("busy");
+
+    try std.testing.expectEqual(@intFromPtr(first.ptr), @intFromPtr(second.ptr));
+    try std.testing.expect(@intFromPtr(first.ptr) != @intFromPtr(third.ptr));
+
+    const stats = interner.stats();
+    try std.testing.expectEqual(@as(usize, 2), stats.unique_strings);
+    try std.testing.expectEqual(@as(usize, "ready".len + "busy".len), stats.unique_bytes);
+    try std.testing.expect(stats.pooled_bytes >= stats.unique_bytes);
+    try std.testing.expect(stats.index_slots >= stats.unique_strings);
+}
