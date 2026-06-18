@@ -44,6 +44,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Polished widget examples (`system-monitor`, `file-manager-example`, `widget-showcase`) now expose deterministic `--snapshot` frames and are included in the default four-pass visual repeat gate.
 
 ### Fixed
+- Terminal mouse events are now normalized from protocol 1-based coordinates into Zit screen coordinates at decode time, fixing clickable widgets that responded one row/column away from their rendered position.
 - Interactive examples now render a shared live resize marker, and `terminal_test` uses `InputHandler` so its resize handling follows the same event path as the rest of the public examples.
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
 - Migrated the library, examples, benchmarks, and CI baseline to Zig 0.16.x.

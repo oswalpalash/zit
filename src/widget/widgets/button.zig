@@ -277,6 +277,25 @@ test "button triggers callback on press" {
     try std.testing.expectEqual(@as(usize, 2), test_button_presses);
 }
 
+test "button handles decoded terminal mouse coordinates at rendered origin" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Go");
+    defer button.deinit();
+
+    test_button_presses = 0;
+    const callback = struct {
+        fn call() void {
+            test_button_presses += 1;
+        }
+    }.call;
+    button.setOnClick(callback);
+    button.widget.rect = layout_module.Rect.init(0, 0, 6, 3);
+
+    const event = (try input.decodeEventFromBytes("\x1b[<0;1;1M")).?;
+    try std.testing.expect(try button.widget.handleEvent(event));
+    try std.testing.expectEqual(@as(usize, 1), test_button_presses);
+}
+
 test "button does not ellipsize text that exactly fits inner width" {
     const alloc = std.testing.allocator;
     var button = try Button.init(alloc, "Deploy");

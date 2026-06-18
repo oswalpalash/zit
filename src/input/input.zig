@@ -12,6 +12,10 @@ const windows_sync = struct {
 
 const default_resize_poll_interval_ms: u64 = 125;
 
+fn terminalMouseCoordToScreenCoord(value: u16) u16 {
+    return if (value > 0) value - 1 else 0;
+}
+
 fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
     if (interval_ms == 0 or last_poll_ms == 0) return true;
     if (now_ms < last_poll_ms) return true;
@@ -1480,8 +1484,8 @@ pub const InputHandler = struct {
     pub fn translateMouseCoordinates(_: *InputHandler, x: u16, y: u16) struct { x: u16, y: u16 } {
         // In a TUI application, mouse coordinates are usually 1-indexed
         // This converts them to 0-indexed for internal use
-        const adjusted_x = if (x > 0) x - 1 else 0;
-        const adjusted_y = if (y > 0) y - 1 else 0;
+        const adjusted_x = terminalMouseCoordToScreenCoord(x);
+        const adjusted_y = terminalMouseCoordToScreenCoord(y);
 
         return .{ .x = adjusted_x, .y = adjusted_y };
     }
@@ -1638,8 +1642,8 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
     }
 
     const button_param: u16 = @as(u16, bytes[0]) - 32;
-    const x = @as(u16, @intCast(bytes[1] - 32));
-    const y = @as(u16, @intCast(bytes[2] - 32));
+    const x = terminalMouseCoordToScreenCoord(@as(u16, @intCast(bytes[1] - 32)));
+    const y = terminalMouseCoordToScreenCoord(@as(u16, @intCast(bytes[2] - 32)));
 
     const is_motion = (button_param & 0x20) != 0;
     const is_scroll = (button_param & 0x40) != 0;
@@ -1728,10 +1732,10 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         return Event{ .unknown = {} };
     }
 
-    // Extract the button, x and y values
+    // Extract and normalize the terminal's 1-based coordinates.
     const button_param = params[0];
-    const x = params[1];
-    const y = params[2];
+    const x = terminalMouseCoordToScreenCoord(params[1]);
+    const y = terminalMouseCoordToScreenCoord(params[2]);
 
     // Decode the button parameter
     const button_code = @as(u8, @intCast(button_param & 0x3));
@@ -1802,8 +1806,8 @@ test "parse mouse scroll delta" {
     const mouse_event = event.mouse;
     try std.testing.expectEqual(MouseAction.scroll_up, mouse_event.action);
     try std.testing.expectEqual(@as(i16, -1), mouse_event.scroll_delta);
-    try std.testing.expectEqual(@as(u16, 10), mouse_event.x);
-    try std.testing.expectEqual(@as(u16, 5), mouse_event.y);
+    try std.testing.expectEqual(@as(u16, 9), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 4), mouse_event.y);
 }
 
 test "parse SGR mouse release preserves button" {
@@ -1815,8 +1819,20 @@ test "parse SGR mouse release preserves button" {
     const mouse_event = event.mouse;
     try std.testing.expectEqual(MouseAction.release, mouse_event.action);
     try std.testing.expectEqual(@as(u8, 1), mouse_event.button);
-    try std.testing.expectEqual(@as(u16, 4), mouse_event.x);
-    try std.testing.expectEqual(@as(u16, 7), mouse_event.y);
+    try std.testing.expectEqual(@as(u16, 3), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 6), mouse_event.y);
+}
+
+test "parse SGR mouse coordinates are zero based for widgets" {
+    var reader = SliceByteReader{ .data = "<0;1;1M" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .mouse), std.meta.activeTag(event));
+
+    const mouse_event = event.mouse;
+    try std.testing.expectEqual(MouseAction.press, mouse_event.action);
+    try std.testing.expectEqual(@as(u16, 0), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 0), mouse_event.y);
 }
 
 test "parse legacy mouse press" {
@@ -1829,8 +1845,8 @@ test "parse legacy mouse press" {
     const mouse_event = event.mouse;
     try std.testing.expectEqual(MouseAction.press, mouse_event.action);
     try std.testing.expectEqual(@as(u8, 1), mouse_event.button);
-    try std.testing.expectEqual(@as(u16, 5), mouse_event.x);
-    try std.testing.expectEqual(@as(u16, 3), mouse_event.y);
+    try std.testing.expectEqual(@as(u16, 4), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 2), mouse_event.y);
 }
 
 test "fuzz decodeEventFromBytes handles noisy escape sequences" {
