@@ -20,6 +20,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Public widget coverage checker (`scripts/check_widget_coverage.py`) fails when an exported widget lacks declared visual or snapshot coverage.
 - DebugAllocator cleanup checker (`scripts/check_debug_allocator_cleanup.py`) fails when public examples or memory tests ignore allocator deinit status.
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
+- Repeat visual capture checker now also captures deterministic `--ansi-snapshot` frames and renders PNG contact sheets with terminal foreground/background colors for visual polish review.
 - Repeat visual capture checker now rejects malformed public frames: invalid UTF-8, terminal control bytes, missing trailing newline, non-rectangular rows, and oversized snapshots.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires live-size examples to redraw with the new dimensions.

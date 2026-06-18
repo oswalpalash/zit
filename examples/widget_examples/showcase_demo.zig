@@ -338,7 +338,7 @@ fn handleAutocompleteSelection(choice: []const u8) void {
     state.log.push(text);
 }
 
-fn renderSnapshot(allocator: std.mem.Allocator) !void {
+fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
     defer mock.deinit();
 
@@ -472,7 +472,7 @@ fn renderSnapshot(allocator: std.mem.Allocator) !void {
     }
 
     renderer.drawSmartStr(inner.x + 1, log_rect.y + log_rect.height, "Theme: dark | Chart: line | Image: background | Search: latency p95", muted, bg, render.Style{});
-    try snapshot.print(allocator, &mock);
+    try snapshot.print(init, allocator, &mock);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -481,7 +481,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     if (try snapshot.isMode(init, allocator)) {
-        try renderSnapshot(allocator);
+        try renderSnapshot(init, allocator);
         return;
     }
 

@@ -64,7 +64,7 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     }
 }
 
-fn renderSnapshot(allocator: std.mem.Allocator) !void {
+fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
     defer mock.deinit();
 
@@ -141,7 +141,7 @@ fn renderSnapshot(allocator: std.mem.Allocator) !void {
     renderer.drawSmartStr(files_rect.x + 3, detail_y, "selected: dashboard.zig  |  enter opens  |  q quits", palette.accent, palette.surface_alt, render.Style{ .bold = true });
 
     style.drawStatus(renderer, palette, status.text);
-    try snapshot.print(allocator, &mock);
+    try snapshot.print(init, allocator, &mock);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -150,7 +150,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     if (try snapshot.isMode(init, allocator)) {
-        try renderSnapshot(allocator);
+        try renderSnapshot(init, allocator);
         return;
     }
 

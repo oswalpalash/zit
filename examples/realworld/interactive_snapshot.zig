@@ -2,7 +2,8 @@ const std = @import("std");
 const zit = @import("zit");
 
 pub fn finish(init: std.process.Init, allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
-    if (try isSnapshotMode(init, allocator)) {
+    const mode = try snapshotMode(init, allocator);
+    if (mode != .interactive) {
         std.debug.print("{s}", .{text});
         return;
     }
@@ -17,23 +18,37 @@ pub fn finishFrames(
     snapshot_text: []const u8,
     terminal_frame: []const u8,
 ) !void {
-    if (try isSnapshotMode(init, allocator)) {
-        std.debug.print("{s}", .{snapshot_text});
-        return;
+    switch (try snapshotMode(init, allocator)) {
+        .text => {
+            std.debug.print("{s}", .{snapshot_text});
+            return;
+        },
+        .ansi => {
+            std.debug.print("{s}", .{terminal_frame});
+            return;
+        },
+        .interactive => {},
     }
 
     try runText(allocator, example_name, terminal_frame);
 }
 
-fn isSnapshotMode(init: std.process.Init, allocator: std.mem.Allocator) !bool {
+const SnapshotMode = enum {
+    interactive,
+    text,
+    ansi,
+};
+
+fn snapshotMode(init: std.process.Init, allocator: std.mem.Allocator) !SnapshotMode {
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
     defer args.deinit();
 
     _ = args.skip();
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--snapshot")) return true;
+        if (std.mem.eql(u8, arg, "--snapshot")) return .text;
+        if (std.mem.eql(u8, arg, "--ansi-snapshot")) return .ansi;
     }
-    return false;
+    return .interactive;
 }
 
 fn writeFrame(term: *zit.terminal.Terminal, text: []const u8) !void {

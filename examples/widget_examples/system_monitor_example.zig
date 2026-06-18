@@ -113,7 +113,7 @@ fn refreshTable(table: *widget.Table, procs: []const Process) !void {
     }
 }
 
-fn renderSnapshot(allocator: std.mem.Allocator) !void {
+fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
     defer mock.deinit();
 
@@ -214,7 +214,7 @@ fn renderSnapshot(allocator: std.mem.Allocator) !void {
     renderer.drawSmartStr(latency.x + latency.width - 40, latency.y + latency.height - 2, "automatic resize + diff renderer", palette.muted, palette.surface, render.Style{ .bold = true });
 
     style.drawStatus(renderer, palette, "Theme: Midnight | q quit, p pause, t theme, type to search | focused: renderer");
-    try snapshot.print(allocator, &mock);
+    try snapshot.print(init, allocator, &mock);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -223,7 +223,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     if (try snapshot.isMode(init, allocator)) {
-        try renderSnapshot(allocator);
+        try renderSnapshot(init, allocator);
         return;
     }
 

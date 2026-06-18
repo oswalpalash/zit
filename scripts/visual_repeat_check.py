@@ -29,6 +29,11 @@ except Exception:  # pragma: no cover - optional local inspection dependency.
     ImageDraw = None
     ImageFont = None
 
+try:
+    from make_screenshots import TerminalEmulator
+except Exception:  # pragma: no cover - visual PNG color rendering is optional.
+    TerminalEmulator = None
+
 
 DEFAULT_TARGETS = [
     "htop-clone",
@@ -93,6 +98,27 @@ def capture_target(root: Path, target: str) -> bytes:
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
         raise RuntimeError(f"`{binary} --snapshot` failed with exit code {proc.returncode}")
+    return proc.stdout
+
+
+def capture_ansi_target(root: Path, target: str) -> bytes:
+    env = os.environ.copy()
+    env.setdefault("TERM", "xterm-256color")
+    env.setdefault("COLORTERM", "truecolor")
+    binary = root / "zig-out" / "bin" / binary_name(target)
+    proc = subprocess.run(
+        [str(binary), "--ansi-snapshot"],
+        cwd=root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
+        raise RuntimeError(f"`{binary} --ansi-snapshot` failed with exit code {proc.returncode}")
+    if not proc.stdout:
+        raise RuntimeError(f"`{binary} --ansi-snapshot` produced no output")
     return proc.stdout
 
 
@@ -221,7 +247,75 @@ def render_contact_sheet(out_dir: Path, targets: Iterable[str], count: int, capt
     return contact_sheet
 
 
-def render_png_contact_sheet(out_dir: Path, targets: Iterable[str], count: int, captures: dict[str, list[bytes]]) -> Path | None:
+def render_terminal_panel(
+    draw: "ImageDraw.ImageDraw",
+    font: "ImageFont.ImageFont",
+    title_font: "ImageFont.ImageFont",
+    x: int,
+    y: int,
+    panel_w: int,
+    panel_h: int,
+    cell_w: int,
+    cell_h: int,
+    target: str,
+    run_index: int,
+    text_capture: bytes,
+    ansi_capture: bytes | None,
+) -> None:
+    draw.rectangle((x, y, x + panel_w, y + panel_h), fill=(12, 14, 18), outline=(47, 54, 66))
+    draw.text((x + 8, y + 8), f"{target} #{run_index}", font=title_font, fill=(125, 211, 252))
+
+    text_lines = text_capture.decode("utf-8", errors="replace").splitlines()
+    if ansi_capture is None or TerminalEmulator is None:
+        for line_index, line in enumerate(text_lines):
+            draw.text((x + 8, y + 8 + cell_h + line_index * cell_h), line, font=font, fill=(229, 231, 235))
+        return
+
+    cols = max((len(line) for line in text_lines), default=1)
+    rows = max(len(text_lines), 1)
+    screen = TerminalEmulator(cols, rows)
+    screen.feed(ansi_capture)
+
+    origin_x = x + 8
+    origin_y = y + 8 + cell_h
+    for row_index, row in enumerate(screen.cells):
+        yy = origin_y + row_index * cell_h
+        col = 0
+        while col < screen.cols:
+            start = col
+            bg = row[col].bg
+            while col < screen.cols and row[col].bg == bg:
+                col += 1
+            draw.rectangle(
+                (origin_x + start * cell_w, yy, origin_x + col * cell_w, yy + cell_h),
+                fill=bg,
+            )
+
+        for col_index, cell in enumerate(row):
+            if cell.ch == " ":
+                continue
+            draw.text(
+                (origin_x + col_index * cell_w, yy),
+                cell.ch,
+                font=font,
+                fill=cell.fg,
+            )
+            if cell.bold:
+                draw.text(
+                    (origin_x + col_index * cell_w + 1, yy),
+                    cell.ch,
+                    font=font,
+                    fill=cell.fg,
+                )
+
+
+def render_png_contact_sheet(
+    out_dir: Path,
+    targets: Iterable[str],
+    count: int,
+    captures: dict[str, list[bytes]],
+    ansi_captures: dict[str, list[bytes]] | None = None,
+) -> Path | None:
     if Image is None or ImageDraw is None or ImageFont is None:
         return None
 
@@ -265,11 +359,24 @@ def render_png_contact_sheet(out_dir: Path, targets: Iterable[str], count: int, 
     for target in target_list:
         x = gap
         for run_index, capture in enumerate(captures[target], start=1):
-            lines = capture.decode("utf-8", errors="replace").splitlines()
-            draw.rectangle((x, y, x + panel_w, y + panel_h), fill=(12, 14, 18), outline=(47, 54, 66))
-            draw.text((x + 8, y + 8), f"{target} #{run_index}", font=title_font, fill=(125, 211, 252))
-            for line_index, line in enumerate(lines):
-                draw.text((x + 8, y + 8 + cell_h + line_index * cell_h), line, font=font, fill=(229, 231, 235))
+            ansi_capture = None
+            if ansi_captures is not None and target in ansi_captures:
+                ansi_capture = ansi_captures[target][run_index - 1]
+            render_terminal_panel(
+                draw,
+                font,
+                title_font,
+                x,
+                y,
+                panel_w,
+                panel_h,
+                cell_w,
+                cell_h,
+                target,
+                run_index,
+                capture,
+                ansi_capture,
+            )
             x += panel_w + gap
         y += panel_h + gap
 
@@ -300,12 +407,14 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     captures: dict[str, list[bytes]] = {}
+    ansi_captures: dict[str, list[bytes]] = {}
     manifest: dict[str, object] = {"count": args.count, "targets": {}}
 
     ensure_binaries(root)
 
     for target in targets:
         target_captures: list[bytes] = []
+        target_ansi_captures: list[bytes] = []
         target_dir = out_dir / safe_name(target)
         target_dir.mkdir(parents=True, exist_ok=True)
         print(f"capturing {target} x{args.count}")
@@ -315,6 +424,10 @@ def main() -> int:
             target_captures.append(data)
             (target_dir / f"{run_index:02d}.txt").write_bytes(data)
 
+            ansi_data = capture_ansi_target(root, target)
+            target_ansi_captures.append(ansi_data)
+            (target_dir / f"{run_index:02d}.ansi").write_bytes(ansi_data)
+
         expected = target_captures[0]
         for run_index, data in enumerate(target_captures[1:], start=2):
             if data != expected:
@@ -322,20 +435,31 @@ def main() -> int:
                 sys.stderr.write(first_diff(expected, data, target, run_index) + "\n")
                 return 1
 
+        expected_ansi = target_ansi_captures[0]
+        for run_index, data in enumerate(target_ansi_captures[1:], start=2):
+            if data != expected_ansi:
+                sys.stderr.write(f"ANSI visual capture changed for {target} between runs 1 and {run_index}\n")
+                return 1
+
         digest = hashlib.sha256(expected).hexdigest()
+        ansi_digest = hashlib.sha256(expected_ansi).hexdigest()
         manifest["targets"][target] = {
             "sha256": digest,
+            "ansi_sha256": ansi_digest,
             "bytes": len(expected),
+            "ansi_bytes": len(expected_ansi),
             "cols": cols,
             "rows": rows,
             "rectangular": True,
             "frames": [str(target_dir / f"{idx:02d}.txt") for idx in range(1, args.count + 1)],
+            "ansi_frames": [str(target_dir / f"{idx:02d}.ansi") for idx in range(1, args.count + 1)],
         }
         captures[target] = target_captures
+        ansi_captures[target] = target_ansi_captures
         print(f"  stable sha256={digest[:12]}")
 
     contact_sheet = render_contact_sheet(out_dir, targets, args.count, captures)
-    png_contact_sheet = render_png_contact_sheet(out_dir, targets, args.count, captures)
+    png_contact_sheet = render_png_contact_sheet(out_dir, targets, args.count, captures, ansi_captures)
     manifest["contact_sheet"] = str(contact_sheet)
     if png_contact_sheet is not None:
         manifest["png_contact_sheet"] = str(png_contact_sheet)
