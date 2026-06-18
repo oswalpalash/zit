@@ -22,7 +22,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
 - Repeat visual capture checker now rejects malformed public frames: invalid UTF-8, terminal control bytes, missing trailing newline, non-rectangular rows, and oversized snapshots.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
-- Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size and requires `input_test` plus real-world/gallery examples to redraw with the new geometry.
+- Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires live-size examples to redraw with the new dimensions.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
@@ -77,6 +77,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Real-world htop and file-manager examples now render richer reference-style frames in interactive terminals while keeping plain deterministic snapshots for visual repeat checks.
 - Release verification now creates the docs output parent directory before generating API docs, fixing clean-checkout CI runs without a preexisting `zig-out`.
 - Real-world snapshot-backed examples now display a live terminal-size status line in interactive mode, giving users and PTY smoke tests visible proof that resize events redraw the frame.
+- Resize PTY smoke now drains child output while waiting for `q` shutdown, preventing high-output examples from blocking on a full pseudo-terminal buffer during release verification.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.

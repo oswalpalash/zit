@@ -56,7 +56,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_contribution_gates.py`
 - `python3 scripts/check_widget_coverage.py`
 - `python3 scripts/interactive_example_smoke.py`
-- `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives a live PTY resize and representative real-world/gallery examples redraw at the new geometry.
+- `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives a live PTY resize, every public interactive example survives the resize and quits cleanly, and live-size examples redraw at the new geometry.
 - `python3 scripts/visual_repeat_check.py --count 4`
 - Visually inspect the generated contact sheet for the real-world examples (`htop-clone`, `file-manager`, `text-editor`, `dashboard-demo`) and widget galleries (`widget-gallery`, `widget-gallery-extended`, `widget-gallery-layouts`) for alignment, hierarchy, spacing, clipped or overlapping text, and frame-to-frame drift.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
