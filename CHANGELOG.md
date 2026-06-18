@@ -43,8 +43,10 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - README screenshot generation now emits polished deterministic SVG previews for the system monitor, file manager, and widget showcase.
 - Widget example styling helpers now provide shared terminal chrome, panel headers, status bands, badges, and palette-driven themes for polished public examples.
 - Polished widget examples (`system-monitor`, `file-manager-example`, `widget-showcase`) now expose deterministic `--snapshot` frames and are included in the default four-pass visual repeat gate.
+- Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- `button-example` now uses `@fieldParentPtr("widget", ...)` in its custom layout wrapper instead of demonstrating unsafe embedded-widget owner casts.
 - Widget vtable callbacks now recover concrete owners with `@fieldParentPtr("widget", ...)` instead of assuming the embedded `Widget` sits at offset zero, fixing corrupted widget state reads that could misalign mouse clicks from rendered controls.
 - `ScrollContainer` now uses saturating tiny-layout geometry for content and scrollbar rects, preventing unsigned underflow when dynamic terminal resize collapses a scrollable region to zero or one cell.
 - Mouse hit testing for bordered interactive controls now matches their rendered content area: button and text editor borders no longer fire content clicks, and checkbox glyphs draw inside their assigned clickable rect.

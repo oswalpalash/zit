@@ -18,7 +18,7 @@ Thanks for helping make Zit the best Zig TUI toolkit. This guide covers how to p
 - Add comments only where behavior is non-obvious (edge cases, terminal quirks, platform-specific code paths).
 
 ## Tests and checks
-- Required for every PR: `zig fmt --check src/ examples/ build.zig` and `zig build quality`.
+- Required for every PR: `zig fmt --check src/ examples/ build.zig`, `zig build quality`, and `python3 scripts/check_widget_owner_casts.py`.
 - Public-facing stability work should also pass `zig build release-check` before merge. CI runs that full release gate on PRs, `main` pushes, and release tags.
 - TUI-facing changes need `python3 scripts/interactive_example_smoke.py`, `python3 scripts/resize_smoke.py --no-build`, `python3 scripts/mouse_alignment_smoke.py --no-build`, and `python3 scripts/visual_repeat_check.py --count 4` with contact-sheet inspection.
 - Run relevant examples, e.g. `zig build table-example` or `zig build demo`, when touching widgets.

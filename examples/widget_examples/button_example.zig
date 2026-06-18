@@ -40,8 +40,13 @@ const LayoutWidget = struct {
         };
     }
 
+    fn owner(widget_ptr: *anyopaque) *LayoutWidget {
+        const widget_ref: *widget.Widget = @ptrCast(@alignCast(widget_ptr));
+        return @fieldParentPtr("widget", widget_ref);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, r: *render.Renderer) anyerror!void {
-        const self = @as(*LayoutWidget, @ptrCast(@alignCast(widget_ptr)));
+        const self = owner(widget_ptr);
         self.layout_element.render(r, self.widget.rect);
     }
 
@@ -52,12 +57,12 @@ const LayoutWidget = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout.Rect) anyerror!void {
-        const self = @as(*LayoutWidget, @ptrCast(@alignCast(widget_ptr)));
+        const self = owner(widget_ptr);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout.Size {
-        const self = @as(*LayoutWidget, @ptrCast(@alignCast(widget_ptr)));
+        const self = owner(widget_ptr);
         // Use loose constraints to get the preferred size
         return self.layout_element.layout(layout.Constraints.loose(65535, 65535));
     }

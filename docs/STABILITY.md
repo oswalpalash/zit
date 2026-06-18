@@ -56,6 +56,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_contribution_gates.py`
 - `python3 scripts/check_widget_coverage.py`
+- `python3 scripts/check_widget_owner_casts.py`
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.
 - `python3 scripts/mouse_alignment_smoke.py --no-build` to verify real SGR mouse input maps terminal 1-based coordinates to Zit screen coordinates and clicks the rendered demo button only at its actual row.
