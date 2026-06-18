@@ -33,7 +33,7 @@ This document explains how Zit fits together internally: the main modules, how d
   - A reference to the **parent allocator** for long-lived objects that should outlive a frame.
 - **Reset model**: call `MemoryManager.resetArena()` once per frame or when a screen redraw completes to reclaim temporary allocations in bulk.
 - **Widget lifetime**: allocate widgets from the pool allocator and pair each `init` with a `deinit` to return blocks to the pool; large per-widget data can still use the parent allocator if needed.
-- **Stats**: `MemoryManager.getStats()` surfaces arena usage and pool stats for profiling; leaks are prevented by the pooled design and arena resets.
+- **Stats**: allocators returned by `MemoryManager.getArenaAllocator()` and `getWidgetPoolAllocator()` update aggregate allocation/deallocation counters automatically. `MemoryManager.getStats()` reports arena bytes currently in use, live widget-pool block usage, peak managed usage, and raw pool stats for profiling; arena bytes are reclaimed when `resetArena()` or `resetFrame()` runs.
 
 ## Event Propagation Model
 - Events carry both a `target` and `current_target` plus a `PropagationPhase` enum (`capturing`, `target`, `bubbling`).

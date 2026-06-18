@@ -35,6 +35,14 @@ pub const ArenaAllocator = struct {
         self.end_index = 0;
     }
 
+    pub fn usage(self: *ArenaAllocator) usize {
+        if (self.is_thread_safe) {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+        }
+        return self.end_index;
+    }
+
     pub fn allocator(self: *ArenaAllocator) Allocator {
         return .{
             .ptr = self,

@@ -68,6 +68,23 @@ input_handler.setResizePollInterval(125); // default; use 0 to poll every call
 app.setInputPollTimeout(0); // default; keep tickOnce non-blocking
 ```
 
+### Memory Stats
+```zig
+const arena = memory_manager.getArenaAllocator();
+const widgets = memory_manager.getWidgetPoolAllocator();
+
+const scratch = try arena.alloc(u8, 256);
+defer arena.free(scratch); // counted as a deallocation; arena bytes reclaim on resetArena().
+
+var label = try zit.widget.Label.init(widgets, "Ready");
+defer label.deinit();
+
+const stats = memory_manager.getStats();
+// stats.total_allocations / total_deallocations count operations through MemoryManager allocators.
+// stats.current_memory_usage reports arena bytes in use plus live widget-pool block bytes.
+// stats.arena_usage drops when resetArena() or resetFrame() is called.
+```
+
 ### Widget Creation & Layout
 ```zig
 var button = try zit.widget.Button.init(memory_manager.getWidgetPoolAllocator(), "Deploy");

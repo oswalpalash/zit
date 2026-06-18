@@ -48,8 +48,59 @@ test "MemoryManager statistics" {
     defer widget_pool.free(widget2);
 
     const stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 4), stats.total_allocations);
+    try testing.expectEqual(@as(usize, 0), stats.total_deallocations);
     try testing.expectEqual(@as(usize, 300), stats.arena_usage);
     try testing.expectEqual(@as(usize, 2), stats.widget_pool_stats.allocated_nodes);
+    try testing.expectEqual(@as(usize, 300 + 2 * memory_manager.widget_pool.node_size), stats.current_memory_usage);
+    try testing.expect(stats.peak_memory_usage >= stats.current_memory_usage);
+}
+
+test "MemoryManager aggregate stats track allocation lifecycle" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var memory_manager = try MemoryManager.init(allocator, 1024 * 1024, 4);
+    defer memory_manager.deinit();
+
+    const arena = memory_manager.getArenaAllocator();
+    const widget_pool = memory_manager.getWidgetPoolAllocator();
+
+    var scratch = try arena.alloc(u8, 64);
+    const widget = try widget_pool.alloc(u8, @sizeOf(u64));
+
+    var stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 2), stats.total_allocations);
+    try testing.expectEqual(@as(usize, 0), stats.total_deallocations);
+    try testing.expectEqual(@as(usize, 64), stats.arena_usage);
+    try testing.expectEqual(@as(usize, 1), stats.widget_pool_stats.allocated_nodes);
+    try testing.expectEqual(@as(usize, 64 + memory_manager.widget_pool.node_size), stats.current_memory_usage);
+
+    try testing.expect(arena.resize(scratch, 96));
+    scratch = scratch.ptr[0..96];
+    stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 2), stats.total_allocations);
+    try testing.expectEqual(@as(usize, 96), stats.arena_usage);
+    try testing.expectEqual(@as(usize, 96 + memory_manager.widget_pool.node_size), stats.current_memory_usage);
+    try testing.expectEqual(stats.current_memory_usage, stats.peak_memory_usage);
+
+    arena.free(scratch);
+    stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 1), stats.total_deallocations);
+    try testing.expectEqual(@as(usize, 96), stats.arena_usage);
+
+    memory_manager.resetArena();
+    stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 0), stats.arena_usage);
+    try testing.expectEqual(@as(usize, memory_manager.widget_pool.node_size), stats.current_memory_usage);
+
+    widget_pool.free(widget);
+    stats = memory_manager.getStats();
+    try testing.expectEqual(@as(usize, 2), stats.total_deallocations);
+    try testing.expectEqual(@as(usize, 0), stats.widget_pool_stats.allocated_nodes);
+    try testing.expectEqual(@as(usize, 0), stats.current_memory_usage);
+    try testing.expect(stats.peak_memory_usage >= 96 + memory_manager.widget_pool.node_size);
 }
 
 test "MemoryManager arena reset" {
