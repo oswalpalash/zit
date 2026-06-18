@@ -29,6 +29,7 @@ class Command:
 SCRIPT_COMPILE_TARGETS = (
     "scripts/check_build_steps.py",
     "scripts/check_ci_script_coverage.py",
+    "scripts/check_contribution_gates.py",
     "scripts/check_debug_allocator_cleanup.py",
     "scripts/check_widget_coverage.py",
     "scripts/interactive_example_smoke.py",
@@ -85,6 +86,7 @@ def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
         Command("public build steps", ("python3", "scripts/check_build_steps.py", "--skip", "release-check", "--timeout", str(args.step_timeout)), max(args.step_timeout * 35, 300)),
         Command("debug allocator cleanup", ("python3", "scripts/check_debug_allocator_cleanup.py"), 120),
         Command("CI script coverage", ("python3", "scripts/check_ci_script_coverage.py"), 120),
+        Command("contribution gates", ("python3", "scripts/check_contribution_gates.py"), 120),
         Command("widget coverage", ("python3", "scripts/check_widget_coverage.py"), 120),
         Command("interactive PTY smoke", ("python3", "scripts/interactive_example_smoke.py"), 300),
         Command("resize PTY smoke", ("python3", "scripts/resize_smoke.py", "--no-build"), 120),

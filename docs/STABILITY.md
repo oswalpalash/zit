@@ -40,6 +40,7 @@ Before a feature is promoted as stable, it needs:
 `zig build release-check` is the authoritative aggregate gate. It runs the checks below and writes generated API docs under `zig-out/docs-release` plus visual captures under `zig-out/visual-repeat`.
 
 - `zig build quality`
+- `zig build contribution-gates`
 - `zig fmt --check src/ examples/ build.zig`
 - `zig build smoke`
 - `zig build test`
@@ -50,6 +51,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_build_steps.py`
 - `python3 scripts/check_debug_allocator_cleanup.py`
 - `python3 scripts/check_ci_script_coverage.py`
+- `python3 scripts/check_contribution_gates.py`
 - `python3 scripts/check_widget_coverage.py`
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/resize_smoke.py --no-build`
