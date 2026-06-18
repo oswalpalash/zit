@@ -11,8 +11,21 @@ fn checkedDimension(value: anytype, comptime label: []const u8) u16 {
         return @intCast(value);
     }
 
-    const casted = std.math.cast(u16, value) orelse std.debug.panic("zit: {s} must fit within u16 (got {any})", .{ label, value });
-    return casted;
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |info| {
+            if (info.signedness == .signed and value < 0) return 0;
+            return std.math.cast(u16, value) orelse std.math.maxInt(u16);
+        },
+        .float => {
+            if (std.math.isNan(value) or value <= 0) return 0;
+            if (value >= @as(@TypeOf(value), @floatFromInt(std.math.maxInt(u16)))) return std.math.maxInt(u16);
+            return @intFromFloat(value);
+        },
+        else => {
+            const msg = std.fmt.comptimePrint("zit: {s} must be numeric", .{label});
+            @compileError(msg);
+        },
+    }
 }
 
 fn validateMinMaxComptime(min_raw: anytype, max_raw: anytype, comptime name: []const u8) void {
@@ -83,8 +96,8 @@ pub const Rect = struct {
     pub fn intersection(self: Rect, other: Rect) ?Rect {
         const x1 = @max(self.x, other.x);
         const y1 = @max(self.y, other.y);
-        const x2 = @min(self.x + self.width, other.x + other.width);
-        const y2 = @min(self.y + self.height, other.y + other.height);
+        const x2 = @min(@as(u32, self.x) + self.width, @as(u32, other.x) + other.width);
+        const y2 = @min(@as(u32, self.y) + self.height, @as(u32, other.y) + other.height);
 
         if (x1 >= x2 or y1 >= y2) {
             return null; // No intersection
@@ -93,15 +106,15 @@ pub const Rect = struct {
         return Rect{
             .x = x1,
             .y = y1,
-            .width = x2 - x1,
-            .height = y2 - y1,
+            .width = @intCast(x2 - x1),
+            .height = @intCast(y2 - y1),
         };
     }
 
     /// Shrink the rectangle by the given insets
     pub fn shrink(self: Rect, insets: EdgeInsets) Rect {
-        const new_x = self.x + insets.left;
-        const new_y = self.y + insets.top;
+        const new_x = saturatingAdd(self.x, insets.left);
+        const new_y = saturatingAdd(self.y, insets.top);
         const combined_width = saturatingAdd(insets.left, insets.right);
         const combined_height = saturatingAdd(insets.top, insets.bottom);
         const new_width = if (self.width > combined_width)
@@ -235,18 +248,11 @@ pub const Constraints = struct {
         const min_height = checkedDimension(min_height_in, "constraints.min_height");
         const max_height = checkedDimension(max_height_in, "constraints.max_height");
 
-        if (max_width < min_width) {
-            std.debug.panic("zit: max_width {d} smaller than min_width {d}", .{ max_width, min_width });
-        }
-        if (max_height < min_height) {
-            std.debug.panic("zit: max_height {d} smaller than min_height {d}", .{ max_height, min_height });
-        }
-
         return Constraints{
             .min_width = min_width,
-            .max_width = max_width,
+            .max_width = @max(max_width, min_width),
             .min_height = min_height,
-            .max_height = max_height,
+            .max_height = @max(max_height, min_height),
         };
     }
 
@@ -1778,6 +1784,80 @@ test "flex layout distributes space and aligns children" {
     try std.testing.expectEqual(@as(u16, 1), rec3.rect.y);
     try std.testing.expectEqual(@as(u16, 11), rec3.rect.width);
     try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
+}
+
+test "constraints normalize runtime inverted min max bounds" {
+    const min_width: u16 = 12;
+    const max_width: u16 = 5;
+    const min_height: u16 = 8;
+    const max_height: u16 = 3;
+
+    const constraints = Constraints.init(min_width, max_width, min_height, max_height);
+
+    try std.testing.expectEqual(@as(u16, 12), constraints.min_width);
+    try std.testing.expectEqual(@as(u16, 12), constraints.max_width);
+    try std.testing.expectEqual(@as(u16, 8), constraints.min_height);
+    try std.testing.expectEqual(@as(u16, 8), constraints.max_height);
+
+    const constrained = constraints.constrain(1, 1);
+    try std.testing.expectEqual(@as(u16, 12), constrained.width);
+    try std.testing.expectEqual(@as(u16, 8), constrained.height);
+}
+
+test "layout constructors clamp invalid runtime dimensions" {
+    const Runtime = struct {
+        noinline fn signed(value: i32) i32 {
+            return value;
+        }
+
+        noinline fn unsigned(value: u32) u32 {
+            return value;
+        }
+
+        noinline fn float(value: f32) f32 {
+            return value;
+        }
+    };
+
+    const rect = Rect.init(
+        Runtime.signed(-4),
+        Runtime.float(std.math.nan(f32)),
+        Runtime.unsigned(70_000),
+        Runtime.float(12.75),
+    );
+
+    try std.testing.expectEqual(@as(u16, 0), rect.x);
+    try std.testing.expectEqual(@as(u16, 0), rect.y);
+    try std.testing.expectEqual(std.math.maxInt(u16), rect.width);
+    try std.testing.expectEqual(@as(u16, 12), rect.height);
+
+    const insets = EdgeInsets.symmetric(Runtime.signed(-1), Runtime.unsigned(80_000));
+    try std.testing.expectEqual(@as(u16, 0), insets.left);
+    try std.testing.expectEqual(@as(u16, 0), insets.right);
+    try std.testing.expectEqual(std.math.maxInt(u16), insets.top);
+    try std.testing.expectEqual(std.math.maxInt(u16), insets.bottom);
+
+    const size = Size.init(Runtime.float(-0.5), Runtime.unsigned(100_000));
+    try std.testing.expectEqual(@as(u16, 0), size.width);
+    try std.testing.expectEqual(std.math.maxInt(u16), size.height);
+}
+
+test "rect arithmetic saturates intermediate overflow" {
+    const max = std.math.maxInt(u16);
+    const shrunk = Rect.init(max, max, 4, 4).shrink(EdgeInsets.all(1));
+    try std.testing.expectEqual(max, shrunk.x);
+    try std.testing.expectEqual(max, shrunk.y);
+    try std.testing.expectEqual(@as(u16, 2), shrunk.width);
+    try std.testing.expectEqual(@as(u16, 2), shrunk.height);
+
+    const first = Rect.init(65_000, 65_000, 1_000, 1_000);
+    const second = Rect.init(65_100, 65_200, 200, 300);
+    const overlap = first.intersection(second) orelse return error.ExpectedIntersection;
+
+    try std.testing.expectEqual(@as(u16, 65_100), overlap.x);
+    try std.testing.expectEqual(@as(u16, 65_200), overlap.y);
+    try std.testing.expectEqual(@as(u16, 200), overlap.width);
+    try std.testing.expectEqual(@as(u16, 300), overlap.height);
 }
 
 test "flex layout addChild is transactional when scratch allocation fails" {

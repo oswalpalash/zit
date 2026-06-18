@@ -57,6 +57,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Gauges now render visible filled/empty glyphs in addition to color, so progress remains legible in screenshots and monochrome terminals.
 - BatteryIndicator now uses a deterministic single-cell charging marker, avoiding ambiguous-width glyph drift between text snapshots, ANSI screenshots, and real terminals.
 - Renderer gradient fills now ignore invalid or NaN stop positions instead of panicking on caller-provided theme data.
+- Runtime layout constraints now normalize inverted min/max bounds instead of panicking during dynamic resize or reflow calculations.
+- Runtime layout dimensions now clamp invalid signed, oversized, and NaN values, and rectangle intersection/shrink math avoids u16 intermediate overflows.
 - Labels, buttons, and checkboxes now clip by grapheme and terminal-cell width, preserving UTF-8 while avoiding premature ellipsizing for exact-fit text.
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.
