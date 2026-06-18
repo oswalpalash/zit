@@ -8,6 +8,7 @@ const widget = zit.widget;
 const theme = zit.widget.theme;
 const memory = zit.memory;
 const style = @import("example_style.zig");
+const snapshot = @import("example_snapshot.zig");
 
 const Process = struct {
     name: []const u8,
@@ -112,10 +113,119 @@ fn refreshTable(table: *widget.Table, procs: []const Process) !void {
     }
 }
 
-pub fn main() !void {
+fn renderSnapshot(allocator: std.mem.Allocator) !void {
+    var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
+    defer mock.deinit();
+
+    var cpu = try widget.Gauge.init(allocator);
+    defer cpu.deinit();
+    cpu.setRange(0, 100);
+    cpu.setOrientation(.horizontal);
+    cpu.setValue(47.8);
+    try cpu.setLabel("CPU 47.8%");
+
+    var mem = try widget.Gauge.init(allocator);
+    defer mem.deinit();
+    mem.setRange(0, 100);
+    mem.setOrientation(.horizontal);
+    mem.setValue(63.2);
+    try mem.setLabel("Memory 63.2%");
+
+    var spark = try widget.Sparkline.init(allocator);
+    defer spark.deinit();
+    spark.setMaxSamples(80);
+    for (&[_]f32{ 24, 28, 31, 29, 42, 47, 44, 51, 49, 58, 55, 62, 59, 64, 61, 67 }) |sample| {
+        try spark.push(sample);
+    }
+
+    var table = try widget.Table.init(allocator);
+    defer table.deinit();
+    table.widget.focused = true;
+    table.setShowHeaders(true);
+    table.setBorder(.none);
+    table.show_grid = false;
+    try table.addColumn("Process", 16, true);
+    try table.addColumn("CPU", 8, true);
+    try table.addColumn("Memory", 10, true);
+    try table.addColumn("State", 10, true);
+
+    const processes = [_]Process{
+        .{ .name = "renderer", .cpu = 47.8, .mem = 118.0, .state = "steady" },
+        .{ .name = "input-loop", .cpu = 13.4, .mem = 42.0, .state = "ready" },
+        .{ .name = "layout", .cpu = 8.1, .mem = 51.0, .state = "clean" },
+        .{ .name = "watcher", .cpu = 2.3, .mem = 19.0, .state = "idle" },
+        .{ .name = "telemetry", .cpu = 4.5, .mem = 34.0, .state = "sample" },
+    };
+    for (processes) |proc| {
+        try table.addRow(&.{ proc.name, "0%", "0 MB", proc.state });
+    }
+    table.setSelectedRow(0);
+    try refreshTable(table, &processes);
+
+    const current_theme = theme.Theme.dark();
+    const palette = style.monitorPalette();
+    const text = palette.text;
+    const success = palette.success;
+    try cpu.setTheme(current_theme);
+    try mem.setTheme(current_theme);
+    try spark.setTheme(current_theme);
+    table.fg = text;
+    table.bg = palette.surface;
+    table.header_bg = palette.surface_alt;
+    table.header_fg = palette.accent_text;
+    table.selected_bg = render.Color.rgb(14, 42, 58);
+    table.selected_fg = palette.accent_text;
+    table.grid_fg = palette.border;
+    table.focused_bg = palette.surface_alt;
+    table.focused_fg = text;
+    spark.fg = palette.accent;
+    spark.bg = palette.surface;
+    cpu.fill = success;
+    mem.fill = palette.accent;
+
+    const renderer = &mock.renderer;
+    renderer.back.clear();
+    const content = style.drawChrome(renderer, palette, "zit system monitor", "live widgets / stable frames");
+
+    const gap: u16 = 2;
+    const top_h: u16 = 12;
+    const left_w: u16 = 36;
+    const right_w: u16 = content.width - left_w - gap;
+    const service = layout.Rect.init(content.x, content.y, left_w, top_h);
+    const proc_rect = layout.Rect.init(content.x + left_w + gap, content.y, right_w, top_h);
+    const latency = layout.Rect.init(content.x, content.y + top_h + gap, content.width, content.height - top_h - gap);
+
+    style.drawPanel(renderer, service, palette, "Service Health", palette.accent);
+    style.drawMeter(renderer, service.x + 3, service.y + 3, service.width - 6, "CPU 47.8%", 0.478, palette, success);
+    style.drawMeter(renderer, service.x + 3, service.y + 6, service.width - 6, "Memory 63.2%", 0.632, palette, palette.accent);
+    style.drawMeter(renderer, service.x + 3, service.y + 9, service.width - 6, "Network 36%", 0.36, palette, palette.accent);
+
+    style.drawPanel(renderer, proc_rect, palette, "Process Table", palette.accent);
+    try table.widget.layout(layout.Rect.init(proc_rect.x + 2, proc_rect.y + 3, proc_rect.width - 4, proc_rect.height - 4));
+    table.widget.markDirty();
+    try table.widget.draw(renderer);
+
+    style.drawPanel(renderer, latency, palette, "Latency + Event Stream", palette.accent);
+    renderer.drawSmartStr(latency.x + 3, latency.y + 3, "p95 frame time", palette.muted, palette.surface, render.Style{ .bold = true });
+    renderer.drawSmartStr(latency.x + 3, latency.y + 4, "1.18ms", palette.text, palette.surface, render.Style{ .bold = true });
+    try spark.widget.layout(layout.Rect.init(latency.x + 18, latency.y + 3, latency.width - 22, latency.height - 5));
+    spark.widget.markDirty();
+    try spark.widget.draw(renderer);
+    renderer.drawSmartStr(latency.x + latency.width - 40, latency.y + latency.height - 2, "automatic resize + diff renderer", palette.muted, palette.surface, render.Style{ .bold = true });
+
+    style.drawStatus(renderer, palette, "Theme: Midnight | q quit, p pause, t theme, type to search | focused: renderer");
+    try snapshot.print(allocator, &mock);
+}
+
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
+
+    if (try snapshot.isMode(init, allocator)) {
+        try renderSnapshot(allocator);
+        return;
+    }
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();

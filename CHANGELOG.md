@@ -36,6 +36,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
 - README screenshot generation now emits polished deterministic SVG previews for the system monitor, file manager, and widget showcase.
 - Widget example styling helpers now provide shared terminal chrome, panel headers, status bands, badges, and palette-driven themes for polished public examples.
+- Polished widget examples (`system-monitor`, `file-manager-example`, `widget-showcase`) now expose deterministic `--snapshot` frames and are included in the default four-pass visual repeat gate.
 
 ### Fixed
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.

@@ -9,6 +9,7 @@ const theme = zit.widget.theme;
 const memory = zit.memory;
 const input = zit.input;
 const style = @import("example_style.zig");
+const snapshot = @import("example_snapshot.zig");
 
 const StatusLine = struct {
     buffer: [160]u8 = undefined,
@@ -63,10 +64,95 @@ fn menuSelect(_: usize, item: widget.ContextMenuItem, ctx: ?*anyopaque) void {
     }
 }
 
-pub fn main() !void {
+fn renderSnapshot(allocator: std.mem.Allocator) !void {
+    var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
+    defer mock.deinit();
+
+    const palette = style.filePalette();
+    const ui_theme = style.asTheme(palette);
+
+    var tree = try widget.TreeView.init(allocator);
+    defer tree.deinit();
+    const root = try tree.addRoot("workspace");
+    const apps = try tree.addChild(root, "apps");
+    const logs = try tree.addChild(root, "logs");
+    const scripts = try tree.addChild(root, "scripts");
+    const third_party = try tree.addChild(root, "third_party");
+    const notes = try tree.addChild(root, "notes");
+    tree.nodes.items[root].expanded = true;
+    tree.nodes.items[apps].expanded = true;
+    tree.nodes.items[logs].expanded = true;
+    tree.nodes.items[scripts].expanded = true;
+    tree.nodes.items[third_party].expanded = true;
+    tree.nodes.items[notes].expanded = true;
+    try tree.setTheme(ui_theme);
+    tree.widget.setFocus(true);
+
+    var list = try widget.List.init(allocator);
+    defer list.deinit();
+    list.setTheme(ui_theme);
+    list.border = .none;
+    list.bg = palette.surface;
+    list.fg = palette.text;
+    list.selected_bg = render.Color.rgb(16, 51, 34);
+    list.selected_fg = palette.text;
+    list.focused_bg = palette.surface_alt;
+    list.focused_fg = palette.text;
+    try loadFiles(list, "apps");
+
+    var status = StatusLine{};
+    setStatus(&status, "Tab switches focus | selected apps/dashboard.zig | q quits", .{});
+
+    var ctx_menu = try widget.ContextMenu.init(allocator);
+    defer ctx_menu.deinit();
+    try ctx_menu.addItem("Open", true, null);
+    try ctx_menu.addItem("Rename", true, null);
+    try ctx_menu.addItem("Delete", false, null);
+    try ctx_menu.addItem("Copy path", true, null);
+    ctx_menu.setMaxVisible(6);
+    try ctx_menu.setTheme(theme.Theme.highContrast());
+    ctx_menu.setOnSelectWithContext(menuSelect, &status);
+
+    const renderer = &mock.renderer;
+    renderer.back.clear();
+    const content = style.drawChrome(renderer, palette, "zit file manager", "tree view / typeahead / detail pane");
+    const gap: u16 = 2;
+    const tree_w: u16 = 32;
+    const files_w: u16 = content.width - tree_w - gap;
+    const tree_rect = layout.Rect.init(content.x, content.y, tree_w, content.height);
+    const files_rect = layout.Rect.init(content.x + tree_w + gap, content.y, files_w, content.height);
+
+    style.drawPanel(renderer, tree_rect, palette, "Workspace Tree", palette.accent);
+    style.drawPanel(renderer, files_rect, palette, "Directory View", palette.accent);
+
+    try tree.widget.layout(layout.Rect.init(tree_rect.x + 2, tree_rect.y + 3, tree_rect.width - 4, tree_rect.height - 5));
+    tree.widget.markDirty();
+    try tree.widget.draw(renderer);
+
+    renderer.fillRect(files_rect.x + 2, files_rect.y + 3, files_rect.width - 4, 1, ' ', palette.accent, palette.surface_alt, render.Style{ .bold = true });
+    renderer.drawSmartStr(files_rect.x + 3, files_rect.y + 3, "NAME", palette.accent, palette.surface_alt, render.Style{ .bold = true });
+    renderer.drawSmartStr(files_rect.x + files_rect.width - 18, files_rect.y + 3, "TYPE", palette.accent, palette.surface_alt, render.Style{ .bold = true });
+    try list.widget.layout(layout.Rect.init(files_rect.x + 2, files_rect.y + 5, files_rect.width - 4, files_rect.height - 9));
+    list.widget.markDirty();
+    try list.widget.draw(renderer);
+
+    const detail_y = files_rect.y + files_rect.height - 3;
+    renderer.fillRect(files_rect.x + 2, detail_y, files_rect.width - 4, 1, ' ', palette.text, palette.surface_alt, render.Style{});
+    renderer.drawSmartStr(files_rect.x + 3, detail_y, "selected: dashboard.zig  |  enter opens  |  q quits", palette.accent, palette.surface_alt, render.Style{ .bold = true });
+
+    style.drawStatus(renderer, palette, status.text);
+    try snapshot.print(allocator, &mock);
+}
+
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
+
+    if (try snapshot.isMode(init, allocator)) {
+        try renderSnapshot(allocator);
+        return;
+    }
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 512, 128);
     defer memory_manager.deinit();

@@ -10,6 +10,7 @@ const memory = zit.memory;
 const input = zit.input;
 const event = zit.event;
 const style = @import("example_style.zig");
+const snapshot = @import("example_snapshot.zig");
 
 // A single-file showcase that wires together the new widgets and drag-and-drop events:
 // live chart + autocomplete input + context menu + image render modes + draggable tokens.
@@ -337,10 +338,152 @@ fn handleAutocompleteSelection(choice: []const u8) void {
     state.log.push(text);
 }
 
-pub fn main() !void {
+fn renderSnapshot(allocator: std.mem.Allocator) !void {
+    var mock = try zit.testing.MockTerminal.init(allocator, 100, 35);
+    defer mock.deinit();
+
+    var chart = try widget.Chart.init(allocator);
+    defer chart.deinit();
+    chart.setType(.line);
+    chart.setPadding(1);
+    chart.setShowAxes(true);
+    try chart.addSeries("Throughput", &[_]f32{ 42, 48, 45, 51, 57, 64, 72, 68 }, null, null);
+    try chart.addSeries("Latency", &[_]f32{ 120, 110, 130, 125, 135, 128, 118, 122 }, null, null);
+
+    var autocomplete = try widget.AutocompleteInput.init(allocator, 64);
+    defer autocomplete.deinit();
+    const suggestions = [_][]const u8{
+        "latency p95",
+        "throughput rps",
+        "errors per minute",
+        "cache hit rate",
+        "active sessions",
+        "braille mode",
+    };
+    try autocomplete.setSuggestions(&suggestions);
+    autocomplete.setMaxVisible(6);
+    try autocomplete.input_field.setPlaceholder("Search metrics...");
+    autocomplete.input_field.setText("latency");
+    autocomplete.widget.focused = true;
+
+    var ctx_menu = try widget.ContextMenu.init(allocator);
+    defer ctx_menu.deinit();
+
+    var menu_actions = [_]MenuAction{
+        .theme_dark,
+        .theme_light,
+        .theme_contrast,
+        .chart_line,
+        .chart_bar,
+        .chart_area,
+        .chart_stacked_bar,
+        .chart_pie,
+        .chart_scatter,
+        .image_background,
+        .image_block,
+        .image_braille,
+    };
+    for (menu_actions, 0..) |act, i| {
+        try ctx_menu.addItem(menuLabel(act), true, @ptrCast(&menu_actions[i]));
+    }
+
+    var image = try widget.ImageWidget.init(allocator, 32, 12);
+    defer image.deinit();
+
+    const current_theme = theme.Theme.dark();
+    try applyTheme(current_theme, chart, autocomplete, ctx_menu);
+
+    var log = EventLog.init(allocator);
+    defer log.deinit();
+    log.push("search -> latency p95");
+    log.push("drag over chart @ (42,15)");
+    log.push("drop on chart (accepted) with Drag for spikes");
+
+    const drag_tokens = [_]DragToken{
+        .{ .label = "Drag for spikes", .accent = render.Color.rgb(246, 122, 95), .action = .energize_chart },
+        .{ .label = "Drag image mode", .accent = render.Color.rgb(102, 184, 255), .action = .flip_image },
+    };
+
+    const palette = style.showcasePalette();
+    const bg = palette.bg;
+    const surface = palette.surface;
+    const accent = palette.accent;
+    const text = palette.text;
+    const muted = palette.muted;
+
+    const renderer = &mock.renderer;
+    renderer.back.clear();
+    const inner = style.drawChrome(renderer, palette, "zit widget showcase", "featureful without visual noise");
+    const header_height: u16 = 5;
+    const chart_height: u16 = inner.height - header_height - 6;
+    const side_gap: u16 = 3;
+    const chart_width: u16 = inner.width - 27;
+    const chart_rect = layout.Rect.init(inner.x + 1, inner.y + header_height, chart_width, chart_height);
+    const info_rect = layout.Rect.init(chart_rect.x + chart_rect.width + side_gap, chart_rect.y, inner.width - chart_rect.width - side_gap - 2, chart_height);
+    const search_rect = layout.Rect.init(inner.x + 1, inner.y + 2, chart_width, header_height - 3);
+    const chart_widget_rect = layout.Rect.init(chart_rect.x, chart_rect.y + 2, chart_rect.width, chart_rect.height - 2);
+    const image_rect = layout.Rect.init(info_rect.x, info_rect.y + 2, info_rect.width, info_rect.height / 2);
+    const log_height: u16 = 3;
+    const log_y = inner.y + inner.height - log_height;
+    const log_rect = layout.Rect.init(inner.x + 1, log_y, inner.width - 2, log_height);
+
+    try autocomplete.widget.layout(search_rect);
+    try chart.widget.layout(chart_widget_rect);
+    try image.widget.layout(image_rect);
+
+    paintGradient(image, accent, 0.42);
+    image.setRenderMode(.background);
+    chart.setType(.line);
+
+    renderer.drawSmartStr(inner.x + 1, inner.y, "Chart + autocomplete + context menu + drag/drop", accent, bg, render.Style{ .bold = true });
+    renderer.drawSmartStr(inner.x + 1, inner.y + 1, "Keys: q quit | t theme | c chart | m image | right click menu | drag chips onto chart/image", muted, bg, render.Style{});
+
+    style.drawPanel(renderer, layout.Rect.init(chart_rect.x - 1, chart_rect.y - 1, chart_rect.width + 2, chart_rect.height + 2), palette, "Live Chart", accent);
+    style.drawPanel(renderer, layout.Rect.init(info_rect.x - 1, info_rect.y - 1, info_rect.width + 2, info_rect.height + 2), palette, "Image + Drag Targets", palette.success);
+
+    autocomplete.widget.markDirty();
+    chart.widget.markDirty();
+    image.widget.markDirty();
+    try autocomplete.widget.draw(renderer);
+    try chart.widget.draw(renderer);
+    try image.widget.draw(renderer);
+
+    for (drag_tokens, 0..) |token, idx| {
+        const token_x = info_rect.x + 1;
+        const token_y = image_rect.y + image_rect.height + 1 + @as(u16, @intCast(idx)) * 3;
+        const token_w: u16 = info_rect.width - 2;
+        const rect = layout.Rect.init(token_x, token_y, token_w, 2);
+        renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', text, token.accent, render.Style{});
+        renderer.drawBox(rect.x, rect.y, rect.width, rect.height, render.BorderStyle.rounded, text, token.accent, render.Style{});
+        renderer.drawSmartStr(rect.x + 1, rect.y, token.label, render.Color.named(render.NamedColor.black), token.accent, render.Style{ .bold = true });
+    }
+
+    renderer.drawSmartStr(log_rect.x, log_rect.y - 1, "Event log (drag + menu + search)", accent, bg, render.Style{ .bold = true });
+    const visible_log_lines = @min(log.lines.items.len, @as(usize, log_rect.height));
+    const start_line = if (visible_log_lines > 0 and log.lines.items.len > visible_log_lines) log.lines.items.len - visible_log_lines else 0;
+    var row: u16 = log_rect.y;
+    var line: usize = 0;
+    while (line < log.lines.items.len - start_line and row < log_rect.y + log_rect.height) : ({
+        line += 1;
+        row += 1;
+    }) {
+        const msg = log.lines.items[start_line + line];
+        renderer.drawSmartStr(log_rect.x, row, msg, muted, surface, render.Style{});
+    }
+
+    renderer.drawSmartStr(inner.x + 1, log_rect.y + log_rect.height, "Theme: dark | Chart: line | Image: background | Search: latency p95", muted, bg, render.Style{});
+    try snapshot.print(allocator, &mock);
+}
+
+pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
+
+    if (try snapshot.isMode(init, allocator)) {
+        try renderSnapshot(allocator);
+        return;
+    }
 
     var memory_manager = try memory.MemoryManager.init(allocator, 1024 * 1024, 128);
     defer memory_manager.deinit();
@@ -390,6 +533,7 @@ pub fn main() !void {
     };
     try autocomplete.setSuggestions(&suggestions);
     autocomplete.setMaxVisible(6);
+    try autocomplete.input_field.setPlaceholder("Search metrics...");
     autocomplete.widget.focused = true;
     autocomplete.setOnSelect(handleAutocompleteSelection);
 
@@ -482,17 +626,19 @@ pub fn main() !void {
         const inner = style.drawChrome(&renderer, palette, "zit widget showcase", "featureful without visual noise");
         const header_height: u16 = if (inner.height > 6) 5 else inner.height / 3;
         const chart_height: u16 = if (inner.height > 20) inner.height - header_height - 6 else inner.height / 2;
-        const chart_width: u16 = if (inner.width > 50) inner.width - 24 else inner.width;
+        const side_gap: u16 = if (inner.width > 50) 3 else 0;
+        const chart_width: u16 = if (inner.width > 50 and inner.width > 27) inner.width - 27 else inner.width;
         const chart_rect = layout.Rect.init(inner.x + 1, inner.y + header_height, chart_width, chart_height);
-        const info_rect = layout.Rect.init(chart_rect.x + chart_rect.width + 1, chart_rect.y, inner.width - chart_rect.width - 3, chart_height);
-        const search_rect = layout.Rect.init(inner.x + 1, inner.y + 1, chart_width, header_height - 2);
+        const info_rect = layout.Rect.init(chart_rect.x + chart_rect.width + side_gap, chart_rect.y, if (inner.width > chart_width + side_gap + 2) inner.width - chart_width - side_gap - 2 else 0, chart_height);
+        const search_rect = layout.Rect.init(inner.x + 1, inner.y + 2, chart_width, if (header_height > 3) header_height - 3 else 1);
+        const chart_widget_rect = layout.Rect.init(chart_rect.x, chart_rect.y + 2, chart_rect.width, if (chart_rect.height > 2) chart_rect.height - 2 else chart_rect.height);
         const image_rect = layout.Rect.init(info_rect.x, info_rect.y + 2, info_rect.width, info_rect.height / 2);
         const log_height: u16 = if (inner.height > 6) 3 else 1;
         const log_y = if (inner.height > log_height) inner.y + inner.height - log_height else inner.y;
         const log_rect = layout.Rect.init(inner.x + 1, log_y, inner.width - 2, log_height);
 
         try autocomplete.widget.layout(search_rect);
-        try chart.widget.layout(chart_rect);
+        try chart.widget.layout(chart_widget_rect);
         try image.widget.layout(image_rect);
 
         paintGradient(image, accent, phase);
