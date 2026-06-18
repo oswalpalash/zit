@@ -101,6 +101,14 @@ pub const Button = struct {
         self.on_click = callback;
     }
 
+    fn activeRect(self: *const Button) layout_module.Rect {
+        const rect = self.widget.rect;
+        if (self.border != .none and rect.width > 2 and rect.height > 2) {
+            return rect.shrink(layout_module.EdgeInsets.all(1));
+        }
+        return rect;
+    }
+
     /// Apply theme defaults for button colors and text style.
     pub fn setTheme(self: *Button, theme_value: theme.Theme) void {
         const colors = theme.controlColors(theme_value);
@@ -181,8 +189,7 @@ pub const Button = struct {
         switch (event) {
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1) {
-                    // Check if click is within button bounds
-                    if (self.widget.rect.contains(mouse.x, mouse.y)) {
+                    if (self.activeRect().contains(mouse.x, mouse.y)) {
                         if (self.on_click) |callback| {
                             callback();
                         }
@@ -292,7 +299,34 @@ test "button handles decoded terminal mouse coordinates at rendered origin" {
     button.widget.rect = layout_module.Rect.init(0, 0, 6, 3);
 
     const event = (try input.decodeEventFromBytes("\x1b[<0;1;1M")).?;
-    try std.testing.expect(try button.widget.handleEvent(event));
+    try std.testing.expect(!try button.widget.handleEvent(event));
+    try std.testing.expectEqual(@as(usize, 0), test_button_presses);
+
+    const inner_event = (try input.decodeEventFromBytes("\x1b[<0;2;2M")).?;
+    try std.testing.expect(try button.widget.handleEvent(inner_event));
+    try std.testing.expectEqual(@as(usize, 1), test_button_presses);
+}
+
+test "button rejects visible border row clicks" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Go");
+    defer button.deinit();
+
+    test_button_presses = 0;
+    const callback = struct {
+        fn call() void {
+            test_button_presses += 1;
+        }
+    }.call;
+    button.setOnClick(callback);
+    button.widget.rect = layout_module.Rect.init(4, 6, 12, 3);
+
+    const top_border = input.Event{ .mouse = input.MouseEvent.init(.press, 8, 6, 1, 0) };
+    try std.testing.expect(!try button.widget.handleEvent(top_border));
+    const inner = input.Event{ .mouse = input.MouseEvent.init(.press, 8, 7, 1, 0) };
+    try std.testing.expect(try button.widget.handleEvent(inner));
+    const bottom_border = input.Event{ .mouse = input.MouseEvent.init(.press, 8, 8, 1, 0) };
+    try std.testing.expect(!try button.widget.handleEvent(bottom_border));
     try std.testing.expectEqual(@as(usize, 1), test_button_presses);
 }
 

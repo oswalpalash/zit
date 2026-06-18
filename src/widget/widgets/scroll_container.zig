@@ -385,20 +385,17 @@ pub const ScrollContainer = struct {
 
         // Adjust for border
         if (self.show_border) {
-            content_rect.x += 1;
-            content_rect.y += 1;
-            content_rect.width -= 2;
-            content_rect.height -= 2;
+            content_rect = content_rect.shrink(layout_module.EdgeInsets.all(1));
         }
 
         // Adjust for horizontal scrollbar
         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-            content_rect.height -= 1;
+            if (content_rect.height > 0) content_rect.height -= 1;
         }
 
         // Adjust for vertical scrollbar
         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-            content_rect.width -= 1;
+            if (content_rect.width > 0) content_rect.width -= 1;
         }
 
         return content_rect;
@@ -556,28 +553,32 @@ pub const ScrollContainer = struct {
         // Layout scrollbars
         if (self.show_h_scrollbar) {
             if (self.h_scrollbar) |h_scrollbar_widget| {
-                var h_scrollbar_rect = rect;
-                h_scrollbar_rect.y = rect.y + rect.height - 1;
-                h_scrollbar_rect.height = 1;
+                var h_scrollbar_rect = layout_module.Rect.init(rect.x, rect.y, 0, 0);
+                if (rect.height > 0) {
+                    h_scrollbar_rect = rect;
+                    h_scrollbar_rect.y = rectEndCoord(rect.y, rect.height);
+                    h_scrollbar_rect.height = 1;
 
-                if (self.show_v_scrollbar) {
-                    h_scrollbar_rect.width -= 1; // Make room for vertical scrollbar
+                    if (self.show_v_scrollbar and h_scrollbar_rect.width > 0) {
+                        h_scrollbar_rect.width -= 1; // Make room for vertical scrollbar
+                    }
                 }
-
                 try h_scrollbar_widget.widget.layout(h_scrollbar_rect);
             }
         }
 
         if (self.show_v_scrollbar) {
             if (self.v_scrollbar) |v_scrollbar_widget| {
-                var v_scrollbar_rect = rect;
-                v_scrollbar_rect.x = rect.x + rect.width - 1;
-                v_scrollbar_rect.width = 1;
+                var v_scrollbar_rect = layout_module.Rect.init(rect.x, rect.y, 0, 0);
+                if (rect.width > 0) {
+                    v_scrollbar_rect = rect;
+                    v_scrollbar_rect.x = rectEndCoord(rect.x, rect.width);
+                    v_scrollbar_rect.width = 1;
 
-                if (self.show_h_scrollbar) {
-                    v_scrollbar_rect.height -= 1; // Make room for horizontal scrollbar
+                    if (self.show_h_scrollbar and v_scrollbar_rect.height > 0) {
+                        v_scrollbar_rect.height -= 1; // Make room for horizontal scrollbar
+                    }
                 }
-
                 try v_scrollbar_widget.widget.layout(v_scrollbar_rect);
             }
         }
@@ -648,6 +649,12 @@ pub const ScrollContainer = struct {
             (self.show_v_scrollbar and self.content_height > self.getViewportHeight());
     }
 };
+
+fn rectEndCoord(start: u16, size: u16) u16 {
+    if (size == 0) return start;
+    const end = @as(u32, start) + @as(u32, size) - 1;
+    return @intCast(@min(end, std.math.maxInt(u16)));
+}
 
 test "scroll container init/deinit" {
     const alloc = std.testing.allocator;
@@ -725,4 +732,52 @@ test "scroll container ignores scroll without content" {
     const scroll_event = input.Event{ .mouse = input.MouseEvent.init(.scroll_down, 1, 1, 0, 0) };
     try std.testing.expect(!try container.widget.handleEvent(scroll_event));
     try std.testing.expectEqual(@as(i16, 0), container.v_offset);
+}
+
+test "scroll container tolerates tiny layouts with overflowing content" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, renderer: *render.Renderer) anyerror!void {
+            renderer.drawStr(0, 0, "overflowing content", render.Color.named(.white), render.Color.named(.default), render.Style{});
+        }
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(80, 24);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+
+    var renderer = try render.Renderer.init(alloc, 4, 4);
+    defer renderer.deinit();
+
+    const tiny_rects = [_]layout_module.Rect{
+        layout_module.Rect.init(0, 0, 0, 0),
+        layout_module.Rect.init(0, 0, 1, 1),
+        layout_module.Rect.init(0, 0, 2, 1),
+        layout_module.Rect.init(0, 0, 1, 2),
+    };
+
+    for (tiny_rects) |rect| {
+        try container.widget.layout(rect);
+        try container.widget.draw(&renderer);
+    }
 }

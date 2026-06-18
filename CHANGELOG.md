@@ -45,6 +45,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Polished widget examples (`system-monitor`, `file-manager-example`, `widget-showcase`) now expose deterministic `--snapshot` frames and are included in the default four-pass visual repeat gate.
 
 ### Fixed
+- `ScrollContainer` now uses saturating tiny-layout geometry for content and scrollbar rects, preventing unsigned underflow when dynamic terminal resize collapses a scrollable region to zero or one cell.
+- Mouse hit testing for bordered interactive controls now matches their rendered content area: button and text editor borders no longer fire content clicks, and checkbox glyphs draw inside their assigned clickable rect.
 - `MemoryManager` aggregate stats now update through the arena and widget-pool allocators it hands out, so allocation/deallocation counts and current/peak managed usage no longer stay at zero in real applications.
 - Terminal mouse events are now normalized from protocol 1-based coordinates into Zit screen coordinates at decode time, fixing clickable widgets that responded one row/column away from their rendered position.
 - DropdownMenu and `widget_test` now tolerate aggressively tiny resize layouts without unsigned underflow during public PTY stress checks.

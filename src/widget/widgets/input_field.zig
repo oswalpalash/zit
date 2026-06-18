@@ -443,6 +443,11 @@ pub const InputField = struct {
         self.on_submit = callback;
     }
 
+    fn contentRect(self: *const InputField) layout_module.Rect {
+        const border_adjust: u16 = if (self.show_border) 1 else 0;
+        return self.widget.rect.shrink(layout_module.EdgeInsets.all(border_adjust));
+    }
+
     /// Assign validation rules and a logical field name for error reporting.
     pub fn setValidation(self: *InputField, field_name: []const u8, rules: []const form.Rule, realtime: bool) !void {
         try self.setValidationFieldName(field_name);
@@ -735,7 +740,7 @@ pub const InputField = struct {
 
             // Handle clicks to set focus
             if (mouse_event.action == .press and mouse_event.button == 1) {
-                return self.widget.rect.contains(mouse_event.x, mouse_event.y);
+                return self.contentRect().contains(mouse_event.x, mouse_event.y);
             }
         }
 
@@ -993,4 +998,16 @@ test "input field capacity does not split UTF-8 sequences" {
     try std.testing.expectEqualStrings("é", field.getText());
     try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(0x1F642, .{}) }));
     try std.testing.expectEqualStrings("é", field.getText());
+}
+
+test "input field mouse focus ignores border rows" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+
+    try field.widget.layout(layout_module.Rect.init(2, 3, 12, 3));
+
+    try std.testing.expect(!try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 3, 1, 0) }));
+    try std.testing.expect(try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) }));
+    try std.testing.expect(!try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 5, 1, 0) }));
 }

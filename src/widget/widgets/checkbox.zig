@@ -139,12 +139,12 @@ pub const Checkbox = struct {
         const fg = styled.fg;
         const bg = styled.bg;
 
-        // Draw checkbox
-        renderer.drawChar(rect.x, rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});
-        if (rect.x > 0) {
-            renderer.drawChar(rect.x - 1, rect.y, '[', fg, bg, render.Style{});
+        // Draw checkbox inside the assigned rect so visual and mouse bounds match.
+        if (rect.width >= 3) {
+            renderer.drawChar(rect.x, rect.y, '[', fg, bg, render.Style{});
+            renderer.drawChar(rect.x + 1, rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});
+            renderer.drawChar(rect.x + 2, rect.y, ']', fg, bg, render.Style{});
         }
-        renderer.drawChar(rect.x + 1, rect.y, ']', fg, bg, render.Style{});
 
         // Draw label
         if (self.label.len > 0 and rect.width > 3) {
@@ -152,7 +152,7 @@ pub const Checkbox = struct {
             var truncated_text: [256]u8 = undefined;
             const label_width = available_width;
             const clipped = text_metrics.clipWithEllipsis(self.label, label_width, &truncated_text);
-            renderer.drawStr(rect.x + 3, rect.y, clipped.text, fg, bg, render.Style{});
+            renderer.drawStr(rect.x + 4, rect.y, clipped.text, fg, bg, render.Style{});
         }
     }
 
@@ -247,15 +247,15 @@ test "checkbox does not ellipsize label that exactly fits preferred width" {
     var checkbox = try Checkbox.init(alloc, "Safe mode");
     defer checkbox.deinit();
 
-    try checkbox.widget.layout(layout_module.Rect.init(1, 0, 13, 1));
+    try checkbox.widget.layout(layout_module.Rect.init(1, 0, 14, 1));
 
-    var renderer = try render.Renderer.init(alloc, 14, 1);
+    var renderer = try render.Renderer.init(alloc, 15, 1);
     defer renderer.deinit();
     try checkbox.widget.draw(&renderer);
 
     const expected = "Safe mode";
     for (expected, 0..) |char, idx| {
-        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 4)), 0).*.codepoint());
+        try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 5)), 0).*.codepoint());
     }
 }
 

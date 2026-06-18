@@ -3,9 +3,9 @@
 
 This sends real SGR mouse sequences through a pseudo-terminal. It first proves
 that terminal protocol coordinates are normalized to Zit's zero-based screen
-coordinates, then clicks the rendered demo button one row above and on-target.
-The above-target click must not fire; the on-target click must update visible
-status text.
+coordinates, then clicks rendered demo controls above, on the border, and on
+the content row. Above-target and border-row clicks must not fire; content
+clicks must update visible status text.
 """
 
 from __future__ import annotations
@@ -72,6 +72,19 @@ def wait_for_text(master_fd: int, pid: int, output: bytearray, label: str, marke
         f"{label} did not emit marker {marker!r} within {timeout:.1f}s\n"
         f"--- terminal tail ---\n{tail_text(bytes(output))}"
     )
+
+
+def assert_absent_after(master_fd: int, pid: int, output: bytearray, label: str, forbidden: str, delay: float) -> None:
+    deadline = time.monotonic() + delay
+    while time.monotonic() < deadline:
+        output.extend(read_available(master_fd, 0.05))
+        assert_healthy(pid, output, label)
+
+    if forbidden in stripped_text(bytes(output)):
+        raise RuntimeError(
+            f"{label} emitted forbidden marker {forbidden!r}\n"
+            f"--- terminal tail ---\n{tail_text(bytes(output))}"
+        )
 
 
 def quit_child(master_fd: int, pid: int, output: bytearray, label: str, timeout: float) -> None:
@@ -149,19 +162,23 @@ def run_demo_click_probe(root: Path, timeout: float, quit_timeout: float) -> byt
         wait_for_text(master_fd, pid, output, "demo", "Click Me", timeout)
 
         # Demo button internal rect at 120x40: x=4..29, y=9..11.
-        # SGR coordinates are one-based, so the terminal row above is 9 and
-        # the centered on-target row is 11.
+        # SGR coordinates are one-based. The top border is terminal row 10;
+        # only the visual content row at terminal row 11 should activate.
         send_click(master_fd, 18, 9)
-        output.extend(read_available(master_fd, 0.35))
-        assert_healthy(pid, output, "demo")
-        if "Button clicked" in stripped_text(bytes(output)):
-            raise RuntimeError(
-                "demo accepted a click one row above the rendered button\n"
-                f"--- terminal tail ---\n{tail_text(bytes(output))}"
-            )
+        assert_absent_after(master_fd, pid, output, "demo", "Button clicked", 0.25)
+
+        send_click(master_fd, 18, 10)
+        assert_absent_after(master_fd, pid, output, "demo", "Button clicked", 0.25)
 
         send_click(master_fd, 18, 11)
         wait_for_text(master_fd, pid, output, "demo", "Button clicked", timeout)
+
+        # Demo checkbox visual rect at 120x40: terminal row 14, columns 6..21.
+        send_click(master_fd, 10, 13)
+        assert_absent_after(master_fd, pid, output, "demo", "enabled", 0.25)
+        send_click(master_fd, 10, 14)
+        wait_for_text(master_fd, pid, output, "demo", "enabled", timeout)
+
         quit_child(master_fd, pid, output, "demo", quit_timeout)
         return bytes(output)
     finally:
@@ -191,7 +208,7 @@ def main() -> int:
     print(f"ok mouse smoke: input_test normalized SGR 1x1 to 0x0 ({len(input_data)} bytes)")
 
     demo_data = run_demo_click_probe(root, args.timeout, args.quit_timeout)
-    print(f"ok mouse smoke: demo rejected above-button click and accepted on-button click ({len(demo_data)} bytes)")
+    print(f"ok mouse smoke: demo rejected above/border clicks and accepted content clicks ({len(demo_data)} bytes)")
     return 0
 
 

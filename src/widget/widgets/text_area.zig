@@ -167,6 +167,11 @@ pub const TextArea = struct {
         self.show_border = border != .none;
     }
 
+    fn contentRect(self: *const TextArea) layout_module.Rect {
+        const border_adjust: u16 = if (self.show_border) 1 else 0;
+        return self.widget.rect.shrink(layout_module.EdgeInsets.all(border_adjust));
+    }
+
     pub fn setOnChange(self: *TextArea, callback: *const fn ([]const u8) void) void {
         self.on_change = callback;
     }
@@ -1059,7 +1064,7 @@ pub const TextArea = struct {
         } else if (event == .mouse) {
             const mouse_event = event.mouse;
             if (mouse_event.action == .press and mouse_event.button == 1) {
-                return self.widget.rect.contains(mouse_event.x, mouse_event.y);
+                return self.contentRect().contains(mouse_event.x, mouse_event.y);
             }
         }
 
@@ -1300,4 +1305,16 @@ test "text area max bytes does not split UTF-8 input" {
     try std.testing.expectEqualStrings("é", area.getText());
     try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(0x1F642, .{}) }));
     try std.testing.expectEqualStrings("é", area.getText());
+}
+
+test "text area mouse focus ignores border rows" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    try std.testing.expect(!try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 3, 1, 0) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) }));
+    try std.testing.expect(!try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 7, 1, 0) }));
 }
