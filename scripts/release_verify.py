@@ -132,6 +132,7 @@ def main() -> int:
     docs_dir = root / "zig-out" / "docs-release"
     if docs_dir.exists():
         shutil.rmtree(docs_dir)
+    docs_dir.parent.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
