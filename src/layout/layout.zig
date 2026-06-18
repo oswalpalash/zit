@@ -587,9 +587,10 @@ pub const FlexLayout = struct {
 
     /// Add a child element
     pub fn addChild(self: *FlexLayout, child: FlexChild) !void {
+        const new_len = self.children.items.len + 1;
+        try self.naturals_scratch.ensureTotalCapacity(self.base.allocator, new_len);
+        try self.assigned_scratch.ensureTotalCapacity(self.base.allocator, new_len);
         try self.children.append(self.base.allocator, child);
-        self.naturals_scratch.ensureTotalCapacity(self.base.allocator, self.children.items.len) catch {};
-        self.assigned_scratch.ensureTotalCapacity(self.base.allocator, self.children.items.len) catch {};
         self.cache.valid = false;
     }
 
@@ -1777,6 +1778,38 @@ test "flex layout distributes space and aligns children" {
     try std.testing.expectEqual(@as(u16, 1), rec3.rect.y);
     try std.testing.expectEqual(@as(u16, 11), rec3.rect.width);
     try std.testing.expectEqual(@as(u16, 3), rec3.rect.height);
+}
+
+test "flex layout addChild is transactional when scratch allocation fails" {
+    const allocator = std.testing.allocator;
+
+    const Dummy = struct {
+        fn layout(_: *anyopaque, constraints: Constraints) Size {
+            return constraints.constrain(1, 1);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement() LayoutElement {
+            return LayoutElement{
+                .layoutFn = layout,
+                .renderFn = render,
+                .ctx = undefined,
+            };
+        }
+    };
+
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    layout.base.allocator = failing.allocator();
+    defer layout.base.allocator = allocator;
+    try std.testing.expectError(error.OutOfMemory, layout.addChild(FlexChild.init(Dummy.asElement(), 0)));
+
+    try std.testing.expectEqual(@as(usize, 0), layout.children.items.len);
+    try std.testing.expectEqual(@as(usize, 0), layout.naturals_scratch.items.len);
+    try std.testing.expectEqual(@as(usize, 0), layout.assigned_scratch.items.len);
 }
 
 test "flex layout supports rtl rows" {

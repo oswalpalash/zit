@@ -56,6 +56,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.
 - Real-world and widget-gallery examples now default to interactive terminal sessions that render their UI until `q`; automation uses explicit `--snapshot` mode.
+- Flex layout child insertion now reserves internal measurement scratch storage before mutating the child list, making allocation failures transactional instead of leaving partially registered children.
 - Terminal and input diagnostics now flush their initial frames before waiting for raw-mode input.
 - Grapheme rendering no longer returns slices into by-value temporaries, fixing corrupted terminal frames and invalid borrowed memory during render output assembly.
 - File browser path normalization now frees realpath sentinel allocations with the correct allocation shape.
