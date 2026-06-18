@@ -70,16 +70,51 @@ pub const Markdown = struct {
     }
 
     pub fn setText(self: *Markdown, text: []const u8) !void {
-        self.clearLines();
-        self.allocator.free(self.content);
-        self.content = try self.allocator.dupe(u8, text);
+        const next_content = try self.allocator.dupe(u8, text);
+        const old_content = self.content;
+        var old_lines = self.lines;
+
+        self.content = next_content;
+        self.lines = std.ArrayList(Line).empty;
+        errdefer {
+            self.clearLines();
+            self.lines.deinit(self.allocator);
+            self.allocator.free(next_content);
+            self.content = old_content;
+            self.lines = old_lines;
+        }
+
         try self.parse();
+
+        for (old_lines.items) |*line| {
+            line.deinit(self.allocator);
+        }
+        old_lines.deinit(self.allocator);
+        self.allocator.free(old_content);
+        self.widget.markDirty();
     }
 
     pub fn setTheme(self: *Markdown, theme: theme_mod.Theme) !void {
+        if (std.meta.eql(self.theme, theme)) return;
+        const old_theme = self.theme;
+        var old_lines = self.lines;
+
         self.theme = theme;
-        self.clearLines();
+        self.lines = std.ArrayList(Line).empty;
+        errdefer {
+            self.clearLines();
+            self.lines.deinit(self.allocator);
+            self.theme = old_theme;
+            self.lines = old_lines;
+        }
+
         try self.parse();
+
+        for (old_lines.items) |*line| {
+            line.deinit(self.allocator);
+        }
+        old_lines.deinit(self.allocator);
+        self.widget.markDirty();
     }
 
     fn clearLines(self: *Markdown) void {
@@ -264,4 +299,17 @@ test "markdown renders headings and bullets" {
     try std.testing.expectEqual(@as(u21, 'T'), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).codepoint());
     try std.testing.expectEqual(@as(u21, '•'), renderer.back.getCell(0, 1).codepoint());
+}
+
+test "markdown setText preserves parsed content on allocation failure" {
+    const alloc = std.testing.allocator;
+    var md = try Markdown.init(alloc, "# Stable\n- item");
+    defer md.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    md.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, md.setText("## Replacement\n- next"));
+    try std.testing.expectEqualStrings("# Stable\n- item", md.content);
+    try std.testing.expect(md.lines.items.len > 0);
 }

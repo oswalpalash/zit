@@ -106,20 +106,25 @@ pub const TextArea = struct {
     }
 
     pub fn setPlaceholder(self: *TextArea, placeholder: []const u8) !void {
-        if (self.placeholder_owned and self.placeholder.len > 0) {
-            self.allocator.free(self.placeholder);
-        }
-
         if (placeholder.len == 0) {
+            if (self.placeholder_owned and self.placeholder.len > 0) {
+                self.allocator.free(self.placeholder);
+            }
             self.placeholder = "";
             self.placeholder_owned = false;
             self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+            self.widget.markDirty();
             return;
         }
 
-        self.placeholder = try self.allocator.dupe(u8, placeholder);
+        const next = try self.allocator.dupe(u8, placeholder);
+        if (self.placeholder_owned and self.placeholder.len > 0) {
+            self.allocator.free(self.placeholder);
+        }
+        self.placeholder = next;
         self.placeholder_owned = true;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+        self.widget.markDirty();
     }
 
     fn accessibilityLabel(self: *TextArea) []const u8 {
@@ -1135,4 +1140,17 @@ test "text area setText resets cursor and scroll" {
     try std.testing.expectEqual(@as(usize, 0), area.scroll_row);
     try std.testing.expectEqual(@as(usize, 0), area.scroll_col);
     try std.testing.expectEqual(@as(?TextArea.Selection, null), area.selection);
+}
+
+test "text area placeholder survives allocation failure" {
+    const alloc = std.testing.allocator;
+    var area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setPlaceholder("stable");
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    area.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, area.setPlaceholder("replacement"));
+    try std.testing.expectEqualStrings("stable", area.placeholder);
 }

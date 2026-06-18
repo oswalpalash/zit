@@ -563,6 +563,181 @@ def render_svg(screen: TerminalEmulator, cell_w: int = 9, cell_h: int = 16, padd
     return "\n".join(lines) + "\n"
 
 
+def polished_svg(title: str, subtitle: str, accent: str, body: List[str]) -> str:
+    width = 1200
+    height = 680
+    chrome_h = 46
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<defs>',
+        '<linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">',
+        '<stop offset="0" stop-color="#111827"/>',
+        '<stop offset="1" stop-color="#070b12"/>',
+        '</linearGradient>',
+        '<filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">',
+        '<feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.38"/>',
+        '</filter>',
+        '</defs>',
+        '<rect width="1200" height="680" fill="#05070b"/>',
+        '<rect x="42" y="38" width="1116" height="604" rx="22" fill="url(#surface)" stroke="#263244" stroke-width="1.5" filter="url(#shadow)"/>',
+        f'<rect x="42" y="38" width="1116" height="{chrome_h}" rx="22" fill="{accent}"/>',
+        f'<rect x="42" y="{38 + chrome_h - 18}" width="1116" height="18" fill="{accent}"/>',
+        '<circle cx="72" cy="61" r="6" fill="#07111c" opacity="0.72"/>',
+        '<circle cx="94" cy="61" r="6" fill="#07111c" opacity="0.52"/>',
+        '<circle cx="116" cy="61" r="6" fill="#07111c" opacity="0.36"/>',
+        f'<text x="150" y="66" font-family="monospace" font-size="18" font-weight="700" fill="#061018">{html.escape(title)}</text>',
+        f'<text x="1128" y="66" text-anchor="end" font-family="monospace" font-size="13" fill="#061018" opacity="0.76">{html.escape(subtitle)}</text>',
+    ]
+    lines.extend(body)
+    lines.append("</svg>")
+    return "\n".join(lines) + "\n"
+
+
+def txt(x: int, y: int, value: str, color: str = "#dbe7f3", size: int = 18, weight: int = 500, anchor: str = "start") -> str:
+    return (
+        f'<text x="{x}" y="{y}" text-anchor="{anchor}" '
+        f'font-family="monospace" '
+        f'font-size="{size}" font-weight="{weight}" fill="{color}">{html.escape(value)}</text>'
+    )
+
+
+def panel(x: int, y: int, w: int, h: int, title: str, accent: str) -> List[str]:
+    return [
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="#0b111c" stroke="#233047" stroke-width="1"/>',
+        f'<rect x="{x}" y="{y}" width="{w}" height="36" rx="12" fill="#111a2a"/>',
+        f'<rect x="{x}" y="{y + 25}" width="{w}" height="11" fill="#111a2a"/>',
+        f'<rect x="{x + 16}" y="{y + 13}" width="8" height="8" rx="2" fill="{accent}"/>',
+        txt(x + 34, y + 24, title, "#e8f0fb", 14, 700),
+    ]
+
+
+def bar(x: int, y: int, w: int, value: float, accent: str, label: str) -> List[str]:
+    filled = int(w * max(0.0, min(1.0, value)))
+    return [
+        txt(x, y - 8, label, "#8fa3bd", 13, 600),
+        f'<rect x="{x}" y="{y}" width="{w}" height="12" rx="6" fill="#1a2435"/>',
+        f'<rect x="{x}" y="{y}" width="{filled}" height="12" rx="6" fill="{accent}"/>',
+    ]
+
+
+def polished_system_monitor() -> str:
+    accent = "#7dd3fc"
+    body: List[str] = []
+    body.extend(panel(72, 112, 404, 240, "Service Health", accent))
+    body.extend(bar(104, 176, 320, 0.78, "#34d399", "CPU     78%"))
+    body.extend(bar(104, 230, 320, 0.62, "#fbbf24", "Memory  62%"))
+    body.extend(bar(104, 284, 320, 0.36, "#7dd3fc", "Network 36%"))
+    body.extend(panel(508, 112, 578, 240, "Process Table", accent))
+    body.append(f'<rect x="532" y="164" width="530" height="34" rx="7" fill="#132033"/>')
+    for x, heading in ((552, "PROCESS"), (790, "CPU"), (890, "MEM"), (1000, "STATE")):
+        body.append(txt(x, 187, heading, "#7dd3fc", 13, 800))
+    rows = [
+        ("renderer", "41.2", "118 MB", "steady", "#34d399"),
+        ("input-loop", "12.8", "42 MB", "ready", "#7dd3fc"),
+        ("layout", "8.4", "51 MB", "clean", "#c4b5fd"),
+        ("watcher", "2.1", "19 MB", "idle", "#94a3b8"),
+    ]
+    y = 222
+    for name, cpu, mem, state, color in rows:
+        body.append(f'<rect x="532" y="{y - 22}" width="530" height="34" rx="7" fill="#0e1726"/>')
+        body.append(txt(552, y, name, "#e5eef8", 15, 650))
+        body.append(txt(802, y, cpu, "#dbe7f3", 15, 550, "end"))
+        body.append(txt(930, y, mem, "#dbe7f3", 15, 550, "end"))
+        body.append(txt(1000, y, state, color, 15, 700))
+        y += 38
+    body.extend(panel(72, 390, 1014, 188, "Latency + Event Stream", accent))
+    points = "M110 520 L145 512 L180 528 L215 496 L250 504 L285 478 L320 494 L355 458 L390 474 L425 456 L460 470 L495 444 L530 456 L565 438 L600 454 L635 430 L670 442 L705 426 L740 434 L775 418 L810 430 L845 416 L880 426 L915 410 L950 424 L985 408 L1020 418"
+    body.append(f'<path d="{points}" fill="none" stroke="#7dd3fc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>')
+    body.append(f'<path d="{points} L1020 542 L110 542 Z" fill="#7dd3fc" opacity="0.08"/>')
+    body.append(txt(104, 432, "p95 frame time", "#8fa3bd", 13, 600))
+    body.append(txt(104, 462, "1.18ms", "#e8f0fb", 34, 800))
+    body.append(txt(844, 552, "automatic resize + diff renderer", "#8fa3bd", 14, 650))
+    return polished_svg("zit system monitor", "live widgets / stable frames", accent, body)
+
+
+def polished_file_manager() -> str:
+    accent = "#86efac"
+    body: List[str] = []
+    body.extend(panel(72, 112, 340, 466, "Workspace Tree", accent))
+    tree = [
+        ("zit/", "#e8f0fb", 0),
+        ("examples/", "#86efac", 1),
+        ("realworld/", "#dbe7f3", 2),
+        ("file_manager.zig", "#dbe7f3", 3),
+        ("widget_gallery.zig", "#dbe7f3", 3),
+        ("src/", "#86efac", 1),
+        ("widget/", "#dbe7f3", 2),
+        ("render/", "#dbe7f3", 2),
+    ]
+    y = 176
+    for label, color, indent in tree:
+        if label == "file_manager.zig":
+            body.append(f'<rect x="96" y="{y - 23}" width="288" height="32" rx="7" fill="#183322"/>')
+        body.append(txt(106 + indent * 22, y, label, color, 15, 700 if indent < 2 else 560))
+        y += 42
+    body.extend(panel(444, 112, 642, 466, "Directory View", accent))
+    body.append(f'<rect x="472" y="164" width="586" height="36" rx="8" fill="#172033"/>')
+    for x, heading in ((494, "NAME"), (756, "TYPE"), (874, "SIZE"), (986, "MODIFIED")):
+        body.append(txt(x, 188, heading, "#86efac", 13, 800))
+    files = [
+        ("assets/", "dir", "-", "now"),
+        ("build.zig", "file", "13 KB", "2m"),
+        ("README.md", "file", "29 KB", "5m"),
+        ("scripts/", "dir", "-", "8m"),
+        ("zig-out/", "dir", "-", "local"),
+    ]
+    y = 234
+    for idx, row in enumerate(files):
+        bg = "#102016" if idx == 2 else "#0e1726"
+        body.append(f'<rect x="472" y="{y - 24}" width="586" height="36" rx="8" fill="{bg}"/>')
+        body.append(txt(494, y, row[0], "#e8f0fb", 15, 650))
+        body.append(txt(756, y, row[1], "#8fa3bd", 15, 550))
+        body.append(txt(914, y, row[2], "#dbe7f3", 15, 550, "end"))
+        body.append(txt(986, y, row[3], "#8fa3bd", 15, 550))
+        y += 48
+    body.append(f'<rect x="472" y="488" width="586" height="58" rx="10" fill="#101827" stroke="#263244"/>')
+    body.append(txt(494, 523, "typeahead: rea -> README.md  |  enter opens  |  q quits", "#86efac", 15, 700))
+    return polished_svg("zit file manager", "tree view / typeahead / detail pane", accent, body)
+
+
+def polished_showcase() -> str:
+    accent = "#f59e0b"
+    body: List[str] = []
+    body.extend(panel(72, 112, 308, 222, "Controls", accent))
+    body.append(f'<rect x="104" y="176" width="116" height="42" rx="9" fill="#f59e0b"/>')
+    body.append(txt(162, 203, "Deploy", "#111827", 15, 800, "middle"))
+    body.append(txt(104, 256, "[x] accessibility", "#e8f0fb", 15, 650))
+    body.extend(bar(104, 292, 220, 0.72, "#f59e0b", "progress 72%"))
+    body.extend(panel(414, 112, 308, 222, "Menus + Toasts", "#7dd3fc"))
+    body.append(f'<rect x="446" y="172" width="236" height="38" rx="8" fill="#0f2033" stroke="#24435f"/>')
+    body.append(txt(466, 197, "File  Edit  View  Help", "#7dd3fc", 14, 700))
+    body.append(f'<rect x="446" y="240" width="236" height="54" rx="10" fill="#132033" stroke="#315275"/>')
+    body.append(txt(466, 265, "Build complete", "#e8f0fb", 15, 800))
+    body.append(txt(466, 286, "12 widgets rendered", "#8fa3bd", 13, 600))
+    body.extend(panel(756, 112, 330, 222, "Data Widgets", "#86efac"))
+    body.append(txt(788, 182, "Sparkline", "#8fa3bd", 13, 600))
+    body.append(f'<path d="M788 246 L820 224 L852 236 L884 198 L916 214 L948 182 L980 202 L1012 172 L1044 188" fill="none" stroke="#86efac" stroke-width="4" stroke-linecap="round"/>')
+    body.append(txt(788, 286, "Table row focus: 03 / 24", "#e8f0fb", 15, 700))
+    body.extend(panel(72, 370, 1014, 208, "Composed Application Frame", "#c4b5fd"))
+    body.append(f'<rect x="104" y="430" width="950" height="82" rx="12" fill="#0e1726" stroke="#263244"/>')
+    labels = [("layout", "#c4b5fd"), ("input", "#7dd3fc"), ("render", "#86efac"), ("themes", "#f59e0b"), ("a11y", "#fda4af")]
+    x = 134
+    for label, color in labels:
+        body.append(f'<rect x="{x}" y="456" width="126" height="30" rx="15" fill="{color}" opacity="0.16" stroke="{color}"/>')
+        body.append(txt(x + 63, 477, label, color, 14, 800, "middle"))
+        x += 170
+    body.append(txt(104, 548, "One allocator-aware widget system, deterministic visual checks, q-to-quit examples.", "#8fa3bd", 15, 650))
+    return polished_svg("zit widget showcase", "featureful without visual noise", accent, body)
+
+
+POLISHED_MOCKS = {
+    "system_monitor_example": polished_system_monitor,
+    "file_manager_example": polished_file_manager,
+    "showcase_demo": polished_showcase,
+}
+
+
 def capture_to_svg(name: str, cmd: List[str], out_dir: Path, rows: int, cols: int, duration: float) -> Path:
     print(f"[capture] {name}: running {' '.join(cmd)}")
     data = run_capture(cmd, rows, cols, duration)
@@ -626,16 +801,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.mock:
-        mocks = {
-            "system_monitor_example": make_mock_system_monitor,
-            "file_manager_example": make_mock_file_manager,
-            "showcase_demo": make_mock_showcase,
-        }
-        for name, builder in mocks.items():
-            print(f"[mock] {name}: drawing stylized screen")
-            screen = builder(args.rows, args.cols)
+        for name, builder in POLISHED_MOCKS.items():
+            print(f"[mock] {name}: drawing polished README visual")
             out_path = out_dir / f"{name}.svg"
-            out_path.write_text(render_svg(screen), encoding="utf-8")
+            out_path.write_text(builder(), encoding="utf-8")
             print(f"[mock] wrote {out_path}")
     elif args.from_raw:
         raw_files = sorted(args.raw_dir.glob("*.ansi"))

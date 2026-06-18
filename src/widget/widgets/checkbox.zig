@@ -66,6 +66,7 @@ pub const Checkbox = struct {
     pub fn setChecked(self: *Checkbox, checked: bool) void {
         if (self.checked != checked) {
             self.checked = checked;
+            self.widget.markDirty();
             if (self.on_change) |callback| {
                 callback(self.checked);
             }
@@ -83,6 +84,7 @@ pub const Checkbox = struct {
         self.bg = bg;
         self.focused_fg = focused_fg;
         self.focused_bg = focused_bg;
+        self.widget.markDirty();
     }
 
     /// Set the on-change callback
@@ -99,6 +101,7 @@ pub const Checkbox = struct {
         self.focused_bg = colors.focused_bg;
         self.disabled_fg = colors.disabled_fg;
         self.disabled_bg = colors.disabled_bg;
+        self.widget.markDirty();
     }
 
     /// Draw implementation for Checkbox

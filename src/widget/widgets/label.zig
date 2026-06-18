@@ -61,24 +61,30 @@ pub const Label = struct {
 
     /// Set the label text
     pub fn setText(self: *Label, text: []const u8) !void {
+        const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
-        self.text = try self.allocator.dupe(u8, text);
+        self.text = next;
+        self.widget.markDirty();
     }
 
     /// Set the text alignment
     pub fn setAlignment(self: *Label, alignment: TextAlignment) void {
+        if (self.alignment == alignment) return;
         self.alignment = alignment;
+        self.widget.markDirty();
     }
 
     /// Set the text color
     pub fn setColor(self: *Label, fg: render.Color, bg: render.Color) void {
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     /// Set the text style
     pub fn setStyle(self: *Label, style: render.Style) void {
         self.style = style;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for label colors and text style.
@@ -87,6 +93,7 @@ pub const Label = struct {
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.style = colors.style;
+        self.widget.markDirty();
     }
 
     /// Draw implementation for Label
@@ -212,6 +219,18 @@ test "label setText updates preferred size" {
     const size = try label.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 5), size.width);
     try std.testing.expectEqual(@as(u16, 2), size.height);
+}
+
+test "label setText preserves text on allocation failure" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "stable");
+    defer label.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    label.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, label.setText("replacement"));
+    try std.testing.expectEqualStrings("stable", label.text);
 }
 
 test "label does not ellipsize text that exactly fits" {

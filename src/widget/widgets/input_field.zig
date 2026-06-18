@@ -293,22 +293,27 @@ pub const InputField = struct {
         return self.currentText();
     }
 
-    /// Set the placeholder text. Existing owned placeholder memory is released before storing the new value.
+    /// Set the placeholder text.
     pub fn setPlaceholder(self: *InputField, placeholder: []const u8) !void {
-        if (self.placeholder_owned and self.placeholder.len > 0) {
-            self.allocator.free(self.placeholder);
-        }
-
         if (placeholder.len == 0) {
+            if (self.placeholder_owned and self.placeholder.len > 0) {
+                self.allocator.free(self.placeholder);
+            }
             self.placeholder = "";
             self.placeholder_owned = false;
             self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+            self.widget.markDirty();
             return;
         }
 
-        self.placeholder = try self.allocator.dupe(u8, placeholder);
+        const next = try self.allocator.dupe(u8, placeholder);
+        if (self.placeholder_owned and self.placeholder.len > 0) {
+            self.allocator.free(self.placeholder);
+        }
+        self.placeholder = next;
         self.placeholder_owned = true;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), self.accessibilityLabel(), "");
+        self.widget.markDirty();
     }
 
     fn accessibilityLabel(self: *InputField) []const u8 {
@@ -706,6 +711,19 @@ test "input field placeholder can be replaced safely" {
     try field.setPlaceholder("first");
     try field.setPlaceholder("second");
     try std.testing.expectEqualStrings("second", field.placeholder);
+}
+
+test "input field placeholder survives allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    try field.setPlaceholder("stable");
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    field.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, field.setPlaceholder("replacement"));
+    try std.testing.expectEqualStrings("stable", field.placeholder);
 }
 
 test "input field supports undo and redo shortcuts" {

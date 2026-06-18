@@ -40,17 +40,22 @@ pub const Popup = struct {
     }
 
     pub fn setMessage(self: *Popup, message: []const u8) !void {
+        const next = try self.allocator.dupe(u8, message);
         self.allocator.free(self.message);
-        self.message = try self.allocator.dupe(u8, message);
+        self.message = next;
+        self.widget.markDirty();
     }
 
     pub fn setColors(self: *Popup, fg: render.Color, bg: render.Color) void {
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     pub fn setBorder(self: *Popup, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     pub fn setDismissOnAnyKey(self: *Popup, enabled: bool) void {
@@ -138,4 +143,16 @@ test "popup centers and dismisses" {
     const handled = try popup.widget.handleEvent(event);
     try std.testing.expect(handled);
     try std.testing.expect(!popup.widget.visible);
+}
+
+test "popup setMessage preserves message on allocation failure" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "Stable");
+    defer popup.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    popup.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, popup.setMessage("Replacement"));
+    try std.testing.expectEqualStrings("Stable", popup.message);
 }

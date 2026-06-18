@@ -16,6 +16,10 @@ fn updateStatus(comptime fmt: []const u8, args: anytype) void {
     label.setText(text) catch {};
 }
 
+fn drawText(renderer: *render.Renderer, x: u16, y: u16, value: []const u8, fg: render.Color, bg: render.Color, bold: bool) void {
+    renderer.drawStr(x, y, value, fg, bg, render.Style.init(bold, false, false));
+}
+
 pub fn main() !void {
     // Initialize memory manager
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -122,36 +126,86 @@ pub fn main() !void {
         // Fill the background
         renderer.fillRect(0, 0, width, height, ' ', text, bg, render.Style{});
 
-        // Draw border
+        // Draw a stable application frame.
         renderer.drawBox(0, 0, width, height, render.BorderStyle.single, border, bg, render.Style{});
+        if (width > 2 and height > 2) {
+            renderer.fillRect(1, 1, width - 2, 3, ' ', bg, border, render.Style{});
+            drawText(&renderer, 3, 1, "Zit TUI Library", bg, border, true);
+            drawText(&renderer, 3, 2, "interactive sampler  |  mouse + keyboard  |  q quits", muted, border, false);
+        }
+
+        const inner_x: u16 = 2;
+        const inner_y: u16 = 5;
+        const inner_w: u16 = if (width > 4) width - 4 else width;
+        const inner_h: u16 = if (height > 9) height - 9 else 1;
+        const gap: u16 = 2;
+        const left_w: u16 = if (inner_w >= 72) 30 else if (inner_w > 6) inner_w / 2 - 1 else inner_w;
+        const right_w: u16 = if (inner_w > left_w + gap) inner_w - left_w - gap else 0;
+        const left_x = inner_x;
+        const right_x = inner_x + left_w + gap;
+
+        renderer.drawBox(left_x, inner_y, left_w, inner_h, render.BorderStyle.rounded, border, bg, render.Style{});
+        if (right_w > 4) {
+            renderer.drawBox(right_x, inner_y, right_w, inner_h, render.BorderStyle.rounded, border, bg, render.Style{});
+        }
+        drawText(&renderer, left_x + 2, inner_y, "Controls", text, bg, true);
+        if (right_w > 4) drawText(&renderer, right_x + 2, inner_y, "Runtime State", text, bg, true);
+
+        title.widget.markDirty();
+        button.widget.markDirty();
+        checkbox.widget.markDirty();
+        progress_bar.widget.markDirty();
+        list.widget.markDirty();
+        status.widget.markDirty();
 
         // Create the window title
-        const title_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, 2, 20, 1);
+        const title_rect = layout.Rect.init(left_x + 2, inner_y + 2, if (left_w > 4) left_w - 4 else left_w, 1);
         try title.widget.layout(title_rect);
         try title.widget.draw(&renderer);
 
         // Draw the button
-        const button_rect = layout.Rect.init(if (width > 12) (width - 12) / 2 else 0, if (height > 10) height / 2 - 4 else 0, 12, 3);
+        const button_rect = layout.Rect.init(left_x + 2, inner_y + 4, if (left_w > 8) left_w - 4 else left_w, 3);
         try button.widget.layout(button_rect);
         try button.widget.draw(&renderer);
 
         // Draw the checkbox
-        const checkbox_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 else 0, 20, 1);
+        const checkbox_rect = layout.Rect.init(left_x + 3, inner_y + 8, if (left_w > 6) left_w - 6 else left_w, 1);
         try checkbox.widget.layout(checkbox_rect);
         try checkbox.widget.draw(&renderer);
 
         // Draw the progress bar
-        const progress_rect = layout.Rect.init(if (width > 30) (width - 30) / 2 else 0, if (height > 10) height / 2 + 2 else 0, 30, 3);
+        const progress_rect = layout.Rect.init(left_x + 2, inner_y + 11, if (left_w > 4) left_w - 4 else left_w, 3);
         try progress_bar.widget.layout(progress_rect);
         try progress_bar.widget.draw(&renderer);
 
         // Draw the list
-        const list_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 10) height / 2 + 6 else 0, 20, 5);
+        const list_rect = layout.Rect.init(left_x + 2, inner_y + 15, if (left_w > 4) left_w - 4 else left_w, if (inner_h > 18) inner_h - 17 else 5);
         try list.widget.layout(list_rect);
         try list.widget.draw(&renderer);
 
+        if (right_w > 16 and inner_h > 6) {
+            const metric_x = right_x + 3;
+            var metric_y = inner_y + 3;
+            drawText(&renderer, metric_x, metric_y, "Render loop", muted, bg, false);
+            drawText(&renderer, metric_x + 18, metric_y, "steady", text, bg, true);
+            metric_y += 2;
+            drawText(&renderer, metric_x, metric_y, "Resize binding", muted, bg, false);
+            drawText(&renderer, metric_x + 18, metric_y, "active", text, bg, true);
+            metric_y += 2;
+            drawText(&renderer, metric_x, metric_y, "Input polling", muted, bg, false);
+            drawText(&renderer, metric_x + 18, metric_y, "100ms", text, bg, true);
+            metric_y += 3;
+            renderer.drawBox(metric_x, metric_y, if (right_w > 8) right_w - 6 else right_w, 5, render.BorderStyle.single, border, bg, render.Style{});
+            drawText(&renderer, metric_x + 2, metric_y + 1, "Try it:", text, bg, true);
+            drawText(&renderer, metric_x + 2, metric_y + 2, "click button, toggle checkbox,", muted, bg, false);
+            drawText(&renderer, metric_x + 2, metric_y + 3, "resize terminal, press q.", muted, bg, false);
+        }
+
         // Draw the status at the bottom
-        const status_rect = layout.Rect.init(if (width > 20) (width - 20) / 2 else 0, if (height > 2) height - 2 else 0, 20, 1);
+        if (height > 2 and width > 4) {
+            renderer.fillRect(1, height - 3, width - 2, 2, ' ', bg, border, render.Style{});
+        }
+        const status_rect = layout.Rect.init(3, if (height > 2) height - 2 else 0, if (width > 6) width - 6 else width, 1);
         try status.widget.layout(status_rect);
         try status.widget.draw(&renderer);
 

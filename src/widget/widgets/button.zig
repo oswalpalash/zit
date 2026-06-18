@@ -66,9 +66,11 @@ pub const Button = struct {
 
     /// Set the button label
     pub fn setText(self: *Button, text: []const u8) !void {
+        const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.button_text);
-        self.button_text = try self.allocator.dupe(u8, text);
+        self.button_text = next;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.button), self.button_text, "");
+        self.widget.markDirty();
     }
 
     /// Set the button colors
@@ -77,17 +79,21 @@ pub const Button = struct {
         self.bg = bg;
         self.focused_fg = focused_fg;
         self.focused_bg = focused_bg;
+        self.widget.markDirty();
     }
 
     /// Set the button disabled colors
     pub fn setDisabledColors(self: *Button, disabled_fg: render.Color, disabled_bg: render.Color) void {
         self.disabled_fg = disabled_fg;
         self.disabled_bg = disabled_bg;
+        self.widget.markDirty();
     }
 
     /// Set the border style
     pub fn setBorder(self: *Button, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     /// Set the on-click callback
@@ -105,6 +111,7 @@ pub const Button = struct {
         self.disabled_fg = colors.disabled_fg;
         self.disabled_bg = colors.disabled_bg;
         self.style = theme_value.style;
+        self.widget.markDirty();
     }
 
     /// Draw implementation for Button
@@ -232,6 +239,18 @@ test "button init/deinit" {
     defer button.deinit();
 
     try std.testing.expectEqualStrings("OK", button.button_text);
+}
+
+test "button setText preserves label on allocation failure" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Stable");
+    defer button.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    button.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, button.setText("Replacement"));
+    try std.testing.expectEqualStrings("Stable", button.button_text);
 }
 
 test "button triggers callback on press" {

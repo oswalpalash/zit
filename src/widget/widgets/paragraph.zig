@@ -49,33 +49,45 @@ pub const Paragraph = struct {
     }
 
     pub fn setText(self: *Paragraph, text: []const u8) !void {
+        const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
-        self.text = try self.allocator.dupe(u8, text);
+        self.text = next;
+        self.widget.markDirty();
     }
 
     pub fn setWrap(self: *Paragraph, wrap: bool) void {
+        if (self.wrap == wrap) return;
         self.wrap = wrap;
+        self.widget.markDirty();
     }
 
     pub fn setScroll(self: *Paragraph, offset: u16) void {
+        if (self.scroll_offset == offset) return;
         self.scroll_offset = offset;
+        self.widget.markDirty();
     }
 
     pub fn setAlignment(self: *Paragraph, alignment: Alignment) void {
+        if (self.alignment == alignment) return;
         self.alignment = alignment;
+        self.widget.markDirty();
     }
 
     pub fn setPadding(self: *Paragraph, padding: Padding) void {
+        if (std.meta.eql(self.padding, padding)) return;
         self.padding = padding;
+        self.widget.markDirty();
     }
 
     pub fn setColors(self: *Paragraph, fg: render.Color, bg: render.Color) void {
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     pub fn setStyle(self: *Paragraph, style: render.Style) void {
         self.style = style;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -228,4 +240,16 @@ test "paragraph wraps and scrolls" {
     // After scrolling one line, the second wrapped line should be visible first.
     const cell0 = renderer.back.getCell(0, 0).*;
     try std.testing.expectEqual('b', cell0.ch);
+}
+
+test "paragraph setText preserves text on allocation failure" {
+    const alloc = std.testing.allocator;
+    var p = try Paragraph.init(alloc, "stable paragraph");
+    defer p.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    p.allocator = failing.allocator();
+
+    try std.testing.expectError(error.OutOfMemory, p.setText("replacement paragraph"));
+    try std.testing.expectEqualStrings("stable paragraph", p.text);
 }

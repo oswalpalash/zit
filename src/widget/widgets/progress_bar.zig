@@ -82,7 +82,9 @@ pub const ProgressBar = struct {
 
     /// Set the progress bar direction
     pub fn setDirection(self: *ProgressBar, direction: ProgressDirection) void {
+        if (self.direction == direction) return;
         self.direction = direction;
+        self.widget.markDirty();
     }
 
     /// Attach a shared animator to enable animated progress and color transitions.
@@ -119,6 +121,7 @@ pub const ProgressBar = struct {
         } else {
             self.progress_driver.snap(@floatFromInt(clamped));
         }
+        self.widget.markDirty();
     }
 
     /// Set the progress value (0-100)
@@ -128,12 +131,16 @@ pub const ProgressBar = struct {
 
     /// Set whether to show text percentage
     pub fn setShowPercentage(self: *ProgressBar, show_text: bool) void {
+        if (self.show_text == show_text) return;
         self.show_text = show_text;
+        self.widget.markDirty();
     }
 
     /// Set the fill character
     pub fn setFillChar(self: *ProgressBar, fill_char: u21) void {
+        if (self.fill_char == fill_char) return;
         self.fill_char = fill_char;
+        self.widget.markDirty();
     }
 
     /// Set the progress bar colors
@@ -144,6 +151,7 @@ pub const ProgressBar = struct {
         self.fill_bg = fill_bg;
         self.fill_fg_transition.snap(fill_fg);
         self.fill_bg_transition.snap(fill_bg);
+        self.widget.markDirty();
     }
 
     /// Smoothly transition fill colors when an animator is available.
@@ -157,11 +165,14 @@ pub const ProgressBar = struct {
             self.fill_fg_transition.snap(fill_fg);
             self.fill_bg_transition.snap(fill_bg);
         }
+        self.widget.markDirty();
     }
 
     /// Set the border style
     pub fn setBorder(self: *ProgressBar, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for progress bar colors.

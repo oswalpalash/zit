@@ -34,6 +34,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - `InputHandler` now periodically polls terminal geometry in addition to consuming SIGWINCH, catching missed signal and ConPTY-style resize changes.
 - Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
+- README screenshot generation now emits polished deterministic SVG previews for the system monitor, file manager, and widget showcase.
 
 ### Fixed
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.
@@ -62,10 +63,13 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Background tasks are now owned by `Application`, joined on shutdown, and paired with queued custom-event destructor cleanup so teardown cannot leave detached workers using a destroyed event queue.
 - Event input binding tests now use cross-platform standard handles, fixing the Windows CI compile failure in `zig build quality`.
 - Windows CI now keeps compile/test/script coverage while avoiding non-PTY interactive run-target hangs in the matrix public build-step sweep.
+- Label, button, checkbox, progress bar, paragraph, markdown, popup, input-field placeholder, and text-area placeholder setters now invalidate retained render state after visible changes.
+- Text-owning widget setters now duplicate replacement buffers before releasing current buffers, with allocation-failure regression coverage for stable rollback behavior.
+- The interactive demo layout now presents a structured application frame while continuing to stay live until `q`.
 
 ### Docs
 - Added a stability policy centered on efficiency, reliability, stability, and features.
-- Added graphical README previews for the system monitor, file manager, and widget showcase examples.
+- Added polished graphical README previews for the system monitor, file manager, and widget showcase examples.
 - Comprehensive references: `docs/API.md`, `docs/WIDGET_GUIDE.md`, `docs/ARCHITECTURE.md`, and `docs/TERMINAL_COMPAT.md`.
 - README quickstart, installation, feature highlights, and example commands kept in sync with the build targets.
 - Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).
