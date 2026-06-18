@@ -489,17 +489,15 @@ fn lerpColor(start: RgbColor, end: RgbColor, t: f32) RgbColor {
 }
 
 fn copyAndSortStops(allocator: std.mem.Allocator, stops: []const GradientStop) ![]GradientStop {
-    var buffer = try allocator.alloc(GradientStop, stops.len);
-    @memcpy(buffer, stops);
-
-    for (buffer) |stop| {
-        if (stop.position < 0 or stop.position > 1) {
-            std.debug.panic("zit: gradient stop positions must be between 0 and 1 (got {any})", .{stop.position});
-        }
-        if (std.math.isNan(stop.position)) {
-            std.debug.panic("zit: gradient stop positions cannot be NaN", .{});
+    for (stops) |stop| {
+        if (std.math.isNan(stop.position) or stop.position < 0 or stop.position > 1) {
+            return error.InvalidGradientStop;
         }
     }
+
+    var buffer = try allocator.alloc(GradientStop, stops.len);
+    errdefer allocator.free(buffer);
+    @memcpy(buffer, stops);
 
     var i: usize = 0;
     while (i < buffer.len) : (i += 1) {
@@ -1872,6 +1870,50 @@ test "fillGradient paints interpolated colors" {
     const bottom = vertical_renderer.back.getCell(0, 1).bg;
     try std.testing.expect(std.meta.eql(top, Color.rgb(0, 0, 0)));
     try std.testing.expect(std.meta.eql(bottom, Color.rgb(255, 0, 0)));
+}
+
+test "fillGradient ignores invalid stop positions without trapping" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+
+    renderer.fillRect(
+        0,
+        0,
+        3,
+        1,
+        'X',
+        Color.named(NamedColor.white),
+        Color.named(NamedColor.black),
+        Style{},
+    );
+
+    const before = [_]Cell{
+        renderer.back.getCell(0, 0).*,
+        renderer.back.getCell(1, 0).*,
+        renderer.back.getCell(2, 0).*,
+    };
+
+    const negative_stop = [_]GradientStop{
+        .{ .position = -0.1, .color = Color.rgb(0, 0, 0) },
+        .{ .position = 1.0, .color = Color.rgb(255, 255, 255) },
+    };
+    const overflow_stop = [_]GradientStop{
+        .{ .position = 0.0, .color = Color.rgb(0, 0, 0) },
+        .{ .position = 1.1, .color = Color.rgb(255, 255, 255) },
+    };
+    const nan_stop = [_]GradientStop{
+        .{ .position = std.math.nan(f32), .color = Color.rgb(0, 0, 0) },
+        .{ .position = 1.0, .color = Color.rgb(255, 255, 255) },
+    };
+
+    renderer.fillGradient(0, 0, 3, 1, &negative_stop, GradientDirection.horizontal, Style{});
+    renderer.fillGradient(0, 0, 3, 1, &overflow_stop, GradientDirection.horizontal, Style{});
+    renderer.fillGradient(0, 0, 3, 1, &nan_stop, GradientDirection.horizontal, Style{});
+
+    try std.testing.expect(before[0].eql(renderer.back.getCell(0, 0).*));
+    try std.testing.expect(before[1].eql(renderer.back.getCell(1, 0).*));
+    try std.testing.expect(before[2].eql(renderer.back.getCell(2, 0).*));
 }
 
 test "styled box supports gradient fill" {
