@@ -137,8 +137,58 @@ pub const InputField = struct {
         }
     }
 
+    fn isUtf8Continuation(byte: u8) bool {
+        return (byte & 0b1100_0000) == 0b1000_0000;
+    }
+
+    fn utf8PrefixLen(value: []const u8, max_bytes: usize) usize {
+        const limit = @min(value.len, max_bytes);
+        var idx: usize = 0;
+        var last_valid: usize = 0;
+        while (idx < limit) {
+            const first = value[idx];
+            const width: usize = if (first < 0x80)
+                1
+            else if ((first & 0b1110_0000) == 0b1100_0000)
+                2
+            else if ((first & 0b1111_0000) == 0b1110_0000)
+                3
+            else if ((first & 0b1111_1000) == 0b1111_0000)
+                4
+            else
+                break;
+
+            if (idx + width > limit) break;
+            if (std.unicode.utf8Decode(value[idx .. idx + width])) |_| {
+                idx += width;
+                last_valid = idx;
+            } else |_| {
+                break;
+            }
+        }
+        return last_valid;
+    }
+
+    fn previousCodepointBoundary(bytes: []const u8, pos: usize) usize {
+        if (pos == 0) return 0;
+        var idx = @min(pos, bytes.len) - 1;
+        while (idx > 0 and isUtf8Continuation(bytes[idx])) {
+            idx -= 1;
+        }
+        return idx;
+    }
+
+    fn nextCodepointBoundary(bytes: []const u8, pos: usize) usize {
+        if (pos >= bytes.len) return bytes.len;
+        var idx = pos + 1;
+        while (idx < bytes.len and isUtf8Continuation(bytes[idx])) {
+            idx += 1;
+        }
+        return idx;
+    }
+
     fn writeText(self: *InputField, value: []const u8) void {
-        const len = @min(value.len, self.text.len);
+        const len = utf8PrefixLen(value, self.text.len);
         @memset(self.text, 0);
         if (len > 0) {
             std.mem.copyForwards(u8, self.text[0..len], value[0..len]);
@@ -230,6 +280,9 @@ pub const InputField = struct {
     fn clampCursor(self: *InputField) void {
         if (self.cursor > self.len) {
             self.cursor = self.len;
+        }
+        while (self.cursor > 0 and self.cursor < self.len and isUtf8Continuation(self.text[self.cursor])) {
+            self.cursor -= 1;
         }
     }
 
@@ -482,15 +535,14 @@ pub const InputField = struct {
         }
         // Otherwise draw text
         else if (content.len > 0 and inner_width > 0) {
-            var rendered_len: usize = 0;
             var truncated: [256]u8 = undefined;
             const draw_text = text_metrics.truncateToWidth(content, inner_width, &truncated, true);
             renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
-            rendered_len = draw_text.len;
 
             // Draw cursor if focused
-            if (self.widget.focused and self.cursor <= rendered_len) {
-                const cursor_x = inner_x + @as(u16, @intCast(self.cursor));
+            if (self.widget.focused and self.cursor <= draw_text.len) {
+                const prefix_width = text_metrics.measureWidth(draw_text[0..self.cursor]).width;
+                const cursor_x = inner_x + @as(u16, @intCast(@min(prefix_width, inner_width - 1)));
                 renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
             }
         }
@@ -501,11 +553,11 @@ pub const InputField = struct {
     fn applyEditorAction(self: *InputField, action: input.EditorAction) anyerror!bool {
         switch (action) {
             .cursor_left => {
-                if (self.cursor > 0) self.cursor -= 1;
+                self.cursor = previousCodepointBoundary(self.currentText(), self.cursor);
                 return true;
             },
             .cursor_right => {
-                if (self.cursor < self.len) self.cursor += 1;
+                self.cursor = nextCodepointBoundary(self.currentText(), self.cursor);
                 return true;
             },
             .line_start => {
@@ -564,7 +616,8 @@ pub const InputField = struct {
         const available = if (self.text.len > self.len) self.text.len - self.len else 0;
         if (available == 0) return false;
 
-        const insert_len = @min(available, pasted.len);
+        const insert_len = utf8PrefixLen(pasted, available);
+        if (insert_len == 0) return false;
         if (self.cursor < self.len) {
             const tail = self.len - self.cursor;
             if (tail > 0) {
@@ -580,20 +633,21 @@ pub const InputField = struct {
         return true;
     }
 
-    fn insertByte(self: *InputField, value: u8) !void {
-        if (self.len >= self.text.len) {
-            return;
+    fn insertSlice(self: *InputField, value: []const u8) !bool {
+        if (value.len == 0 or self.len + value.len > self.text.len) {
+            return false;
         }
 
         if (self.cursor < self.len) {
             const tail = self.len - self.cursor;
-            std.mem.copyBackwards(u8, self.text[self.cursor + 1 .. self.cursor + 1 + tail], self.text[self.cursor .. self.cursor + tail]);
+            std.mem.copyBackwards(u8, self.text[self.cursor + value.len .. self.cursor + value.len + tail], self.text[self.cursor .. self.cursor + tail]);
         }
 
-        self.text[self.cursor] = value;
-        self.len += 1;
-        self.cursor += 1;
+        std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + value.len], value);
+        self.len += value.len;
+        self.cursor += value.len;
         self.finalizeChange(true, false);
+        return true;
     }
 
     /// Event handling implementation for InputField
@@ -632,32 +686,37 @@ pub const InputField = struct {
                 },
                 input.KeyCode.BACKSPACE => {
                     if (self.cursor > 0 and self.len > 0) {
+                        const remove_start = previousCodepointBoundary(self.currentText(), self.cursor);
+                        const remove_len = self.cursor - remove_start;
                         const tail = self.len - self.cursor;
                         if (tail > 0) {
-                            std.mem.copyForwards(u8, self.text[self.cursor - 1 .. self.cursor - 1 + tail], self.text[self.cursor .. self.cursor + tail]);
+                            std.mem.copyForwards(u8, self.text[remove_start .. remove_start + tail], self.text[self.cursor .. self.cursor + tail]);
                         }
-                        self.len -= 1;
-                        self.cursor -= 1;
+                        self.len -= remove_len;
+                        self.cursor = remove_start;
                         self.finalizeChange(true, false);
                     }
                     return true;
                 },
                 input.KeyCode.DELETE => {
                     if (self.cursor < self.len) {
-                        const tail = self.len - self.cursor - 1;
+                        const remove_end = nextCodepointBoundary(self.currentText(), self.cursor);
+                        const remove_len = remove_end - self.cursor;
+                        const tail = self.len - remove_end;
                         if (tail > 0) {
-                            std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + tail], self.text[self.cursor + 1 .. self.cursor + 1 + tail]);
+                            std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + tail], self.text[remove_end .. remove_end + tail]);
                         }
-                        self.len -= 1;
+                        self.len -= remove_len;
                         self.finalizeChange(true, false);
                     }
                     return true;
                 },
                 else => {
                     // Regular character input
-                    if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
-                        try self.insertByte(@as(u8, @intCast(key_event.key)));
-                        return true;
+                    if (key_event.isTextInput() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                        var utf8_buf: [4]u8 = undefined;
+                        const bytes = key_event.utf8(&utf8_buf) orelse return false;
+                        return try self.insertSlice(bytes);
                     }
                 },
             }
@@ -860,4 +919,41 @@ test "input field setText clamps to max length" {
     field.setText("abcdef");
     try std.testing.expectEqualStrings("abcd", field.getText());
     try std.testing.expectEqual(@as(usize, 4), field.cursor);
+}
+
+test "input field inserts and deletes UTF-8 text input atomically" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(0x00E9, .{}) }));
+    try std.testing.expectEqualStrings("é", field.getText());
+    try std.testing.expectEqual(@as(usize, 2), field.cursor);
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), field.cursor);
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) }));
+    try std.testing.expectEqualStrings("", field.getText());
+    try std.testing.expectEqual(@as(usize, 0), field.cursor);
+}
+
+test "input field capacity does not split UTF-8 sequences" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 3);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    field.setText("éx");
+    try std.testing.expectEqualStrings("éx", field.getText());
+    field.setText("éxy");
+    try std.testing.expectEqualStrings("éx", field.getText());
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) }));
+    try std.testing.expectEqualStrings("é", field.getText());
+    try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(0x1F642, .{}) }));
+    try std.testing.expectEqualStrings("é", field.getText());
 }

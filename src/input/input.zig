@@ -102,11 +102,61 @@ pub const KeyEvent = struct {
         return self.key >= 32 and self.key <= 126;
     }
 
+    /// Check if this event carries text input rather than a control or special key.
+    ///
+    /// This accepts Unicode scalar values in addition to ASCII. The explicit
+    /// special-key exclusions are necessary because legacy special key codes live
+    /// in the `u21` range and overlap otherwise valid Unicode codepoints.
+    pub fn isTextInput(self: KeyEvent) bool {
+        if (self.key < 32 or self.key == 127) return false;
+        if (self.key == KeyCode.BACKSPACE or
+            self.key == KeyCode.ENTER or
+            self.key == KeyCode.ESCAPE or
+            self.key == KeyCode.TAB or
+            self.key == KeyCode.UP or
+            self.key == KeyCode.DOWN or
+            self.key == KeyCode.RIGHT or
+            self.key == KeyCode.LEFT or
+            self.key == KeyCode.HOME or
+            self.key == KeyCode.END or
+            self.key == KeyCode.PAGE_UP or
+            self.key == KeyCode.PAGE_DOWN or
+            self.key == KeyCode.INSERT or
+            self.key == KeyCode.DELETE or
+            self.key == KeyCode.F1 or
+            self.key == KeyCode.F2 or
+            self.key == KeyCode.F3 or
+            self.key == KeyCode.F4 or
+            self.key == KeyCode.F5 or
+            self.key == KeyCode.F6 or
+            self.key == KeyCode.F7 or
+            self.key == KeyCode.F8 or
+            self.key == KeyCode.F9 or
+            self.key == KeyCode.F10 or
+            self.key == KeyCode.F11 or
+            self.key == KeyCode.F12)
+        {
+            return false;
+        }
+
+        var buf: [4]u8 = undefined;
+        _ = std.unicode.utf8Encode(self.key, &buf) catch return false;
+        return true;
+    }
+
+    /// Encode this text-input key as UTF-8.
+    pub fn utf8(self: KeyEvent, buffer: *[4]u8) ?[]const u8 {
+        if (!self.isTextInput()) return null;
+        const len = std.unicode.utf8Encode(self.key, buffer) catch return null;
+        return buffer[0..len];
+    }
+
     /// Get a string representation of the key
     pub fn getName(self: KeyEvent, allocator: std.mem.Allocator) ![]const u8 {
-        if (self.isPrintable()) {
-            var char_buf: [1]u8 = .{@intCast(self.key)};
-            return try allocator.dupe(u8, &char_buf);
+        if (self.isTextInput()) {
+            var char_buf: [4]u8 = undefined;
+            const encoded = self.utf8(&char_buf) orelse return try allocator.dupe(u8, "Unknown");
+            return try allocator.dupe(u8, encoded);
         }
 
         return switch (self.key) {
@@ -269,7 +319,42 @@ pub fn decodeEventFromBytes(bytes: []const u8) !?Event {
         return Event{ .key = KeyEvent.init(KeyCode.ENTER, KeyModifiers{}) };
     }
 
+    if (first >= 0x80) {
+        if (try readUtf8Key(first, &reader, &sink)) |cp| {
+            return Event{ .key = KeyEvent.init(cp, KeyModifiers{}) };
+        }
+        return Event{ .unknown = {} };
+    }
+
     return Event{ .key = KeyEvent.init(first, KeyModifiers{}) };
+}
+
+fn utf8ExpectedLength(first: u8) ?usize {
+    if (first < 0x80) return 1;
+    if ((first & 0b1110_0000) == 0b1100_0000) return 2;
+    if ((first & 0b1111_0000) == 0b1110_0000) return 3;
+    if ((first & 0b1111_1000) == 0b1111_0000) return 4;
+    return null;
+}
+
+fn readUtf8Key(first: u8, reader: anytype, sink: anytype) !?u21 {
+    const expected = utf8ExpectedLength(first) orelse return null;
+    if (expected == 1) return first;
+
+    var bytes: [4]u8 = undefined;
+    bytes[0] = first;
+    var idx: usize = 1;
+    while (idx < expected) : (idx += 1) {
+        const next = reader.readByte() catch |err| {
+            if (isNonBlockingError(err) or err == error.EndOfStream or err == error.InputOutput) return null;
+            return err;
+        };
+        sink.put(next);
+        if ((next & 0b1100_0000) != 0b1000_0000) return null;
+        bytes[idx] = next;
+    }
+
+    return std.unicode.utf8Decode(bytes[0..expected]) catch null;
 }
 
 const ByteSink = struct {
@@ -1100,6 +1185,19 @@ pub const InputHandler = struct {
                 };
             }
 
+            if (buffer[0] >= 0x80) {
+                var utf8_reader = PosixByteReader{ .fd = self.term.stdin_fd };
+                if (try readUtf8Key(buffer[0], &utf8_reader, &sink)) |cp| {
+                    return Event{
+                        .key = KeyEvent{
+                            .key = cp,
+                            .modifiers = KeyModifiers{},
+                        },
+                    };
+                }
+                return Event{ .unknown = {} };
+            }
+
             // Regular key press
             return Event{
                 .key = KeyEvent{
@@ -1168,6 +1266,18 @@ pub const InputHandler = struct {
                     },
                 },
             };
+        }
+
+        if (byte >= 0x80) {
+            if (try readUtf8Key(byte, &reader, &sink)) |cp| {
+                return Event{
+                    .key = KeyEvent{
+                        .key = cp,
+                        .modifiers = KeyModifiers{},
+                    },
+                };
+            }
+            return Event{ .unknown = {} };
         }
 
         // Regular key press
@@ -1759,6 +1869,26 @@ test "invalid csi input is treated as unknown event" {
     const parsed = try decodeEventFromBytes(bad);
     try std.testing.expect(parsed != null);
     try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
+}
+
+test "decodeEventFromBytes decodes UTF-8 key input" {
+    const parsed = try decodeEventFromBytes("é");
+    try std.testing.expect(parsed != null);
+    try std.testing.expectEqual(@as(EventType, .key), std.meta.activeTag(parsed.?));
+    try std.testing.expectEqual(@as(u21, 0x00E9), parsed.?.key.key);
+    try std.testing.expect(parsed.?.key.isTextInput());
+    try std.testing.expect(!parsed.?.key.isPrintable());
+}
+
+test "key event text input names encode UTF-8" {
+    const alloc = std.testing.allocator;
+    const event = KeyEvent.init(0x03BB, .{});
+    try std.testing.expect(event.isTextInput());
+    const name = try event.getName(alloc);
+    defer alloc.free(name);
+    try std.testing.expectEqualStrings("λ", name);
+
+    try std.testing.expect(!KeyEvent.init(KeyCode.UP, .{}).isTextInput());
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {

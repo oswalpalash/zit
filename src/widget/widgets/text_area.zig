@@ -340,6 +340,66 @@ pub const TextArea = struct {
         return self.max_bytes - self.buffer.items.len;
     }
 
+    fn isUtf8Continuation(byte: u8) bool {
+        return (byte & 0b1100_0000) == 0b1000_0000;
+    }
+
+    fn utf8PrefixLen(value: []const u8, max_bytes: usize) usize {
+        const limit = @min(value.len, max_bytes);
+        var idx: usize = 0;
+        var last_valid: usize = 0;
+        while (idx < limit) {
+            const first = value[idx];
+            const width: usize = if (first < 0x80)
+                1
+            else if ((first & 0b1110_0000) == 0b1100_0000)
+                2
+            else if ((first & 0b1111_0000) == 0b1110_0000)
+                3
+            else if ((first & 0b1111_1000) == 0b1111_0000)
+                4
+            else
+                break;
+
+            if (idx + width > limit) break;
+            if (std.unicode.utf8Decode(value[idx .. idx + width])) |_| {
+                idx += width;
+                last_valid = idx;
+            } else |_| {
+                break;
+            }
+        }
+        return last_valid;
+    }
+
+    fn previousCodepointBoundary(bytes: []const u8, pos: usize) usize {
+        if (pos == 0) return 0;
+        var idx = @min(pos, bytes.len) - 1;
+        while (idx > 0 and isUtf8Continuation(bytes[idx])) {
+            idx -= 1;
+        }
+        return idx;
+    }
+
+    fn nextCodepointBoundary(bytes: []const u8, pos: usize) usize {
+        if (pos >= bytes.len) return bytes.len;
+        var idx = pos + 1;
+        while (idx < bytes.len and isUtf8Continuation(bytes[idx])) {
+            idx += 1;
+        }
+        return idx;
+    }
+
+    fn removeRange(self: *TextArea, start: usize, end: usize) void {
+        if (start >= end or start >= self.buffer.items.len) return;
+        const bounded_end = @min(end, self.buffer.items.len);
+        const tail_len = self.buffer.items.len - bounded_end;
+        if (tail_len > 0) {
+            std.mem.copyForwards(u8, self.buffer.items[start .. start + tail_len], self.buffer.items[bounded_end .. bounded_end + tail_len]);
+        }
+        self.buffer.items.len -= bounded_end - start;
+    }
+
     const CursorMark = struct { pos: usize, primary: bool };
 
     fn cursorLess(_: void, a: CursorMark, b: CursorMark) bool {
@@ -392,7 +452,7 @@ pub const TextArea = struct {
 
         const max_insert = self.max_bytes - (self.buffer.items.len - remove_len);
         if (max_insert == 0 and replacement.len > 0) return false;
-        const insert_len = @min(replacement.len, max_insert);
+        const insert_len = utf8PrefixLen(replacement, max_insert);
 
         if (remove_len > 0) {
             const tail_len = self.buffer.items.len - bounded_end;
@@ -428,7 +488,11 @@ pub const TextArea = struct {
                 try new_marks.append(self.allocator, .{ .pos = @min(mark.pos + shift, self.buffer.items.len), .primary = mark.primary });
                 continue;
             }
-            const insert_len = @min(available, slice.len);
+            const insert_len = utf8PrefixLen(slice, available);
+            if (insert_len == 0) {
+                try new_marks.append(self.allocator, .{ .pos = @min(mark.pos + shift, self.buffer.items.len), .primary = mark.primary });
+                continue;
+            }
             const target = mark.pos + shift;
             try self.buffer.insertSlice(self.allocator, target, slice[0..insert_len]);
             shift += insert_len;
@@ -453,7 +517,8 @@ pub const TextArea = struct {
         if (self.extra_cursors.items.len == 0) {
             const remaining = self.remainingCapacity();
             if (remaining == 0) return false;
-            const insert_len = @min(remaining, content.len);
+            const insert_len = utf8PrefixLen(content, remaining);
+            if (insert_len == 0) return false;
             try self.buffer.insertSlice(self.allocator, self.cursor, content[0..insert_len]);
             self.cursor += insert_len;
             self.clearSelection();
@@ -529,7 +594,7 @@ pub const TextArea = struct {
 
     fn writeText(self: *TextArea, text: []const u8) !void {
         self.buffer.clearRetainingCapacity();
-        const copy_len = @min(text.len, self.max_bytes);
+        const copy_len = utf8PrefixLen(text, self.max_bytes);
         try self.buffer.appendSlice(self.allocator, text[0..copy_len]);
         self.cursor = self.buffer.items.len;
         self.preferred_col = self.cursorPosition().col;
@@ -545,6 +610,9 @@ pub const TextArea = struct {
 
     fn clampCursor(self: *TextArea) void {
         if (self.cursor > self.buffer.items.len) self.cursor = self.buffer.items.len;
+        while (self.cursor > 0 and self.cursor < self.buffer.items.len and isUtf8Continuation(self.buffer.items[self.cursor])) {
+            self.cursor -= 1;
+        }
     }
 
     fn resetPreferredColumn(self: *TextArea) void {
@@ -634,7 +702,7 @@ pub const TextArea = struct {
         switch (action) {
             .cursor_left => {
                 if (self.cursor > 0) {
-                    self.cursor -= 1;
+                    self.cursor = previousCodepointBoundary(self.buffer.items, self.cursor);
                     self.resetPreferredColumn();
                     self.ensureVisible(viewport.width, viewport.height);
                     return true;
@@ -643,7 +711,7 @@ pub const TextArea = struct {
             },
             .cursor_right => {
                 if (self.cursor < self.buffer.items.len) {
-                    self.cursor += 1;
+                    self.cursor = nextCodepointBoundary(self.buffer.items, self.cursor);
                     self.resetPreferredColumn();
                     self.ensureVisible(viewport.width, viewport.height);
                     return true;
@@ -777,8 +845,8 @@ pub const TextArea = struct {
         return try self.insertTextAtCursors(pasted);
     }
 
-    fn insertByte(self: *TextArea, value: u8) !void {
-        _ = try self.insertTextAtCursors(&[_]u8{value});
+    fn insertSlice(self: *TextArea, value: []const u8) !bool {
+        return try self.insertTextAtCursors(value);
     }
 
     fn deleteBackward(self: *TextArea) !bool {
@@ -790,8 +858,9 @@ pub const TextArea = struct {
         if (self.buffer.items.len == 0) return false;
         if (self.extra_cursors.items.len == 0) {
             if (self.cursor == 0) return false;
-            _ = self.buffer.orderedRemove(self.cursor - 1);
-            self.cursor -= 1;
+            const remove_start = previousCodepointBoundary(self.buffer.items, self.cursor);
+            self.removeRange(remove_start, self.cursor);
+            self.cursor = remove_start;
             self.resetPreferredColumn();
             self.finalizeChange(true, self.validate_on_change);
             return true;
@@ -808,7 +877,8 @@ pub const TextArea = struct {
 
         if (self.extra_cursors.items.len == 0) {
             if (self.cursor >= self.buffer.items.len) return false;
-            _ = self.buffer.orderedRemove(self.cursor);
+            const remove_end = nextCodepointBoundary(self.buffer.items, self.cursor);
+            self.removeRange(self.cursor, remove_end);
             self.resetPreferredColumn();
             self.finalizeChange(true, self.validate_on_change);
             return true;
@@ -952,7 +1022,7 @@ pub const TextArea = struct {
                         if (self.on_submit) |callback| callback(self.buffer.items);
                         return true;
                     }
-                    try self.insertByte('\n');
+                    _ = try self.insertSlice("\n");
                     self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
                     return true;
                 },
@@ -969,8 +1039,10 @@ pub const TextArea = struct {
                     return true;
                 },
                 else => {
-                    if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
-                        try self.insertByte(@as(u8, @intCast(key_event.key)));
+                    if (key_event.isTextInput() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                        var utf8_buf: [4]u8 = undefined;
+                        const bytes = key_event.utf8(&utf8_buf) orelse return false;
+                        if (!try self.insertSlice(bytes)) return false;
                         self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
                         return true;
                     }
@@ -1153,4 +1225,42 @@ test "text area placeholder survives allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, area.setPlaceholder("replacement"));
     try std.testing.expectEqualStrings("stable", area.placeholder);
+}
+
+test "text area inserts moves and deletes UTF-8 text input atomically" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 32);
+    defer area.deinit();
+    area.widget.focused = true;
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init('a', .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(0x00E9, .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init('b', .{}) }));
+    try std.testing.expectEqualStrings("aéb", area.getText());
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DELETE, .{}) }));
+    try std.testing.expectEqualStrings("ab", area.getText());
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+}
+
+test "text area max bytes does not split UTF-8 input" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 3);
+    defer area.deinit();
+    area.widget.focused = true;
+
+    try area.setText("éxy");
+    try std.testing.expectEqualStrings("éx", area.getText());
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) }));
+    try std.testing.expectEqualStrings("é", area.getText());
+    try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(0x1F642, .{}) }));
+    try std.testing.expectEqualStrings("é", area.getText());
 }
