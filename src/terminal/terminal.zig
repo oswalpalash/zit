@@ -77,6 +77,16 @@ fn setNonBlocking(fd: std.posix.fd_t) !void {
     }
 }
 
+pub const Size = struct {
+    width: u16,
+    height: u16,
+};
+
+fn changedSize(old_width: u16, old_height: u16, new_width: u16, new_height: u16) ?Size {
+    if (old_width == new_width and old_height == new_height) return null;
+    return .{ .width = new_width, .height = new_height };
+}
+
 /// Terminal abstraction layer
 ///
 /// This module provides cross-platform terminal handling capabilities including:
@@ -655,13 +665,32 @@ pub const Terminal = struct {
         try compat.stdoutWriteAll(str);
     }
 
-    /// Consume a pending SIGWINCH and refresh cached size.
-    pub fn takeResize(self: *Terminal) !?struct { width: u16, height: u16 } {
-        if (winch_signal_flag.swap(0, .acq_rel) == 0) return null;
+    /// Refresh cached size and report whether terminal geometry changed.
+    pub fn pollResize(self: *Terminal) !?Size {
+        const old_width = self.width;
+        const old_height = self.height;
         try self.updateSize();
-        return .{ .width = self.width, .height = self.height };
+        return changedSize(old_width, old_height, self.width, self.height);
+    }
+
+    /// Consume a pending SIGWINCH and refresh cached size.
+    pub fn takeResize(self: *Terminal) !?Size {
+        if (winch_signal_flag.swap(0, .acq_rel) == 0) return null;
+        return try self.pollResize();
     }
 };
+
+test "changedSize reports only actual terminal geometry changes" {
+    try std.testing.expect(changedSize(80, 24, 80, 24) == null);
+
+    const wider = changedSize(80, 24, 120, 24).?;
+    try std.testing.expectEqual(@as(u16, 120), wider.width);
+    try std.testing.expectEqual(@as(u16, 24), wider.height);
+
+    const taller = changedSize(80, 24, 80, 40).?;
+    try std.testing.expectEqual(@as(u16, 80), taller.width);
+    try std.testing.expectEqual(@as(u16, 40), taller.height);
+}
 
 fn ensureWindowsUnicodeSupport() void {
     if (builtin.os.tag != .windows) return;

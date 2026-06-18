@@ -4,7 +4,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 
 ## Core Modules
 - `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`.
-- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, plus key codes (`KeyCode.*`) and modifiers.
+- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
 - `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement` adapters let widgets participate in container layouts.
@@ -61,6 +61,8 @@ _ = try app.handleResize(term.width, term.height);
 if (try input_handler.pollEvent(16)) |evt| {
     try app.processInputEvent(evt); // resize events update renderer + reflow
 }
+
+input_handler.setResizePollInterval(125); // default; use 0 to poll every call
 ```
 
 ### Widget Creation & Layout

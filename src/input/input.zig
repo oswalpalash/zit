@@ -10,6 +10,15 @@ const windows_sync = struct {
     extern "kernel32" fn WaitForSingleObject(hHandle: std.os.windows.HANDLE, dwMilliseconds: std.os.windows.DWORD) std.os.windows.DWORD;
 };
 
+const default_resize_poll_interval_ms: u64 = 125;
+
+fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
+    if (interval_ms == 0 or last_poll_ms == 0) return true;
+    if (now_ms < last_poll_ms) return true;
+    const elapsed: u64 = @intCast(now_ms - last_poll_ms);
+    return elapsed >= interval_ms;
+}
+
 /// Input handling module
 ///
 /// This module provides functionality for processing keyboard and mouse input:
@@ -956,6 +965,10 @@ pub const InputHandler = struct {
     chord_timeout_ms: u64,
     /// Last key press time (for chord detection)
     last_key_time: i64,
+    /// Interval for polling terminal size in addition to signal-driven resize.
+    resize_poll_interval_ms: u64,
+    /// Last terminal-size poll timestamp.
+    last_resize_poll_ms: i64,
 
     /// Initialize a new input handler
     pub fn init(allocator: std.mem.Allocator, term: *terminal.Terminal) InputHandler {
@@ -970,7 +983,17 @@ pub const InputHandler = struct {
             .first_chord_key = null,
             .chord_timeout_ms = 1000, // 1 second timeout for chords
             .last_key_time = 0,
+            .resize_poll_interval_ms = default_resize_poll_interval_ms,
+            .last_resize_poll_ms = 0,
         };
+    }
+
+    /// Configure periodic terminal-size polling.
+    ///
+    /// Set `interval_ms` to 0 to check on every `pollEvent` call. Signal-driven
+    /// resize events are still consumed immediately.
+    pub fn setResizePollInterval(self: *InputHandler, interval_ms: u64) void {
+        self.resize_poll_interval_ms = interval_ms;
     }
 
     /// Enable mouse tracking
@@ -1234,10 +1257,26 @@ pub const InputHandler = struct {
         };
     }
 
+    fn pollResizeIfDue(self: *InputHandler) !?Event {
+        const now_ms = compat.nowMillis();
+        if (!shouldPollResize(self.last_resize_poll_ms, now_ms, self.resize_poll_interval_ms)) {
+            return null;
+        }
+        self.last_resize_poll_ms = now_ms;
+
+        if (try self.term.pollResize()) |size| {
+            return Event{ .resize = ResizeEvent.init(size.width, size.height) };
+        }
+        return null;
+    }
+
     /// Poll for an event with timeout
     pub fn pollEvent(self: *InputHandler, timeout_ms: u64) !?Event {
         if (try self.term.takeResize()) |size| {
             return Event{ .resize = ResizeEvent.init(size.width, size.height) };
+        }
+        if (try self.pollResizeIfDue()) |event| {
+            return event;
         }
 
         if (builtin.os.tag == .windows) {
@@ -1247,13 +1286,13 @@ pub const InputHandler = struct {
 
             switch (wait_result) {
                 windows_sync.WAIT_OBJECT_0 => {},
-                windows_sync.WAIT_TIMEOUT => return null,
-                else => return null,
+                windows_sync.WAIT_TIMEOUT => return try self.pollResizeIfDue(),
+                else => return try self.pollResizeIfDue(),
             }
 
             return self.readEvent() catch |err| {
                 if (isNonBlockingError(err)) {
-                    return null;
+                    return try self.pollResizeIfDue();
                 }
                 return err;
             };
@@ -1274,7 +1313,7 @@ pub const InputHandler = struct {
             };
 
             if (poll_result <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
-                return null;
+                return try self.pollResizeIfDue();
             }
 
             // Try to read an event - being careful with error handling
@@ -1282,7 +1321,7 @@ pub const InputHandler = struct {
                 if (isNonBlockingError(err)) {
                     // This can happen if the terminal state changes between poll and read
                     compat.sleepMillis(1); // Small pause
-                    return null;
+                    return try self.pollResizeIfDue();
                 }
                 // Pass through other errors
                 return err;
@@ -1304,13 +1343,13 @@ pub const InputHandler = struct {
 
             // If there's no data or an error, return null
             if (ready <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
-                return null;
+                return try self.pollResizeIfDue();
             }
 
             // Try to read an event
             return self.readEvent() catch |err| {
                 if (isNonBlockingError(err)) {
-                    return null;
+                    return try self.pollResizeIfDue();
                 }
                 return err;
             };
@@ -1720,4 +1759,12 @@ test "invalid csi input is treated as unknown event" {
     const parsed = try decodeEventFromBytes(bad);
     try std.testing.expect(parsed != null);
     try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
+}
+
+test "resize polling throttle handles first poll interval and clock movement" {
+    try std.testing.expect(shouldPollResize(0, 1000, 125));
+    try std.testing.expect(shouldPollResize(1000, 1000, 0));
+    try std.testing.expect(!shouldPollResize(1000, 1100, 125));
+    try std.testing.expect(shouldPollResize(1000, 1125, 125));
+    try std.testing.expect(shouldPollResize(1000, 900, 125));
 }
