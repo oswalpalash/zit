@@ -57,6 +57,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Gauges now render visible filled/empty glyphs in addition to color, so progress remains legible in screenshots and monochrome terminals.
 - BatteryIndicator now uses a deterministic single-cell charging marker, avoiding ambiguous-width glyph drift between text snapshots, ANSI screenshots, and real terminals.
 - Renderer gradient fills now ignore invalid or NaN stop positions instead of panicking on caller-provided theme data.
+- Runtime RGB and ANSI-256 color constructors now clamp invalid, oversized, and NaN values instead of panicking on caller-provided theme data.
 - Runtime layout constraints now normalize inverted min/max bounds instead of panicking during dynamic resize or reflow calculations.
 - Runtime layout dimensions now clamp invalid signed, oversized, and NaN values, and rectangle intersection/shrink math avoids u16 intermediate overflows.
 - Labels, buttons, and checkboxes now clip by grapheme and terminal-cell width, preserving UTF-8 while avoiding premature ellipsizing for exact-fit text.

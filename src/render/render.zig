@@ -28,7 +28,21 @@ fn validateColorComponent(value: anytype, comptime label: []const u8) u8 {
         return @intFromFloat(value);
     }
 
-    return std.math.cast(u8, value) orelse std.debug.panic("zit: color component {s} must be between 0 and 255 (got {any})", .{ label, value });
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |info| {
+            if (info.signedness == .signed and value < 0) return 0;
+            return std.math.cast(u8, value) orelse std.math.maxInt(u8);
+        },
+        .float => {
+            if (std.math.isNan(value) or value <= 0) return 0;
+            if (value >= @as(@TypeOf(value), @floatFromInt(std.math.maxInt(u8)))) return std.math.maxInt(u8);
+            return @intFromFloat(value);
+        },
+        else => {
+            const msg = std.fmt.comptimePrint("zit: color component {s} must be numeric", .{label});
+            @compileError(msg);
+        },
+    }
 }
 
 fn validateAnsiIndex(value: anytype) u8 {
@@ -45,7 +59,18 @@ fn validateAnsiIndex(value: anytype) u8 {
         return @intFromFloat(value);
     }
 
-    return std.math.cast(u8, value) orelse std.debug.panic("zit: ANSI 256-color index must be between 0 and 255 (got {any})", .{value});
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |info| {
+            if (info.signedness == .signed and value < 0) return 0;
+            return std.math.cast(u8, value) orelse std.math.maxInt(u8);
+        },
+        .float => {
+            if (std.math.isNan(value) or value <= 0) return 0;
+            if (value >= @as(@TypeOf(value), @floatFromInt(std.math.maxInt(u8)))) return std.math.maxInt(u8);
+            return @intFromFloat(value);
+        },
+        else => @compileError("zit: ANSI 256-color index must be numeric"),
+    }
 }
 
 /// Output rendering module
@@ -1947,6 +1972,51 @@ test "ansi helpers produce stable sequences" {
 
     const style = (Style{ .bold = true, .underline = true }).toAnsi();
     try std.testing.expectEqualStrings("1;4", style.slice());
+}
+
+test "runtime color constructors clamp invalid input without trapping" {
+    const Runtime = struct {
+        noinline fn signed(value: i32) i32 {
+            return value;
+        }
+
+        noinline fn unsigned(value: u32) u32 {
+            return value;
+        }
+
+        noinline fn float(value: f32) f32 {
+            return value;
+        }
+    };
+
+    const rgb = colorToRgb(Color.rgb(
+        Runtime.signed(-10),
+        Runtime.unsigned(999),
+        Runtime.float(std.math.nan(f32)),
+    ));
+    try std.testing.expectEqual(@as(u8, 0), rgb.r);
+    try std.testing.expectEqual(@as(u8, 255), rgb.g);
+    try std.testing.expectEqual(@as(u8, 0), rgb.b);
+
+    const rounded_down = colorToRgb(Color.rgb(
+        Runtime.float(12.75),
+        Runtime.float(-1.5),
+        Runtime.float(300.25),
+    ));
+    try std.testing.expectEqual(@as(u8, 12), rounded_down.r);
+    try std.testing.expectEqual(@as(u8, 0), rounded_down.g);
+    try std.testing.expectEqual(@as(u8, 255), rounded_down.b);
+
+    const low_index = Color.ansi256(Runtime.signed(-3));
+    const high_index = Color.ansi256(Runtime.unsigned(300));
+    const nan_index = Color.ansi256(Runtime.float(std.math.nan(f32)));
+
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .ansi_256), std.meta.activeTag(low_index));
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .ansi_256), std.meta.activeTag(high_index));
+    try std.testing.expectEqual(@as(std.meta.Tag(Color), .ansi_256), std.meta.activeTag(nan_index));
+    try std.testing.expectEqual(@as(u8, 0), low_index.ansi_256);
+    try std.testing.expectEqual(@as(u8, 255), high_index.ansi_256);
+    try std.testing.expectEqual(@as(u8, 0), nan_index.ansi_256);
 }
 
 test "capability detection degrades gracefully on allocation failure" {
