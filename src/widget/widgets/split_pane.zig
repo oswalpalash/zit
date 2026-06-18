@@ -71,7 +71,8 @@ pub const SplitPane = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*SplitPane, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -94,7 +95,8 @@ pub const SplitPane = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*SplitPane, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled or !self.widget.visible) return false;
 
         // Allow keyboard nudging of divider.
@@ -143,7 +145,8 @@ pub const SplitPane = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*SplitPane, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         if (self.orientation == .horizontal) {
@@ -174,7 +177,8 @@ pub const SplitPane = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*SplitPane, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled or !self.widget.visible) return false;
         const first_focusable = if (self.first) |child| child.canFocus() else false;
         const second_focusable = if (self.second) |child| child.canFocus() else false;

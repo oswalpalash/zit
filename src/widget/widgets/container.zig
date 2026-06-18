@@ -89,7 +89,8 @@ pub const Container = struct {
 
     /// Draw implementation for Container
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Container, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Container = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -124,7 +125,8 @@ pub const Container = struct {
 
     /// Event handling implementation for Container
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Container, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Container = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -145,7 +147,8 @@ pub const Container = struct {
 
     /// Layout implementation for Container
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Container, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Container = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         // Simple layout: just give each child the full container area
@@ -160,7 +163,8 @@ pub const Container = struct {
 
     /// Get preferred size implementation for Container
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Container, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Container = @fieldParentPtr("widget", widget_ref);
 
         // Start with minimum size
         var width: u16 = 0;
@@ -183,7 +187,8 @@ pub const Container = struct {
 
     /// Can focus implementation for Container
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Container, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Container = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.enabled) {
             return false;
@@ -225,12 +230,14 @@ test "container lays out child and forwards events" {
 
         fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
         fn handleEventFn(widget_ptr: *anyopaque, _: input.Event) anyerror!bool {
-            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
             self.handled = true;
             return true;
         }
         fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
             self.last_rect = rect;
         }
         fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {

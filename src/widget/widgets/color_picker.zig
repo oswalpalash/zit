@@ -76,7 +76,8 @@ pub const ColorPicker = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ColorPicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -115,7 +116,8 @@ pub const ColorPicker = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*ColorPicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
         if (self.palette.items.len == 0) return false;
 
@@ -166,12 +168,14 @@ pub const ColorPicker = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout.Rect) anyerror!void {
-        const self = @as(*ColorPicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout.Size {
-        const self = @as(*ColorPicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
         const cols_count: usize = if (self.columns == 0) 1 else self.columns;
         const sw_w = if (self.swatch_width == 0) 1 else self.swatch_width;
         const sw_h = if (self.swatch_height == 0) 1 else self.swatch_height;
@@ -181,7 +185,8 @@ pub const ColorPicker = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ColorPicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.palette.items.len > 0;
     }
 };

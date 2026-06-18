@@ -73,7 +73,8 @@ pub const SyntaxHighlighter = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*SyntaxHighlighter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SyntaxHighlighter = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -270,12 +271,14 @@ pub const SyntaxHighlighter = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*SyntaxHighlighter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SyntaxHighlighter = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*SyntaxHighlighter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SyntaxHighlighter = @fieldParentPtr("widget", widget_ref);
 
         var lines: usize = 1;
         var width: usize = 0;

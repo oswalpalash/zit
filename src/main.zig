@@ -29,6 +29,6 @@ test "zit basic tests" {
     _ = @import("memory/tests/optimization_test.zig");
     _ = @import("memory/tests/ownership_test.zig");
     _ = @import("memory/tests/safety_test.zig");
-    _ = @import("widget/widgets/file_browser.zig");
+    _ = @import("widget/widget_tests.zig");
     std.testing.refAllDecls(@This());
 }

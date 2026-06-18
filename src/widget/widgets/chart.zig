@@ -110,7 +110,8 @@ pub const Chart = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Chart, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Chart = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -397,7 +398,8 @@ pub const Chart = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Chart, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Chart = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -406,7 +408,8 @@ pub const Chart = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Chart, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Chart = @fieldParentPtr("widget", widget_ref);
         return self.widget.visible and self.widget.enabled;
     }
 
@@ -496,7 +499,7 @@ test "chart renders stacked bars" {
     for (0..12) |x| {
         for (0..6) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y));
-            if (cell.fg != render.Color.named(render.NamedColor.default) or cell.bg != render.Color.named(render.NamedColor.default)) {
+            if (!std.meta.eql(cell.fg, render.Color.named(render.NamedColor.default)) or !std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) {
                 painted += 1;
             }
         }
@@ -522,7 +525,7 @@ test "chart renders area fill" {
     for (0..10) |x| {
         for (0..6) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y));
-            if (cell.bg != render.Color.named(render.NamedColor.default)) {
+            if (!std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) {
                 filled += 1;
             }
         }
@@ -577,8 +580,8 @@ test "chart draws scatter points with legend and labels" {
     for (0..16) |x| {
         for (0..8) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
-            if (cell.ch == '◆') markers += 1;
-            if (cell.ch == 'x') found_label = true;
+            if (cell.codepoint() == '◆') markers += 1;
+            if (cell.codepoint() == 'x') found_label = true;
         }
     }
     try std.testing.expect(markers > 0);

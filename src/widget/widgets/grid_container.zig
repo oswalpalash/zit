@@ -120,14 +120,16 @@ pub const GridContainer = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*GridContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         self.layout.renderLayout(renderer, self.widget.rect);
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*GridContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
 
         var idx: usize = self.children.items.len;
@@ -143,7 +145,8 @@ pub const GridContainer = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*GridContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         var ctx = LayoutContext{};
@@ -162,12 +165,14 @@ pub const GridContainer = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*GridContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         return self.layout.calculateLayout(layout_module.Constraints.loose(0, 0));
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*GridContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled) return false;
 
         for (self.children.items) |entry| {
@@ -195,12 +200,14 @@ test "grid container lays out children and forwards events" {
 
         fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
         fn handleEventFn(widget_ptr: *anyopaque, _: input.Event) anyerror!bool {
-            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
             self.handled = true;
             return true;
         }
         fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
             self.last_rect = rect;
         }
         fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {

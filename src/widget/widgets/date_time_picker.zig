@@ -198,7 +198,8 @@ pub const DateTimePicker = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*DateTimePicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -256,7 +257,8 @@ pub const DateTimePicker = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*DateTimePicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
 
         switch (event) {
@@ -291,7 +293,8 @@ pub const DateTimePicker = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*DateTimePicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -300,7 +303,8 @@ pub const DateTimePicker = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*DateTimePicker, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 };
@@ -315,9 +319,9 @@ test "date time picker rolls over time correctly" {
     try picker.widget.layout(layout_module.Rect.init(0, 0, 30, 4));
 
     picker.selected_field = .minute;
-    _ = try picker.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } });
+    _ = try picker.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } });
     try std.testing.expectEqual(@as(u8, 59), picker.value.minute);
-    _ = try picker.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } });
+    _ = try picker.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } });
     try std.testing.expectEqual(@as(u8, 0), picker.value.minute);
     try std.testing.expectEqual(@as(u8, 0), picker.value.hour);
     try std.testing.expectEqual(@as(u8, 1), picker.value.day);

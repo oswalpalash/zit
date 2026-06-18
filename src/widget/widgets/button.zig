@@ -124,7 +124,8 @@ pub const Button = struct {
 
     /// Draw implementation for Button
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Button = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -180,7 +181,8 @@ pub const Button = struct {
 
     /// Event handling implementation for Button
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Button = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -213,13 +215,15 @@ pub const Button = struct {
 
     /// Layout implementation for Button
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Button = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for Button
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Button = @fieldParentPtr("widget", widget_ref);
 
         // Calculate the preferred height based on text length
         const text_width = text_metrics.measureWidth(self.button_text).width;
@@ -233,7 +237,8 @@ pub const Button = struct {
 
     /// Can focus implementation for Button
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Button, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Button = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
 };

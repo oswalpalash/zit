@@ -63,7 +63,8 @@ pub const Popup = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Popup = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -82,7 +83,8 @@ pub const Popup = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Popup = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
 
         switch (event) {
@@ -105,7 +107,8 @@ pub const Popup = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Popup = @fieldParentPtr("widget", widget_ref);
         const preferred = try getPreferredSizeFn(widget_ptr);
         const actual_width = @min(rect.width, preferred.width);
         const actual_height = @min(rect.height, preferred.height);
@@ -119,14 +122,16 @@ pub const Popup = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Popup = @fieldParentPtr("widget", widget_ref);
         const min_width: u16 = 10;
         const text_width = @as(u16, @intCast(self.message.len + 4));
         return layout_module.Size.init(@max(min_width, @min(text_width, self.width)), self.height);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Popup, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Popup = @fieldParentPtr("widget", widget_ref);
         return self.widget.visible and self.widget.enabled;
     }
 };

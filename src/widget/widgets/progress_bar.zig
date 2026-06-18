@@ -183,7 +183,8 @@ pub const ProgressBar = struct {
 
     /// Draw implementation for ProgressBar
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ProgressBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ProgressBar = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -273,7 +274,8 @@ pub const ProgressBar = struct {
 
     /// Event handling implementation for ProgressBar
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*ProgressBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ProgressBar = @fieldParentPtr("widget", widget_ref);
         _ = self;
         _ = event;
         return false; // Progress bar doesn't handle events
@@ -281,13 +283,15 @@ pub const ProgressBar = struct {
 
     /// Layout implementation for ProgressBar
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ProgressBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ProgressBar = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for ProgressBar
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*ProgressBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ProgressBar = @fieldParentPtr("widget", widget_ref);
 
         if (self.direction == .horizontal) {
             return layout_module.Size.init(10, 1); // Default horizontal progress bar size

@@ -106,7 +106,8 @@ pub const Checkbox = struct {
 
     /// Draw implementation for Checkbox
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Checkbox = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -158,7 +159,8 @@ pub const Checkbox = struct {
 
     /// Event handling implementation for Checkbox
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Checkbox = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -187,13 +189,15 @@ pub const Checkbox = struct {
 
     /// Layout implementation for Checkbox
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Checkbox = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for Checkbox
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Checkbox = @fieldParentPtr("widget", widget_ref);
 
         const label_width: usize = text_metrics.measureWidth(self.label).width;
         return layout_module.Size.init(@as(u16, @intCast(@min(label_width + 4, 40))), // Cap width at 40 cells
@@ -203,7 +207,8 @@ pub const Checkbox = struct {
 
     /// Can focus implementation for Checkbox
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Checkbox, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Checkbox = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
 };
@@ -240,6 +245,22 @@ test "checkbox toggles and fires callback" {
     try std.testing.expect(checkbox.checked);
     try std.testing.expectEqual(@as(usize, 1), test_checkbox_calls);
     try std.testing.expectEqual(true, test_checkbox_state.?);
+}
+
+test "checkbox handles decoded terminal mouse coordinates at rendered row" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Agree");
+    defer checkbox.deinit();
+
+    checkbox.widget.rect = layout_module.Rect.init(2, 3, 10, 1);
+
+    const row_above = (try input.decodeEventFromBytes("\x1b[<0;3;3M")).?;
+    try std.testing.expect(!try checkbox.widget.handleEvent(row_above));
+    try std.testing.expect(!checkbox.checked);
+
+    const rendered_row = (try input.decodeEventFromBytes("\x1b[<0;3;4M")).?;
+    try std.testing.expect(try checkbox.widget.handleEvent(rendered_row));
+    try std.testing.expect(checkbox.checked);
 }
 
 test "checkbox does not ellipsize label that exactly fits preferred width" {

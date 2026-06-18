@@ -266,7 +266,8 @@ pub const ScreenManager = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ScreenManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or self.screens.items.len == 0) return;
 
         const rect = self.widget.rect;
@@ -291,7 +292,8 @@ pub const ScreenManager = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*ScreenManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or self.screens.items.len == 0) return false;
 
         const target_idx = blk: {
@@ -306,7 +308,8 @@ pub const ScreenManager = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ScreenManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
         self.last_rect = rect;
         for (self.screens.items) |entry| {
@@ -315,7 +318,8 @@ pub const ScreenManager = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*ScreenManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         var pref = layout_module.Size.init(40, 12);
         for (self.screens.items) |entry| {
             const child_pref = try entry.screen.widget.getPreferredSize();
@@ -326,7 +330,8 @@ pub const ScreenManager = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ScreenManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled) return false;
         const entry = self.topEntry() orelse return false;
         return entry.screen.widget.canFocus();

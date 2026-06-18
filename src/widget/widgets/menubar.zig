@@ -57,7 +57,8 @@ pub const MenuBar = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*MenuBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -75,7 +76,8 @@ pub const MenuBar = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*MenuBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled or !self.widget.visible) return false;
 
         switch (event) {
@@ -117,12 +119,14 @@ pub const MenuBar = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*MenuBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*MenuBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         var width: u16 = 0;
         for (self.items.items) |item| {
             const add: u16 = @intCast(@min(item.label.len + 2, 60));
@@ -132,7 +136,8 @@ pub const MenuBar = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*MenuBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible and self.items.items.len > 0;
     }
 };

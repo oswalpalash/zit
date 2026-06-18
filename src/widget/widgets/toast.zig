@@ -87,7 +87,8 @@ pub const ToastManager = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ToastManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ToastManager = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -115,7 +116,8 @@ pub const ToastManager = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ToastManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ToastManager = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -125,7 +127,8 @@ pub const ToastManager = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ToastManager, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ToastManager = @fieldParentPtr("widget", widget_ref);
         return self.widget.visible and self.widget.enabled;
     }
 

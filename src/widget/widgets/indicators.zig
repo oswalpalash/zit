@@ -47,7 +47,8 @@ pub const BatteryIndicator = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*BatteryIndicator, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *BatteryIndicator = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -91,7 +92,8 @@ pub const BatteryIndicator = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*BatteryIndicator, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *BatteryIndicator = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -100,7 +102,8 @@ pub const BatteryIndicator = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*BatteryIndicator, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *BatteryIndicator = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 };
@@ -143,7 +146,8 @@ pub const SignalStrength = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*SignalStrength, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SignalStrength = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -173,7 +177,8 @@ pub const SignalStrength = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*SignalStrength, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SignalStrength = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -182,7 +187,8 @@ pub const SignalStrength = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*SignalStrength, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SignalStrength = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 };
@@ -241,7 +247,8 @@ pub const ResourceMeter = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ResourceMeter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ResourceMeter = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
         if (rect.width < 4 or rect.height == 0) return;
@@ -265,7 +272,8 @@ pub const ResourceMeter = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ResourceMeter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ResourceMeter = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -274,7 +282,8 @@ pub const ResourceMeter = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ResourceMeter, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ResourceMeter = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 };
@@ -318,7 +327,8 @@ pub const TrafficLight = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TrafficLight, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TrafficLight = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
         if (rect.width < 5 or rect.height < 3) return;
@@ -354,7 +364,8 @@ pub const TrafficLight = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TrafficLight, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TrafficLight = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -363,7 +374,8 @@ pub const TrafficLight = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TrafficLight, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TrafficLight = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 };
@@ -384,7 +396,7 @@ test "battery indicator renders fill" {
     for (0..14) |x| {
         for (0..4) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
-            if (cell.bg != render.Color.named(render.NamedColor.default)) filled += 1;
+            if (!std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) filled += 1;
         }
     }
     try std.testing.expect(filled > 0);
@@ -407,8 +419,8 @@ test "battery indicator uses deterministic single-cell charging marker" {
     for (0..14) |x| {
         for (0..4) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
-            if (cell.char == '+') found_marker = true;
-            try std.testing.expect(cell.char != '⚡');
+            if (cell.codepoint() == '+') found_marker = true;
+            try std.testing.expect(cell.codepoint() != '⚡');
         }
     }
     try std.testing.expect(found_marker);
@@ -430,7 +442,7 @@ test "signal strength paints multiple bars" {
     for (0..12) |x| {
         for (0..4) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
-            if (cell.bg != render.Color.named(render.NamedColor.default)) bars += 1;
+            if (!std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) bars += 1;
         }
     }
     try std.testing.expect(bars > 0);
@@ -452,7 +464,7 @@ test "resource meter writes label text" {
     var seen_c: bool = false;
     for (0..18) |x| {
         const cell = renderer.back.getCell(@intCast(x), 1).*;
-        if (cell.ch == 'C') seen_c = true;
+        if (cell.codepoint() == 'C') seen_c = true;
     }
     try std.testing.expect(seen_c);
 }
@@ -473,7 +485,7 @@ test "traffic light highlights active color" {
     for (0..12) |x| {
         for (0..3) |y| {
             const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
-            if (cell.ch == '●') highlighted += 1;
+            if (cell.codepoint() == '●') highlighted += 1;
         }
     }
     try std.testing.expect(highlighted > 0);

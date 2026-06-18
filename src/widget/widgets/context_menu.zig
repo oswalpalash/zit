@@ -103,7 +103,8 @@ pub const ContextMenu = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ContextMenu, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ContextMenu = @fieldParentPtr("widget", widget_ref);
         if (!self.open or !self.widget.visible) return;
         const rect = self.widget.rect;
         if (rect.width == 0 or rect.height == 0) return;
@@ -134,7 +135,8 @@ pub const ContextMenu = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*ContextMenu, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ContextMenu = @fieldParentPtr("widget", widget_ref);
         if (!self.open or !self.widget.enabled) return false;
 
         switch (event) {
@@ -190,20 +192,23 @@ pub const ContextMenu = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ContextMenu, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ContextMenu = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
         if (self.open) self.widget.rect.height = self.computedHeight();
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*ContextMenu, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ContextMenu = @fieldParentPtr("widget", widget_ref);
         const width = self.preferredWidth();
         const height = self.computedHeight();
         return layout_module.Size.init(width, if (height == 0) 2 else height);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ContextMenu, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ContextMenu = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.open;
     }
 

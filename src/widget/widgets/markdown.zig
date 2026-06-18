@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme_mod = @import("../theme.zig");
 
@@ -215,7 +216,8 @@ pub const Markdown = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Markdown, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Markdown = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -230,13 +232,16 @@ pub const Markdown = struct {
         while (row < max_lines) : (row += 1) {
             const line = &self.lines.items[row];
             var cursor_x: u16 = rect.x;
+            var scratch: [1024]u8 = undefined;
             for (line.segments.items) |segment| {
                 if (cursor_x >= rect.x + rect.width) break;
                 const available: u16 = rect.x + rect.width - cursor_x;
-                const take_len: usize = @min(segment.text.len, available);
-                if (take_len == 0) break;
-                renderer.drawStr(cursor_x, rect.y + @as(u16, @intCast(row)), segment.text[0..take_len], segment.color, bg, segment.style);
-                cursor_x += @intCast(take_len);
+                const clipped = text_metrics.truncateToWidth(segment.text, available, scratch[0..], false);
+                if (clipped.len == 0) break;
+                renderer.drawStr(cursor_x, rect.y + @as(u16, @intCast(row)), clipped, segment.color, bg, segment.style);
+                const width = text_metrics.measureWidth(clipped).width;
+                if (width == 0) break;
+                cursor_x += width;
             }
         }
     }
@@ -246,7 +251,8 @@ pub const Markdown = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Markdown, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Markdown = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -275,7 +281,8 @@ pub const Markdown = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Markdown, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Markdown = @fieldParentPtr("widget", widget_ref);
         return self.get_preferred_dimensions();
     }
 

@@ -98,7 +98,8 @@ pub const Label = struct {
 
     /// Draw implementation for Label
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Label, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Label = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -164,13 +165,15 @@ pub const Label = struct {
 
     /// Layout implementation for Label
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Label, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Label = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     /// Get preferred size implementation for Label
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Label, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Label = @fieldParentPtr("widget", widget_ref);
 
         if (self.text.len == 0) {
             return layout_module.Size.zero();

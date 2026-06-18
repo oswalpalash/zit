@@ -79,7 +79,8 @@ pub const Block = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Block, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Block = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -107,7 +108,8 @@ pub const Block = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Block, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Block = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
 
         if (self.child) |child| {
@@ -117,7 +119,8 @@ pub const Block = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Block, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Block = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         if (self.child) |child| {
@@ -127,7 +130,8 @@ pub const Block = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Block, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Block = @fieldParentPtr("widget", widget_ref);
         const border_thickness: u16 = if (self.border == .none) 0 else 2;
 
         var preferred = layout_module.Size.init(border_thickness, border_thickness);
@@ -147,7 +151,8 @@ pub const Block = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Block, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Block = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled) return false;
         if (self.child) |child| return child.*.canFocus();
         return false;
@@ -190,7 +195,8 @@ test "block applies padding and border to child layout" {
             return false;
         }
         fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-            const self = @as(*Self, @ptrCast(@alignCast(widget_ptr)));
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
             self.last_rect = rect;
         }
         fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {

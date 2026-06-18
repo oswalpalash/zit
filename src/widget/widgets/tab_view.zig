@@ -121,7 +121,8 @@ pub const TabBar = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TabBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -176,7 +177,8 @@ pub const TabBar = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*TabBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or self.tabs.len == 0) return false;
 
         if (event == .mouse) {
@@ -240,12 +242,14 @@ pub const TabBar = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TabBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*TabBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         var width: i16 = 2;
         for (self.tabs) |tab| {
             width += self.tabWidth(tab) + 1;
@@ -254,7 +258,8 @@ pub const TabBar = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TabBar, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.tabs.len > 0;
     }
 
@@ -590,7 +595,8 @@ pub const TabView = struct {
 
     /// Draw implementation for TabView
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabView = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -633,7 +639,8 @@ pub const TabView = struct {
 
     /// Event handling implementation for TabView
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabView = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled or self.tabs.items.len == 0) {
             return false;
@@ -649,7 +656,8 @@ pub const TabView = struct {
 
     /// Layout implementation for TabView
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabView = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
@@ -666,7 +674,8 @@ pub const TabView = struct {
 
     /// Get preferred size implementation for TabView
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabView = @fieldParentPtr("widget", widget_ref);
 
         var width: i16 = 20;
         var height: i16 = self.tab_bar.tab_height;
@@ -691,7 +700,8 @@ pub const TabView = struct {
 
     /// Can focus implementation for TabView
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TabView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TabView = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled or self.tabs.items.len == 0) return false;
 
         if (self.tab_bar.widget.canFocus()) return true;

@@ -65,23 +65,31 @@ const Counter = struct {
         .can_focus = canFocus,
     };
 
-    fn layout(self: *Counter, rect: layout.Rect) !void {
+    fn owner(widget_ptr: *anyopaque) *Counter {
+        const widget_ref: *widget.Widget = @ptrCast(@alignCast(widget_ptr));
+        return @fieldParentPtr("widget", widget_ref);
+    }
+
+    fn layout(widget_ptr: *anyopaque, rect: layout.Rect) !void {
+        const self = owner(widget_ptr);
         self.widget.rect = rect;
     }
 
-    fn preferred(_: *Counter) !layout.Size {
+    fn preferred(_: *anyopaque) !layout.Size {
         // Enough space for "Count: -9999"
         return layout.Size{ .width = 14, .height = 1 };
     }
 
-    fn draw(self: *Counter, r: *render.Renderer) !void {
+    fn draw(widget_ptr: *anyopaque, r: *render.Renderer) !void {
+        const self = owner(widget_ptr);
         var buf: [32]u8 = undefined;
         const text = try std.fmt.bufPrint(&buf, "Count: {d}", .{self.value});
         try r.drawStr(self.widget.rect.x, self.widget.rect.y, text, .{ .named_color = .bright_white }, .{ .named_color = .default }, render.Style{ .bold = true });
         self.widget.drawFocusRing(r);
     }
 
-    fn handleEvent(self: *Counter, e: input.Event) !bool {
+    fn handleEvent(widget_ptr: *anyopaque, e: input.Event) !bool {
+        const self = owner(widget_ptr);
         switch (e) {
             .key => |key| {
                 if (key.key == '+' or key.key == '=') { self.value += 1; return true; }
@@ -92,11 +100,13 @@ const Counter = struct {
         return false;
     }
 
-    fn canFocus(_: *Counter) bool {
+    fn canFocus(_: *anyopaque) bool {
         return true;
     }
 };
 ```
+
+Use `@fieldParentPtr("widget", widget_ref)` in vtable callbacks. Do not cast the embedded `Widget` pointer directly to the concrete widget type; normal Zig structs do not promise that a field lives at offset zero.
 **Usage**
 ```zig
 var counter = try allocator.create(Counter);

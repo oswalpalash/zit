@@ -91,7 +91,8 @@ pub const Paragraph = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Paragraph, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Paragraph = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -149,12 +150,14 @@ pub const Paragraph = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Paragraph, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Paragraph = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Paragraph, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Paragraph = @fieldParentPtr("widget", widget_ref);
         var max_width: usize = 0;
         var lines: usize = 1;
         var current: usize = 0;
@@ -239,7 +242,7 @@ test "paragraph wraps and scrolls" {
 
     // After scrolling one line, the second wrapped line should be visible first.
     const cell0 = renderer.back.getCell(0, 0).*;
-    try std.testing.expectEqual('b', cell0.ch);
+    try std.testing.expectEqual(@as(u21, 'b'), cell0.codepoint());
 }
 
 test "paragraph setText preserves text on allocation failure" {

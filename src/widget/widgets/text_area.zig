@@ -901,7 +901,8 @@ pub const TextArea = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TextArea, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -1007,77 +1008,83 @@ pub const TextArea = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*TextArea, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) return false;
 
-        if (event == .key and self.widget.focused) {
-            const key_event = event.key;
-            const profiles = [_]input.KeybindingProfile{
-                input.KeybindingProfile.commonEditing(),
-                input.KeybindingProfile.emacs(),
-                input.KeybindingProfile.vi(),
-            };
+        switch (event) {
+            .key => |key_event| {
+                if (!self.widget.focused) return false;
+                const profiles = [_]input.KeybindingProfile{
+                    input.KeybindingProfile.commonEditing(),
+                    input.KeybindingProfile.emacs(),
+                    input.KeybindingProfile.vi(),
+                };
 
-            self.clampCursor();
+                self.clampCursor();
 
-            if (input.editorActionForEvent(key_event, &profiles)) |action| {
-                if (try self.applyEditorAction(action)) {
-                    const viewport = self.viewportSize();
-                    self.ensureVisible(viewport.width, viewport.height);
-                    return true;
+                if (input.editorActionForEvent(key_event, &profiles)) |action| {
+                    if (try self.applyEditorAction(action)) {
+                        const viewport = self.viewportSize();
+                        self.ensureVisible(viewport.width, viewport.height);
+                        return true;
+                    }
                 }
-            }
 
-            switch (key_event.key) {
-                input.KeyCode.ENTER => {
-                    if (self.submit_on_ctrl_enter and key_event.modifiers.ctrl) {
-                        if (self.on_submit) |callback| callback(self.buffer.items);
-                        return true;
-                    }
-                    _ = try self.insertSlice("\n");
-                    self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
-                    return true;
-                },
-                input.KeyCode.BACKSPACE => {
-                    if (try self.deleteBackward()) {
-                        self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
-                    }
-                    return true;
-                },
-                input.KeyCode.DELETE => {
-                    if (try self.deleteForward()) {
-                        self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
-                    }
-                    return true;
-                },
-                else => {
-                    if (key_event.isTextInput() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
-                        var utf8_buf: [4]u8 = undefined;
-                        const bytes = key_event.utf8(&utf8_buf) orelse return false;
-                        if (!try self.insertSlice(bytes)) return false;
+                switch (key_event.key) {
+                    input.KeyCode.ENTER => {
+                        if (self.submit_on_ctrl_enter and key_event.modifiers.ctrl) {
+                            if (self.on_submit) |callback| callback(self.buffer.items);
+                            return true;
+                        }
+                        _ = try self.insertSlice("\n");
                         self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
                         return true;
-                    }
-                },
-            }
-        } else if (event == .mouse) {
-            const mouse_event = event.mouse;
-            if (mouse_event.action == .press and mouse_event.button == 1) {
-                return self.contentRect().contains(mouse_event.x, mouse_event.y);
-            }
+                    },
+                    input.KeyCode.BACKSPACE => {
+                        if (try self.deleteBackward()) {
+                            self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+                        }
+                        return true;
+                    },
+                    input.KeyCode.DELETE => {
+                        if (try self.deleteForward()) {
+                            self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+                        }
+                        return true;
+                    },
+                    else => {
+                        if (key_event.isTextInput() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
+                            var utf8_buf: [4]u8 = undefined;
+                            const bytes = key_event.utf8(&utf8_buf) orelse return false;
+                            if (!try self.insertSlice(bytes)) return false;
+                            self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+                            return true;
+                        }
+                    },
+                }
+            },
+            .mouse => |mouse_event| {
+                if (mouse_event.action == .press and mouse_event.button == 1) {
+                    return self.contentRect().contains(mouse_event.x, mouse_event.y);
+                }
+            },
+            else => {},
         }
 
         return false;
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TextArea, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*TextArea, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         const border_adjust: u16 = if (self.show_border) 2 else 0;
         return layout_module.Size.init(
             40 + border_adjust,
@@ -1086,7 +1093,8 @@ pub const TextArea = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TextArea, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
 };
@@ -1153,8 +1161,9 @@ test "text area validation surfaces rule failures" {
     defer res.deinit();
 
     try std.testing.expect(!res.isValid());
+    try std.testing.expectEqual(@as(usize, 1), res.errors.items.len);
     try std.testing.expectEqualStrings("body", res.errors.items[0].field);
-    try std.testing.expectEqualStrings("too short", res.errors.items[1].message);
+    try std.testing.expectEqualStrings("too short", res.errors.items[0].message);
 }
 
 fn textAreaInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {

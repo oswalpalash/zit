@@ -294,7 +294,8 @@ pub const ScrollContainer = struct {
 
     /// Draw implementation for ScrollContainer
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*ScrollContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -403,7 +404,8 @@ pub const ScrollContainer = struct {
 
     /// Event handling implementation for ScrollContainer
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*ScrollContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -547,7 +549,8 @@ pub const ScrollContainer = struct {
 
     /// Layout implementation for ScrollContainer
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*ScrollContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
         // Layout scrollbars
@@ -601,7 +604,8 @@ pub const ScrollContainer = struct {
 
     /// Get preferred size implementation for ScrollContainer
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*ScrollContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
 
         var width: i16 = 10; // Minimum width
         var height: i16 = 5; // Minimum height
@@ -632,7 +636,8 @@ pub const ScrollContainer = struct {
 
     /// Can focus implementation for ScrollContainer
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*ScrollContainer, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.enabled) {
             return false;

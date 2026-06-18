@@ -144,7 +144,8 @@ pub const TreeView = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TreeView = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -203,7 +204,8 @@ pub const TreeView = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TreeView = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.enabled or !self.widget.visible) return false;
 
         try self.syncVisible();
@@ -285,12 +287,14 @@ pub const TreeView = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TreeView = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TreeView = @fieldParentPtr("widget", widget_ref);
         const width_guess: usize = @min(self.visible.items.len + 8, @as(usize, 32));
         const height_guess: usize = @min(self.visible.items.len, @as(usize, 10));
         const width: u16 = @intCast(@max(width_guess, 12));
@@ -299,7 +303,8 @@ pub const TreeView = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*TreeView, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TreeView = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible;
     }
 
@@ -323,12 +328,12 @@ test "tree view expands and navigates" {
     try std.testing.expectEqual(@as(usize, 1), tree.visibleCount());
 
     const toggle = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.SPACE, .modifiers = .{} } };
-    _ = try tree.handleEvent(toggle);
+    _ = try tree.widget.handleEvent(toggle);
     try tree.syncVisible();
     try std.testing.expectEqual(@as(usize, 2), tree.visibleCount());
 
     const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
-    _ = try tree.handleEvent(down);
+    _ = try tree.widget.handleEvent(down);
     try std.testing.expect(tree.selected == 1);
 }
 

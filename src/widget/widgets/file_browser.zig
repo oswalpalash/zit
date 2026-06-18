@@ -244,7 +244,8 @@ pub const FileBrowser = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *FileBrowser = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) return;
 
@@ -371,7 +372,8 @@ pub const FileBrowser = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *FileBrowser = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled or self.entries.items.len == 0) return false;
 
@@ -459,7 +461,8 @@ pub const FileBrowser = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *FileBrowser = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
     }
 
@@ -468,7 +471,8 @@ pub const FileBrowser = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *FileBrowser = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.entries.items.len > 0;
     }
 };

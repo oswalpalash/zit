@@ -165,7 +165,8 @@ pub const Modal = struct {
 
     /// Draw implementation for Modal
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Modal = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible) {
             return;
@@ -215,7 +216,8 @@ pub const Modal = struct {
 
     /// Event handling implementation for Modal
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Modal = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.visible or !self.widget.enabled) {
             return false;
@@ -243,7 +245,8 @@ pub const Modal = struct {
 
     /// Layout implementation for Modal
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Modal = @fieldParentPtr("widget", widget_ref);
 
         var modal_rect = rect;
 
@@ -293,7 +296,8 @@ pub const Modal = struct {
 
     /// Can focus implementation for Modal
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Modal = @fieldParentPtr("widget", widget_ref);
 
         if (!self.widget.enabled) {
             return false;
@@ -308,7 +312,8 @@ pub const Modal = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!Size {
-        const self = @as(*Modal, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Modal = @fieldParentPtr("widget", widget_ref);
         return self.getPreferredSize();
     }
 };

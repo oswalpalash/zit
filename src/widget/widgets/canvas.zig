@@ -125,7 +125,8 @@ pub const Canvas = struct {
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
-        const self = @as(*Canvas, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Canvas = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -146,7 +147,8 @@ pub const Canvas = struct {
     }
 
     fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
-        const self = @as(*Canvas, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Canvas = @fieldParentPtr("widget", widget_ref);
         if (rect.width != self.width or rect.height != self.height) {
             try self.resize(rect.width, rect.height);
         }
@@ -154,12 +156,14 @@ pub const Canvas = struct {
     }
 
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
-        const self = @as(*Canvas, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Canvas = @fieldParentPtr("widget", widget_ref);
         return layout_module.Size.init(self.width, self.height);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        const self = @as(*Canvas, @ptrCast(@alignCast(widget_ptr)));
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *Canvas = @fieldParentPtr("widget", widget_ref);
         return self.widget.visible and self.widget.enabled;
     }
 
@@ -188,8 +192,8 @@ test "canvas draws primitives" {
     try canvas.widget.draw(&renderer);
 
     const first_cell = renderer.back.getCell(0, 0).*;
-    try std.testing.expectEqual(@as(u21, '#'), first_cell.char);
+    try std.testing.expectEqual(@as(u21, '#'), first_cell.codepoint());
 
     const rect_cell = renderer.back.getCell(2, 2).*;
-    try std.testing.expectEqual(@as(u21, '*'), rect_cell.char);
+    try std.testing.expectEqual(@as(u21, '*'), rect_cell.codepoint());
 }
