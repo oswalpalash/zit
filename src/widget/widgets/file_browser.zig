@@ -221,6 +221,28 @@ pub const FileBrowser = struct {
         }
     }
 
+    fn hasDrawableBorder(self: *const FileBrowser) bool {
+        const rect = self.widget.rect;
+        return self.border != .none and rect.width >= 2 and rect.height >= 2;
+    }
+
+    fn contentRect(self: *const FileBrowser) layout_module.Rect {
+        const rect = self.widget.rect;
+        if (self.hasDrawableBorder()) {
+            return rect.shrink(layout_module.EdgeInsets.all(1));
+        }
+        return rect;
+    }
+
+    fn listRect(self: *const FileBrowser) layout_module.Rect {
+        var rect = self.contentRect();
+        if (rect.height > 0) {
+            rect.y = std.math.add(u16, rect.y, 1) catch std.math.maxInt(u16);
+            rect.height -= 1;
+        }
+        return rect;
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = @as(*FileBrowser, @ptrCast(@alignCast(widget_ptr)));
 
@@ -231,26 +253,23 @@ pub const FileBrowser = struct {
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
 
-        const has_border = self.border != .none and rect.width >= 2 and rect.height >= 2;
-        const inset: u16 = if (has_border) 1 else 0;
+        const has_border = self.hasDrawableBorder();
 
         if (has_border) {
             renderer.drawBox(rect.x, rect.y, rect.width, rect.height, self.border, self.border_color, self.bg, render.Style{});
         }
 
-        if (rect.height <= inset) return;
+        const content_rect = self.contentRect();
+        if (content_rect.width == 0 or content_rect.height == 0) return;
 
         // Header with current path
-        const header_y = rect.y + inset;
-        const header_x = rect.x + inset;
-        const header_width = if (rect.width > inset * 2) rect.width - inset * 2 else 0;
+        const header_y = content_rect.y;
+        const header_x = content_rect.x;
+        const header_width = content_rect.width;
 
         // List area starts after header
-        const content_y = header_y + 1;
-        if (content_y >= rect.y + rect.height) return;
-
-        const content_height = rect.height - (content_y - rect.y);
-        self.visible_items = @intCast(content_height);
+        const list_rect = self.listRect();
+        self.visible_items = @intCast(@as(usize, list_rect.height));
         self.ensureVisible();
 
         var header_buf: [256]u8 = undefined;
@@ -265,7 +284,8 @@ pub const FileBrowser = struct {
             if (entry_index >= self.entries.items.len) break;
 
             const entry = self.entries.items[entry_index];
-            const line_y = content_y + @as(u16, @intCast(row));
+            const row_offset: u16 = @intCast(row);
+            const line_y = std.math.add(u16, list_rect.y, row_offset) catch break;
 
             const is_selected = entry_index == self.selected;
             const line_fg = if (is_selected) self.highlight_fg else self.fg;
@@ -355,18 +375,15 @@ pub const FileBrowser = struct {
 
         if (!self.widget.visible or !self.widget.enabled or self.entries.items.len == 0) return false;
 
-        const rect = self.widget.rect;
-        const has_border = self.border != .none and rect.width >= 2 and rect.height >= 2;
-        const inset: u16 = if (has_border) 1 else 0;
-        const header_y = rect.y + inset;
-        const content_y = header_y + 1;
+        const content_rect = self.contentRect();
+        const list_rect = self.listRect();
 
         switch (event) {
             .mouse => |mouse_event| {
-                if (!rect.contains(mouse_event.x, mouse_event.y)) return false;
-                if (mouse_event.y < content_y) return true;
+                if (!content_rect.contains(mouse_event.x, mouse_event.y)) return false;
+                if (!list_rect.contains(mouse_event.x, mouse_event.y)) return true;
 
-                const row = mouse_event.y - content_y;
+                const row = mouse_event.y - list_rect.y;
                 const index = self.scroll + @as(usize, @intCast(row));
                 if (index < self.entries.items.len) {
                     self.selected = index;
@@ -461,34 +478,37 @@ test "file browser navigates directories" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("nested");
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    try tmp.dir.createDirPath(io, "nested");
     {
-        const root_file = try tmp.dir.createFile("readme.txt", .{});
-        root_file.close();
+        const root_file = try tmp.dir.createFile(io, "readme.txt", .{});
+        root_file.close(io);
     }
     {
-        const nested_file = try tmp.dir.createFile("nested/note.md", .{});
-        nested_file.close();
+        const nested_file = try tmp.dir.createFile(io, "nested/note.md", .{});
+        nested_file.close(io);
     }
 
-    const root_path = try tmp.dir.realpathAlloc(alloc, ".");
+    const root_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(root_path);
 
     var browser = try FileBrowser.init(alloc, root_path);
     defer browser.deinit();
 
+    browser.widget.focused = true;
     try browser.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
     try std.testing.expect(browser.entries.items.len >= 2);
 
     // Move selection down to nested directory and enter it.
-    _ = try browser.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
-    _ = try browser.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } });
 
     try std.testing.expect(std.mem.endsWith(u8, browser.current_path, "nested"));
     try std.testing.expect(browser.entries.items.len >= 1);
 
     // Navigate back up.
-    _ = try browser.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } });
     try std.testing.expect(!std.mem.endsWith(u8, browser.current_path, "nested"));
 }
 
@@ -496,21 +516,22 @@ test "file browser typeahead selects entries" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
 
     {
-        const file = try tmp.dir.createFile("garden.log", .{});
-        file.close();
+        const file = try tmp.dir.createFile(io, "garden.log", .{});
+        file.close(io);
     }
     {
-        const file = try tmp.dir.createFile("gamma.txt", .{});
-        file.close();
+        const file = try tmp.dir.createFile(io, "melon.txt", .{});
+        file.close(io);
     }
     {
-        const file = try tmp.dir.createFile("zeta.md", .{});
-        file.close();
+        const file = try tmp.dir.createFile(io, "zeta.md", .{});
+        file.close(io);
     }
 
-    const root_path = try tmp.dir.realpathAlloc(alloc, ".");
+    const root_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
     defer alloc.free(root_path);
 
     var browser = try FileBrowser.init(alloc, root_path);
@@ -529,14 +550,14 @@ test "file browser typeahead selects entries" {
     browser.setTypeaheadClock(TestClock.tick);
     browser.setTypeaheadTimeout(1_000);
 
-    _ = try browser.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = 'g', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "garden"));
 
-    _ = try browser.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = 'a', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "garden"));
 
     TestClock.now = 2_000;
-    _ = try browser.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
+    _ = try browser.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
 }
 
@@ -563,4 +584,67 @@ test "file browser clips entry names without splitting wide utf8 glyphs" {
     try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(4, 1).*.codepoint());
     try std.testing.expect(renderer.back.getCell(5, 1).*.continuation);
     try std.testing.expectEqual(@as(u21, '.'), renderer.back.getCell(8, 1).*.codepoint());
+}
+
+test "file browser border is not used as an entry row" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "alpha.txt"),
+        .is_dir = false,
+    });
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "beta.txt"),
+        .is_dir = false,
+    });
+    browser.selected = 0;
+    browser.scroll = 0;
+    browser.border = .single;
+    try browser.widget.layout(layout_module.Rect.init(0, 0, 12, 4));
+
+    var renderer = try render.Renderer.init(alloc, 12, 4);
+    defer renderer.deinit();
+
+    try browser.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '─'), renderer.back.getCell(1, 3).*.codepoint());
+    try std.testing.expectEqual(@as(usize, 1), browser.visible_items);
+}
+
+test "file browser mouse clicks ignore visible border rows" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "alpha.txt"),
+        .is_dir = false,
+    });
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "beta.txt"),
+        .is_dir = false,
+    });
+    browser.selected = 0;
+    browser.scroll = 0;
+    browser.border = .single;
+    try browser.widget.layout(layout_module.Rect.init(0, 0, 12, 4));
+
+    const top_border = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 0, 1, 0) };
+    try std.testing.expect(!try browser.widget.handleEvent(top_border));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+
+    const header = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) };
+    try std.testing.expect(try browser.widget.handleEvent(header));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+
+    const first_row = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 2, 1, 0) };
+    try std.testing.expect(try browser.widget.handleEvent(first_row));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+
+    const bottom_border = input.Event{ .mouse = input.MouseEvent.init(.press, 1, 3, 1, 0) };
+    try std.testing.expect(!try browser.widget.handleEvent(bottom_border));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
 }
