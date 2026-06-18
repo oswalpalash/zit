@@ -36,6 +36,23 @@ fn isSnapshotMode(init: std.process.Init, allocator: std.mem.Allocator) !bool {
     return false;
 }
 
+fn writeFrame(term: *zit.terminal.Terminal, text: []const u8) !void {
+    const chunk_size = 512;
+    var offset: usize = 0;
+    while (offset < text.len) {
+        const end = @min(offset + chunk_size, text.len);
+        term.writeUtf8(text[offset..end]) catch |err| switch (err) {
+            error.WouldBlock => {
+                const io = std.Io.Threaded.global_single_threaded.io();
+                std.Io.sleep(io, .{ .nanoseconds = 2 * std.time.ns_per_ms }, .awake) catch {};
+                continue;
+            },
+            else => return err,
+        };
+        offset = end;
+    }
+}
+
 fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
     var term = (try zit.terminal.initInteractive(allocator, example_name)) orelse return;
     defer term.deinit() catch {};
@@ -61,7 +78,7 @@ fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const
         if (dirty) {
             try term.clear();
             try term.moveCursor(0, 0);
-            try term.writeUtf8(text);
+            try writeFrame(&term, text);
             dirty = false;
         }
 
