@@ -102,6 +102,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(100);
 
     // Create a title label using widget pool allocator
     const title = try Label.init(memory_manager.getWidgetPoolAllocator(), "Zit Button Widget Demo");
@@ -271,7 +273,7 @@ pub fn main() !void {
         try renderer.render();
 
         // Handle input with a 100ms timeout
-        const event = try input_handler.pollEvent(100);
+        const event = try app.pollInputOnce();
         if (event) |e| {
             switch (e) {
                 .key => |key| {
@@ -281,7 +283,7 @@ pub fn main() !void {
                         _ = try root.widget.handleEvent(e);
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 .mouse => {
                     _ = try root.widget.handleEvent(e);
                 },

@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const Allocator = std.mem.Allocator;
 const MemoryOptimizer = @import("../optimization.zig").MemoryOptimizer;
 
 test "MemoryOptimizer basic operations" {
@@ -14,7 +15,6 @@ test "MemoryOptimizer basic operations" {
 
     // Test allocation within cache line size
     const ptr = try opt_allocator.alloc(u8, 32);
-    defer opt_allocator.free(ptr);
 
     var stats = optimizer.getStats();
     try testing.expectEqual(@as(usize, 0), stats.cache_hits);
@@ -50,7 +50,7 @@ test "MemoryOptimizer cache hits" {
     const ptr2 = try opt_allocator.alloc(u8, 32);
     defer opt_allocator.free(ptr2);
 
-    var stats = optimizer.getStats();
+    const stats = optimizer.getStats();
     try testing.expectEqual(@as(usize, 1), stats.cache_hits);
     try testing.expectEqual(@as(usize, 1), stats.cache_misses);
 }
@@ -66,14 +66,14 @@ test "MemoryOptimizer resize" {
     const opt_allocator = optimizer.allocator();
 
     // Test resize within cache line size
-    var ptr = try opt_allocator.alloc(u8, 32);
+    const ptr = try opt_allocator.alloc(u8, 32);
     defer opt_allocator.free(ptr);
 
-    const success = opt_allocator.resize(ptr[0..32], 1, 48);
+    const success = opt_allocator.resize(ptr, 48);
     try testing.expectEqual(true, success);
 
     // Test resize beyond cache line size
-    const success2 = opt_allocator.resize(ptr[0..32], 1, 65);
+    const success2 = opt_allocator.resize(ptr, 65);
     try testing.expectEqual(false, success2);
 }
 
@@ -105,7 +105,7 @@ test "MemoryOptimizer thread safety" {
         thread.join();
     }
 
-    var stats = optimizer.getStats();
+    const stats = optimizer.getStats();
     try testing.expectEqual(@as(usize, 400), stats.allocations + stats.cache_hits);
     try testing.expectEqual(@as(usize, 400), stats.deallocations);
 }
@@ -133,4 +133,36 @@ test "MemoryOptimizer pre-allocation" {
     stats = optimizer.getStats();
     try testing.expectEqual(@as(usize, 1), stats.cache_hits);
     try testing.expectEqual(@as(usize, 0), stats.cache_misses);
+}
+
+test "MemoryOptimizer tiny allocation free does not corrupt backing allocation" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    defer optimizer.deinit();
+
+    const opt_allocator = optimizer.allocator();
+    const ptr = try opt_allocator.alloc(u8, 1);
+    ptr[0] = 7;
+    opt_allocator.free(ptr);
+
+    const stats = optimizer.getStats();
+    try testing.expectEqual(@as(usize, 1), stats.cache_size);
+    try testing.expectEqual(@as(usize, 1), stats.deallocations);
+}
+
+test "MemoryOptimizer deinit frees live optimized cache lines" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    const opt_allocator = optimizer.allocator();
+
+    const ptr = try opt_allocator.alloc(u8, 32);
+    ptr[0] = 42;
+
+    optimizer.deinit();
 }

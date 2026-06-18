@@ -6,7 +6,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 - `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`.
 - `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
-- `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
+- `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, `bindInput(&input)`, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement` adapters let widgets participate in container layouts.
 - `render` – `Renderer.init(allocator, width, height)`, `drawStr`, `drawBox`, `fillRect`, `drawGradient`, `render()` (front/back diff). Colors via `Color.named/rgb/ansi256`, styles via `Style` and `FocusRingStyle`.
 - `widget` – Base `Widget` + vtable, theme helpers, builders, and concrete widgets (`Label`, `Button`, `List`, `Table`, `SplitPane`, `Modal`, `ContextMenu`, etc.).
@@ -34,14 +34,16 @@ defer renderer.deinit();
 
 ### Event Loop Skeleton
 ```zig
-var queue = zit.event.EventQueue.init(allocator);
-defer queue.deinit();
+var app = zit.event.Application.init(allocator);
+defer app.deinit();
+app.setRoot(root);
+app.bindInput(&input_handler);
+app.bindResize(&renderer, null);
+app.setInputPollTimeout(16);
 
 while (true) {
-    if (try input_handler.pollEvent(16)) |evt| {
-        try queue.push(evt); // or dispatch immediately
-    }
-    try queue.processEventsWithPropagation(allocator);
+    _ = try app.pollInputOnce();
+    try app.tickOnce();
     try renderer.render();
 }
 ```
@@ -55,14 +57,15 @@ var reflow = zit.layout.ReflowManager.init();
 reflow.setRoot(root.widget.asLayoutElement());
 
 app.setRoot(root);
+app.bindInput(&input_handler);
 app.bindResize(&renderer, &reflow);
 _ = try app.handleResize(term.width, term.height);
 
-if (try input_handler.pollEvent(16)) |evt| {
-    try app.processInputEvent(evt); // resize events update renderer + reflow
-}
+_ = try app.pollInputOnce(); // resize events update renderer + reflow
+try app.tickOnce(); // also polls bound input before dispatching events
 
 input_handler.setResizePollInterval(125); // default; use 0 to poll every call
+app.setInputPollTimeout(0); // default; keep tickOnce non-blocking
 ```
 
 ### Widget Creation & Layout

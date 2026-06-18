@@ -36,6 +36,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(100);
     // Enable mouse tracking
     try input_handler.enableMouse();
     defer input_handler.disableMouse() catch {};
@@ -290,7 +292,7 @@ pub fn main() !void {
         try sparkline.push(sample);
 
         // Poll for events with a 100ms timeout
-        const event = try input_handler.pollEvent(100);
+        const event = try app.pollInputOnce();
 
         if (event) |e| {
             switch (e) {
@@ -315,7 +317,7 @@ pub fn main() !void {
                         }
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 .mouse => {
                     // Pass event to the modal first if visible
                     if (modal.widget.visible) {

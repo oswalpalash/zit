@@ -10,7 +10,7 @@ Zit helps you ship terminal dashboards, editors, and workflows with the same con
 ## Why Zit
 - 30+ production-ready widgets (blocks/paragraphs, charts, tables with typeahead, context menus, popups, file browser, bracketed paste-aware inputs).
 - Batteries-included UX: mouse + drag-and-drop payloads, focus rings, typeahead search on lists/tables/file browser, accessibility roles/announcements.
-- Automatic terminal resizing: bind an `Application` to your renderer/reflow manager once and resize events update buffers and layout for you.
+- Automatic terminal resizing: bind an `Application` to your input handler and renderer/reflow manager once; resize events update buffers and layout from the app loop.
 - Thoughtful theming and motion: light/dark/high-contrast palettes, per-widget `setTheme`, animator with easing/yoyo, timers for periodic work.
 - Works the Zig way: explicit `init`/`deinit`, allocator-friendly builders, zero global state, tested layouts + render paths, rendering benchmarks.
 
@@ -171,6 +171,7 @@ pub fn main() !void {
     var input = zit.input.InputHandler.init(allocator, &term);
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
+    app.bindInput(&input);
     app.bindResize(&renderer, null);
 
     try term.enableRawMode();
@@ -183,16 +184,15 @@ pub fn main() !void {
 
     var running = true;
     while (running) {
+        if (try app.pollInputOnce()) |event| switch (event) {
+            .key => |key| if (key.key == 'q') running = false,
+            else => {},
+        };
+
         renderer.back.clear();
         try para.widget.layout(zit.layout.Rect.init(0, 0, renderer.back.width, renderer.back.height));
         try para.widget.draw(&renderer);
         try renderer.render();
-
-        if (try input.pollEvent(120)) |event| switch (event) {
-            .key => |key| if (key.key == 'q') running = false,
-            .resize => try app.processInputEvent(event),
-            else => {},
-        };
     }
 
     try term.clear();

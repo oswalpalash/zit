@@ -38,6 +38,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(100);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -171,7 +173,7 @@ pub fn main() !void {
         progress_bar.setValue(progress_value);
 
         // Poll for events with a 100ms timeout
-        const event = try input_handler.pollEvent(100);
+        const event = try app.pollInputOnce();
 
         if (event) |e| {
             switch (e) {
@@ -186,7 +188,7 @@ pub fn main() !void {
                         _ = try list.widget.handleEvent(e);
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 .mouse => {
                     // Pass the event to the widgets
                     _ = try button.widget.handleEvent(e);

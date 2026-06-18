@@ -26,6 +26,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(60);
 
     try term.enableRawMode();
     try term.hideCursor();
@@ -116,7 +118,7 @@ pub fn main() !void {
         const sample = 50.0 + 45.0 * (prng.random().float(f32) - 0.5);
         try sparkline.push(sample);
 
-        if (try input_handler.pollEvent(60)) |event| {
+        if (try app.pollInputOnce()) |event| {
             switch (event) {
                 .key => |key| {
                     if (key.key == 'q') {
@@ -131,7 +133,7 @@ pub fn main() !void {
                         _ = try main_split.widget.handleEvent(event);
                     }
                 },
-                .resize => try app.processInputEvent(event),
+                .resize => {},
                 else => {
                     _ = try main_split.widget.handleEvent(event);
                 },

@@ -27,6 +27,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
 - DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
 - `Application.bindResize` and `Application.handleResize` provide automatic terminal resize handling for renderer buffers, root layout, and optional `ReflowManager` state.
+- `Application.bindInput`, `Application.pollInputOnce`, and `Application.tickOnce` now let the app loop own input polling so resize events automatically reach the renderer/reflow/root path without per-example resize forwarding.
 - `InputHandler` now periodically polls terminal geometry in addition to consuming SIGWINCH, catching missed signal and ConPTY-style resize changes.
 - Package manager metadata (`build.zig.zon`) with module export configured for `b.dependency("zit", .{})` consumers.
 - CI matrix expanded to Linux/macOS/Windows, explicit Linux/Windows cross-smoke builds, and tag-triggered release publishing.
@@ -53,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Examples and memory tests now assert `DebugAllocator.deinit() == .ok` so leaks and allocator misuse fail deterministically.
 - Table string interning now migrates existing text transactionally and keeps hash-map index storage out of the string arena, reducing retained arena capacity and making memory benchmark output comparable.
 - MemorySafety now frees and resizes the exact backing allocation length used for canary storage, uses byte-wise canaries for odd-sized allocations, and fails transactionally if allocation tracking cannot be recorded.
+- MemoryOptimizer now tracks live cache-line ownership instead of casting arbitrary small frees into cache nodes, preventing backing allocation corruption and freeing live optimized blocks on teardown.
 - Background tasks are now owned by `Application`, joined on shutdown, and paired with queued custom-event destructor cleanup so teardown cannot leave detached workers using a destroyed event queue.
 
 ### Docs

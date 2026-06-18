@@ -26,6 +26,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(80);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -120,7 +122,7 @@ pub fn main() !void {
 
         toasts.tick(1);
 
-        if (try input_handler.pollEvent(80)) |event| {
+        if (try app.pollInputOnce()) |event| {
             switch (event) {
                 .key => |key| {
                     if (key.key == 'q') {
@@ -131,7 +133,7 @@ pub fn main() !void {
                         try toasts.push(msg, .info, 96);
                     }
                 },
-                .resize => try app.processInputEvent(event),
+                .resize => {},
                 else => {},
             }
         }

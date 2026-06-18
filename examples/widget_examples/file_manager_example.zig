@@ -80,6 +80,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(64);
 
     try term.enterAlternateScreen();
     defer term.exitAlternateScreen() catch {};
@@ -178,7 +180,7 @@ pub fn main() !void {
 
         try renderer.render();
 
-        if (try input_handler.pollEvent(64)) |event| {
+        if (try app.pollInputOnce()) |event| {
             switch (event) {
                 .key => |key| {
                     if (key.key == 'q' and !key.modifiers.ctrl and !key.modifiers.alt) {
@@ -237,7 +239,7 @@ pub fn main() !void {
                     _ = try tree.widget.handleEvent(event);
                     _ = try list.widget.handleEvent(event);
                 },
-                .resize => try app.processInputEvent(event),
+                .resize => {},
                 else => {},
             }
         }

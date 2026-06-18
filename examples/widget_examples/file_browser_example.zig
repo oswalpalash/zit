@@ -19,6 +19,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(120);
 
     var browser = try zit.widget.FileBrowser.init(allocator, ".");
     defer browser.deinit();
@@ -73,7 +75,7 @@ pub fn main() !void {
 
         try renderer.render();
 
-        const event = try input_handler.pollEvent(120);
+        const event = try app.pollInputOnce();
         if (event) |e| {
             switch (e) {
                 .key => |key| {
@@ -85,7 +87,7 @@ pub fn main() !void {
                         _ = try browser.widget.handleEvent(e);
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 else => {
                     _ = try browser.widget.handleEvent(e);
                 },

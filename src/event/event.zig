@@ -2067,6 +2067,10 @@ pub const Application = struct {
     style_theme: ?widget.theme.Theme = null,
     /// Optional terminal-size binding for automatic renderer/root relayout.
     resize_binding: ResizeBinding = .{},
+    /// Optional input binding for application-owned event polling.
+    input_binding: InputBinding = .{},
+    /// Whether user code already polled bound input before the next tick.
+    input_polled_before_tick: bool = false,
     /// Background tasks owned by the application until released or shutdown.
     background_tasks: std.ArrayList(*BackgroundTask),
 
@@ -2074,6 +2078,12 @@ pub const Application = struct {
     pub const ResizeBinding = struct {
         renderer: ?*render.Renderer = null,
         reflow: ?*layout.ReflowManager = null,
+    };
+
+    /// Components used when the application loop owns input polling.
+    pub const InputBinding = struct {
+        handler: ?*input.InputHandler = null,
+        poll_timeout_ms: u64 = 0,
     };
 
     /// Initialize a new application
@@ -2191,6 +2201,44 @@ pub const Application = struct {
         self.resize_binding = .{};
     }
 
+    /// Bind terminal input polling to the application loop.
+    ///
+    /// Once bound, `tickOnce` polls this handler, routes the event through
+    /// `processInputEvent`, and applies resize events through the active resize
+    /// binding before listeners run. The default poll timeout is zero so
+    /// `tickOnce` stays non-blocking.
+    pub fn bindInput(self: *Application, input_handler: *input.InputHandler) void {
+        self.input_binding = .{ .handler = input_handler };
+    }
+
+    /// Configure how long `tickOnce` may wait for bound terminal input.
+    pub fn setInputPollTimeout(self: *Application, timeout_ms: u64) void {
+        self.input_binding.poll_timeout_ms = timeout_ms;
+    }
+
+    /// Remove application-owned input polling.
+    pub fn unbindInput(self: *Application) void {
+        self.input_binding = .{};
+        self.input_polled_before_tick = false;
+    }
+
+    fn pollInputOnceInternal(self: *Application) !?input.Event {
+        const input_handler = self.input_binding.handler orelse return null;
+        const input_event = try input_handler.pollEvent(self.input_binding.poll_timeout_ms) orelse return null;
+        try self.processInputEvent(input_event);
+        return input_event;
+    }
+
+    /// Poll the bound input handler once and process the event if one is ready.
+    ///
+    /// Calling this before `tickOnce` lets application code inspect a key or
+    /// mouse event without causing `tickOnce` to poll input a second time.
+    pub fn pollInputOnce(self: *Application) !?input.Event {
+        if (self.input_binding.handler == null) return null;
+        self.input_polled_before_tick = true;
+        return try self.pollInputOnceInternal();
+    }
+
     /// Apply a terminal size to bound rendering/layout state.
     pub fn handleResize(self: *Application, width: u16, height: u16) !layout.Size {
         if (self.resize_binding.renderer) |renderer_ptr| {
@@ -2267,6 +2315,12 @@ pub const Application = struct {
 
         self.ensureShortcutHook();
         self.collectReleasedBackgroundTasks();
+
+        if (self.input_polled_before_tick) {
+            self.input_polled_before_tick = false;
+        } else {
+            _ = try self.pollInputOnceInternal();
+        }
 
         if (self.memory_manager) |manager| {
             manager.resetFrame();
@@ -2750,6 +2804,47 @@ test "application resize binding works without a root widget" {
     try std.testing.expectEqual(@as(u16, 64), renderer_instance.back.width);
     try std.testing.expectEqual(@as(u16, 18), renderer_instance.back.height);
     try std.testing.expect(app.event_queue.popFront() == null);
+}
+
+test "application input binding stores non-blocking poll configuration" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    try std.testing.expect(try app.pollInputOnce() == null);
+    try std.testing.expect(!app.input_polled_before_tick);
+
+    var term = @import("../terminal/terminal.zig").Terminal{
+        .stdin_fd = 0,
+        .stdout_fd = 1,
+        .original_termios = .none,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = alloc,
+        .capabilities = .{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .sigwinch_registered = false,
+    };
+    var input_handler = input.InputHandler.init(alloc, &term);
+
+    app.bindInput(&input_handler);
+    try std.testing.expect(app.input_binding.handler == &input_handler);
+    try std.testing.expectEqual(@as(u64, 0), app.input_binding.poll_timeout_ms);
+
+    app.setInputPollTimeout(7);
+    try std.testing.expectEqual(@as(u64, 7), app.input_binding.poll_timeout_ms);
+
+    app.input_polled_before_tick = true;
+    app.unbindInput();
+    try std.testing.expect(app.input_binding.handler == null);
+    try std.testing.expectEqual(@as(u64, 0), app.input_binding.poll_timeout_ms);
+    try std.testing.expect(!app.input_polled_before_tick);
 }
 
 test "background tasks emit completion events" {

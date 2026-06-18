@@ -51,7 +51,7 @@ server.root_module.addImport("zit", zit_mod);
 const cli = b.addExecutable(.{ .name = "cli", .root_source_file = b.path("src/cli.zig") });
 cli.root_module.addImport("zit", zit_mod);
 ```
-- **Custom render backends**: `zit.render.Renderer` is allocator-driven. If you need to drive rendering from another loop, call `renderer.render()` only when your backend says the terminal is ready, use `Application.tickOnce()` for non-blocking event processing, and bind terminal resizing with `Application.bindResize(&renderer, reflow_or_null)`.
+- **Custom render backends**: `zit.render.Renderer` is allocator-driven. If you need to drive rendering from another loop, call `renderer.render()` only when your backend says the terminal is ready, use `Application.tickOnce()` for non-blocking event processing, and bind terminal input/resizing with `Application.bindInput(&input)` plus `Application.bindResize(&renderer, reflow_or_null)`.
 - **Async/background work**: keep UI smooth by using `Application.startBackgroundTask()` and listen for the completion event before mutating widgets. `Application.deinit()` cancels and joins outstanding tasks before the event queue is destroyed.
 
 ## Project patterns that pair well with Zit
@@ -89,8 +89,10 @@ const Dashboard = struct {
 
 fn run(app: *zit.event.Application, input_handler: *zit.input.InputHandler, dash: *Dashboard, model: *Model) !void {
     app.bindResize(&dash.renderer, null);
+    app.bindInput(input_handler);
+    app.setInputPollTimeout(16);
     while (true) {
-        if (try input_handler.pollEvent(16)) |evt| {
+        if (try app.pollInputOnce()) |evt| {
             switch (evt) {
                 .key => |key| if (key.key == 'r') {
                     model.cpu = 42;
@@ -98,7 +100,6 @@ fn run(app: *zit.event.Application, input_handler: *zit.input.InputHandler, dash
                 },
                 else => {},
             }
-            try app.processInputEvent(evt);
         }
         try dash.renderer.render();
     }
@@ -132,6 +133,6 @@ const SearchBox = struct {
 ## Slotting Zit beside other loops
 
 If you already have a network or game loop, integrate Zit without blocking:
-- Drive input with `if (try input.pollEvent(timeout_ms)) |event| ...` to keep deterministic frames.
+- Drive input with `app.bindInput(&input)`, `app.setInputPollTimeout(timeout_ms)`, and `app.pollInputOnce()` when the loop needs to inspect events before dispatch.
 - Use `Application.tickOnce()` inside your main loop to process timers/animations while you run other work between ticks.
 - On shutdown, call `renderer.render()` once after clearing the back buffer to leave the terminal clean.

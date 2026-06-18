@@ -30,6 +30,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(120);
     try input_handler.enableMouse();
 
     var table = try zit.widget.Table.init(allocator);
@@ -99,7 +101,7 @@ pub fn main() !void {
 
         try renderer.render();
 
-        const event = try input_handler.pollEvent(120);
+        const event = try app.pollInputOnce();
         if (event) |e| {
             switch (e) {
                 .key => |key| {
@@ -109,7 +111,7 @@ pub fn main() !void {
                         _ = try table.widget.handleEvent(e);
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 else => {
                     _ = try table.widget.handleEvent(e);
                 },

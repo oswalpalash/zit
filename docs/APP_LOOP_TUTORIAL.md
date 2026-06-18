@@ -57,6 +57,7 @@ pub fn main() !void {
 
     var reflow = zit.layout.ReflowManager.init();
     reflow.setRoot(root.widget.asLayoutElement());
+    app.bindInput(&input);
     app.bindResize(&renderer, &reflow);
     _ = try app.handleResize(term.width, term.height);
 
@@ -64,15 +65,13 @@ pub fn main() !void {
 
     var running = true;
     while (running) {
-        if (try input.pollEvent(16)) |ev| {
+        if (try app.pollInputOnce()) |ev| {
             switch (ev) {
                 .key => |key| {
                     if (key.key == 'q') running = false;
                 },
                 else => {},
             }
-
-            try app.processInputEvent(ev);
         }
 
         try app.tickOnce();
@@ -91,6 +90,7 @@ pub fn main() !void {
 - **Dirty redraws**: if you keep the back buffer intact between frames, only dirty widgets will redraw and the renderer will diff against the front buffer.
 - **Targeting input**: `event.fromInputEvent(ev, target)` lets you set a specific widget target (e.g., from hit testing).
 - **Animations/timers**: `Application.tickOnce()` already advances timers/animations, so just keep calling it each frame.
+- **Automatic input + resize**: `Application.bindInput(&input)` lets `tickOnce()` poll input and route resize events through `Application.bindResize(&renderer, &reflow)`. Use `pollInputOnce()` when your loop needs to inspect the event before the normal tick.
 - **Layout updates**: `Application.bindResize(&renderer, &reflow)` applies terminal resize events automatically; on widget tree changes, call `ReflowManager.handleResize` and re-render.
 
 For more patterns (custom widgets, async tasks, background work), see `docs/WIDGET_GUIDE.md` and `docs/ARCHITECTURE.md`.

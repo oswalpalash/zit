@@ -30,6 +30,8 @@ pub fn main() !void {
     var app = zit.event.Application.init(allocator);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(100);
 
     // Clear screen
     try term.clear();
@@ -71,7 +73,7 @@ pub fn main() !void {
         try renderer.render();
 
         // Poll for events with a 100ms timeout
-        const event = try input_handler.pollEvent(100);
+        const event = try app.pollInputOnce();
 
         if (event) |e| {
             switch (e) {
@@ -81,7 +83,7 @@ pub fn main() !void {
                         break;
                     }
                 },
-                .resize => try app.processInputEvent(e),
+                .resize => {},
                 else => {},
             }
         }
