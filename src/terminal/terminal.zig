@@ -155,6 +155,12 @@ fn changedSize(old_width: u16, old_height: u16, new_width: u16, new_height: u16)
     return .{ .width = new_width, .height = new_height };
 }
 
+fn rememberFirstError(first_error: *?anyerror, err: anyerror) void {
+    if (first_error.* == null) {
+        first_error.* = err;
+    }
+}
+
 /// Terminal abstraction layer
 ///
 /// This module provides cross-platform terminal handling capabilities including:
@@ -274,37 +280,45 @@ pub const Terminal = struct {
 
     /// Clean up terminal resources and restore original state
     pub fn deinit(self: *Terminal) !void {
+        var first_error: ?anyerror = null;
+
         if (self.is_raw_mode) {
-            try self.disableRawMode();
+            self.disableRawMode() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (!self.is_cursor_visible) {
-            try self.showCursor();
+            self.showCursor() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (self.is_mouse_enabled) {
-            try self.disableMouseEvents();
+            self.disableMouseEvents() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (self.is_sync_output) {
-            try self.endSynchronizedOutput();
+            self.endSynchronizedOutput() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (self.is_alt_screen) {
-            try self.exitAlternateScreen();
+            self.exitAlternateScreen() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (self.is_bracketed_paste) {
-            try self.disableBracketedPaste();
+            self.disableBracketedPaste() catch |err| rememberFirstError(&first_error, err);
         }
 
+        self.releaseSigwinchReference();
+
+        // Reset all formatting before exit
+        self.resetFormatting() catch |err| rememberFirstError(&first_error, err);
+
+        if (first_error) |err| return err;
+    }
+
+    fn releaseSigwinchReference(self: *Terminal) void {
         if (self.sigwinch_registered) {
             uninstallSigwinchHandler();
             self.sigwinch_registered = false;
         }
-
-        // Reset all formatting before exit
-        try self.resetFormatting();
     }
 
     /// Enable raw mode for direct character input
@@ -785,6 +799,37 @@ test "SIGWINCH handler installation is reference counted" {
 
     uninstallSigwinchHandler();
     installed -= 1;
+    try std.testing.expectEqual(before_count, sigwinchInstallCountForTest());
+}
+
+test "terminal releases SIGWINCH reference without terminal output" {
+    if (!supportsSigwinch()) return error.SkipZigTest;
+
+    const before_count = sigwinchInstallCountForTest();
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = std.Io.File.stdout().handle,
+        .original_termios = .none,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .sigwinch_registered = installSigwinchHandler(),
+    };
+
+    try std.testing.expect(term.sigwinch_registered);
+    try std.testing.expectEqual(before_count + 1, sigwinchInstallCountForTest());
+
+    term.releaseSigwinchReference();
+
+    try std.testing.expect(!term.sigwinch_registered);
     try std.testing.expectEqual(before_count, sigwinchInstallCountForTest());
 }
 
