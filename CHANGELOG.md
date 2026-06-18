@@ -36,6 +36,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Migrated the library, examples, benchmarks, and CI baseline to Zig 0.16.x.
 - Made network I/O fail explicitly with a `.network_error` event while the Zig 0.16 transport layer is rebuilt.
 - Robust terminal state management (raw mode, cursor restore, resize handling) to avoid leaving sessions in a broken state.
+- POSIX SIGWINCH handling is now reference-counted and restored on terminal teardown, preventing Zit from leaving process-global signal handlers installed after `Terminal.deinit`.
 - Hardened input parsing for mouse, drag payloads, and bracketed paste across terminals.
 - Platform reliability improvements for Windows alongside POSIX terminals.
 - Bordered tables now preserve headers and row content instead of drawing borders or separators over them.

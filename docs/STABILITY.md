@@ -49,8 +49,10 @@ Before a feature is promoted as stable, it needs:
 - `zig build smoke -Dtarget=x86_64-windows`
 - `python3 scripts/check_build_steps.py`
 - `python3 scripts/check_debug_allocator_cleanup.py`
+- `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_widget_coverage.py`
 - `python3 scripts/interactive_example_smoke.py`
+- `python3 scripts/resize_smoke.py --no-build`
 - `python3 scripts/visual_repeat_check.py --count 4`
 - Visually inspect the generated contact sheet for the real-world examples (`htop-clone`, `file-manager`, `text-editor`, `dashboard-demo`) and widget galleries (`widget-gallery`, `widget-gallery-extended`, `widget-gallery-layouts`) for alignment, hierarchy, spacing, clipped or overlapping text, and frame-to-frame drift.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.

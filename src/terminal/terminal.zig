@@ -57,6 +57,74 @@ fn handleSigwinch(_: std.posix.SIG) callconv(.c) void {
     winch_signal_flag.store(1, .monotonic);
 }
 
+const SigwinchState = struct {
+    lock: std.atomic.Mutex = .unlocked,
+    install_count: usize = 0,
+    previous_action: ?std.posix.Sigaction = null,
+};
+
+var sigwinch_state = SigwinchState{};
+
+fn lockSigwinchState() void {
+    while (!sigwinch_state.lock.tryLock()) {
+        std.atomic.spinLoopHint();
+    }
+}
+
+fn unlockSigwinchState() void {
+    sigwinch_state.lock.unlock();
+}
+
+fn supportsSigwinch() bool {
+    return builtin.os.tag != .windows;
+}
+
+fn installSigwinchHandler() bool {
+    if (builtin.os.tag == .windows) return false;
+
+    lockSigwinchState();
+    defer unlockSigwinchState();
+
+    if (sigwinch_state.install_count == 0) {
+        const SIG = std.posix.SIG;
+        var previous_action: std.posix.Sigaction = undefined;
+        std.posix.sigaction(SIG.WINCH, &std.posix.Sigaction{
+            .handler = .{ .handler = handleSigwinch },
+            .mask = std.posix.sigemptyset(),
+            .flags = std.posix.SA.RESTART,
+        }, &previous_action);
+        sigwinch_state.previous_action = previous_action;
+        winch_signal_flag.store(0, .release);
+    }
+
+    sigwinch_state.install_count += 1;
+    return true;
+}
+
+fn uninstallSigwinchHandler() void {
+    if (builtin.os.tag == .windows) return;
+
+    lockSigwinchState();
+    defer unlockSigwinchState();
+
+    if (sigwinch_state.install_count == 0) return;
+    sigwinch_state.install_count -= 1;
+
+    if (sigwinch_state.install_count == 0) {
+        if (sigwinch_state.previous_action) |previous_action| {
+            std.posix.sigaction(std.posix.SIG.WINCH, &previous_action, null);
+        }
+        sigwinch_state.previous_action = null;
+        winch_signal_flag.store(0, .release);
+    }
+}
+
+fn sigwinchInstallCountForTest() usize {
+    lockSigwinchState();
+    defer unlockSigwinchState();
+    return sigwinch_state.install_count;
+}
+
 fn setNonBlocking(fd: std.posix.fd_t) !void {
     switch (builtin.os.tag) {
         .linux => {
@@ -126,6 +194,8 @@ pub const Terminal = struct {
     is_bracketed_paste: bool,
     /// Whether Windows virtual terminal processing is available
     windows_vt_enabled: bool,
+    /// Whether this terminal instance owns one reference to the SIGWINCH handler.
+    sigwinch_registered: bool,
 
     // Cross-platform terminal attribute storage
     const OriginalTermAttrs = union(enum) {
@@ -188,6 +258,7 @@ pub const Terminal = struct {
             .is_alt_screen = false,
             .is_bracketed_paste = false,
             .windows_vt_enabled = windows_vt_enabled,
+            .sigwinch_registered = false,
         };
 
         if (is_windows and !windows_vt_enabled) {
@@ -196,15 +267,7 @@ pub const Terminal = struct {
 
         try self.updateSize();
 
-        // Set up SIGWINCH handling on Unix platforms
-        if (@import("builtin").os.tag != .windows) {
-            const SIG = std.posix.SIG;
-            _ = std.posix.sigaction(SIG.WINCH, &std.posix.Sigaction{
-                .handler = .{ .handler = handleSigwinch },
-                .mask = std.posix.sigemptyset(),
-                .flags = std.posix.SA.RESTART,
-            }, null);
-        }
+        self.sigwinch_registered = installSigwinchHandler();
 
         return self;
     }
@@ -233,6 +296,11 @@ pub const Terminal = struct {
 
         if (self.is_bracketed_paste) {
             try self.disableBracketedPaste();
+        }
+
+        if (self.sigwinch_registered) {
+            uninstallSigwinchHandler();
+            self.sigwinch_registered = false;
         }
 
         // Reset all formatting before exit
@@ -690,6 +758,34 @@ test "changedSize reports only actual terminal geometry changes" {
     const taller = changedSize(80, 24, 80, 40).?;
     try std.testing.expectEqual(@as(u16, 80), taller.width);
     try std.testing.expectEqual(@as(u16, 40), taller.height);
+}
+
+test "SIGWINCH handler installation is reference counted" {
+    if (!supportsSigwinch()) return error.SkipZigTest;
+
+    const before_count = sigwinchInstallCountForTest();
+    var installed: usize = 0;
+    defer {
+        while (installed > 0) : (installed -= 1) {
+            uninstallSigwinchHandler();
+        }
+    }
+
+    try std.testing.expect(installSigwinchHandler());
+    installed += 1;
+    try std.testing.expectEqual(before_count + 1, sigwinchInstallCountForTest());
+
+    try std.testing.expect(installSigwinchHandler());
+    installed += 1;
+    try std.testing.expectEqual(before_count + 2, sigwinchInstallCountForTest());
+
+    uninstallSigwinchHandler();
+    installed -= 1;
+    try std.testing.expectEqual(before_count + 1, sigwinchInstallCountForTest());
+
+    uninstallSigwinchHandler();
+    installed -= 1;
+    try std.testing.expectEqual(before_count, sigwinchInstallCountForTest());
 }
 
 fn ensureWindowsUnicodeSupport() void {
