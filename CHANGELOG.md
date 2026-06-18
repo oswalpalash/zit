@@ -21,6 +21,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - DebugAllocator cleanup checker (`scripts/check_debug_allocator_cleanup.py`) fails when public examples or memory tests ignore allocator deinit status.
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
 - Repeat visual capture checker now also captures deterministic `--ansi-snapshot` frames and renders PNG contact sheets with terminal foreground/background colors for visual polish review.
+- Repeat visual capture checker now rejects `--ansi-snapshot` fallbacks that do not emit real terminal escape sequences, preventing color contact sheets from silently reviewing plain text.
 - Repeat visual capture checker now rejects malformed public frames: invalid UTF-8, terminal control bytes, missing trailing newline, non-rectangular rows, and oversized snapshots.
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, exercises every public interactive example through the resize, and requires live-size examples to redraw with the new dimensions.
@@ -57,6 +58,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - File browser entries, tree labels, and modal titles now use the same grapheme-aware clipping path for arbitrary UTF-8 user text.
 - Interactive example build steps launch real TUI demos when a TTY is available and exit cleanly under non-TTY automation.
 - Real-world and widget-gallery examples now default to interactive terminal sessions that render their UI until `q`; automation uses explicit `--snapshot` mode.
+- Widget gallery examples now feed renderer-backed ANSI frames into visual repeat screenshots and validate their plain snapshots before publishing frames.
 - Flex layout child insertion now reserves internal measurement scratch storage before mutating the child list, making allocation failures transactional instead of leaving partially registered children.
 - Terminal and input diagnostics now flush their initial frames before waiting for raw-mode input.
 - Grapheme rendering no longer returns slices into by-value temporaries, fixing corrupted terminal frames and invalid borrowed memory during render output assembly.

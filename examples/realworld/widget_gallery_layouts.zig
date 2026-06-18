@@ -51,6 +51,7 @@ pub fn main(init: std.process.Init) !void {
     var container_label = try zit.widget.Label.init(allocator, "Container child");
     defer container_label.deinit();
     container_label.setAlignment(.center);
+    container_label.setColor(Color.named(.bright_white), Color.named(.black));
     var container = try zit.widget.Container.init(allocator);
     defer container.deinit();
     container.setBorder(.rounded);
@@ -75,10 +76,13 @@ pub fn main(init: std.process.Init) !void {
 
     var grid_one = try zit.widget.Label.init(allocator, "Grid A");
     defer grid_one.deinit();
+    grid_one.setColor(Color.named(.bright_white), Color.named(.black));
     var grid_two = try zit.widget.Label.init(allocator, "Grid B");
     defer grid_two.deinit();
+    grid_two.setColor(Color.named(.bright_white), Color.named(.black));
     var grid_three = try zit.widget.Label.init(allocator, "Grid C");
     defer grid_three.deinit();
+    grid_three.setColor(Color.named(.bright_white), Color.named(.black));
     var grid = try zit.widget.GridContainer.init(allocator, 2, 2);
     defer grid.deinit();
     grid.setGap(1);
@@ -123,6 +127,7 @@ pub fn main(init: std.process.Init) !void {
     var screen_label = try zit.widget.Label.init(allocator, "ScreenManager active screen");
     defer screen_label.deinit();
     screen_label.setAlignment(.center);
+    screen_label.setColor(Color.named(.bright_white), Color.named(.black));
     var screen_manager = try zit.widget.ScreenManager.init(allocator);
     defer screen_manager.deinit();
     try screen_manager.widget.layout(Rect.init(88, 15, 28, 5));
@@ -145,10 +150,13 @@ pub fn main(init: std.process.Init) !void {
 
     var left_pane = try zit.widget.Label.init(allocator, "Left pane");
     defer left_pane.deinit();
+    left_pane.setColor(Color.named(.bright_white), Color.named(.black));
     var right_pane = try zit.widget.Label.init(allocator, "Right pane");
     defer right_pane.deinit();
+    right_pane.setColor(Color.named(.bright_white), Color.named(.black));
     var split = try zit.widget.SplitPane.init(allocator);
     defer split.deinit();
+    try split.setTheme(zit.widget.theme.Theme.dark());
     split.setRatio(0.45);
     split.setFirst(&left_pane.widget);
     split.setSecond(&right_pane.widget);
@@ -212,5 +220,7 @@ pub fn main(init: std.process.Init) !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    try interactive.finish(init, allocator, "widget-gallery-layouts", snap.text());
+    try snap.expectWellFormed();
+    const frame = try mock.captureOutput();
+    try interactive.finishFrames(init, allocator, "widget-gallery-layouts", snap.text(), frame);
 }

@@ -122,6 +122,21 @@ def capture_ansi_target(root: Path, target: str) -> bytes:
     return proc.stdout
 
 
+def validate_ansi_capture_quality(capture: bytes, target: str) -> None:
+    try:
+        capture.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise RuntimeError(f"{target}: ANSI snapshot is not valid UTF-8: {err}") from err
+
+    if b"\x00" in capture:
+        raise RuntimeError(f"{target}: ANSI snapshot contains NUL byte(s)")
+    if b"\x1b[" not in capture and b"\x1b]" not in capture:
+        raise RuntimeError(
+            f"{target}: --ansi-snapshot did not emit terminal escape sequences; "
+            "use the renderer-backed frame so PNG visual review sees real styling"
+        )
+
+
 def first_diff(expected: bytes, actual: bytes, target: str, run_index: int) -> str:
     expected_lines = expected.decode("utf-8", errors="replace").splitlines()
     actual_lines = actual.decode("utf-8", errors="replace").splitlines()
@@ -425,6 +440,7 @@ def main() -> int:
             (target_dir / f"{run_index:02d}.txt").write_bytes(data)
 
             ansi_data = capture_ansi_target(root, target)
+            validate_ansi_capture_quality(ansi_data, target)
             target_ansi_captures.append(ansi_data)
             (target_dir / f"{run_index:02d}.ansi").write_bytes(ansi_data)
 

@@ -163,5 +163,7 @@ pub fn main(init: std.process.Init) !void {
 
     var snap = try mock.snapshot(allocator);
     defer snap.deinit(allocator);
-    try interactive.finish(init, allocator, "widget-gallery", snap.text());
+    try snap.expectWellFormed();
+    const frame = try mock.captureOutput();
+    try interactive.finishFrames(init, allocator, "widget-gallery", snap.text(), frame);
 }
