@@ -411,7 +411,18 @@ pub const BackgroundTaskResult = struct {
 
 /// Invoke work on a separate thread and monitor for cancellation.
 pub const BackgroundTaskFn = *const fn (stop_flag: *std.atomic.Value(bool), ctx: ?*anyopaque) anyerror!void;
-pub const BackgroundTaskHandle = struct { flag: *std.atomic.Value(bool) };
+
+const BackgroundTask = struct {
+    flag: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    completed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    released: bool = false,
+    thread: ?std.Thread = null,
+};
+
+pub const BackgroundTaskHandle = struct {
+    flag: *std.atomic.Value(bool),
+    task: ?*anyopaque = null,
+};
 
 /// Event listener function type
 pub const EventListenerFn = *const fn (event: *Event) bool;
@@ -633,6 +644,7 @@ pub const EventQueue = struct {
 
     /// Clean up event queue resources
     pub fn deinit(self: *EventQueue) void {
+        self.destroyQueuedCustomPayloads();
         self.queue.deinit(self.allocator);
         self.path_scratch.deinit(self.allocator);
         self.dispatcher.deinit();
@@ -654,6 +666,26 @@ pub const EventQueue = struct {
     fn recycle(self: *EventQueue) void {
         self.queue.clearRetainingCapacity();
         self.head = 0;
+    }
+
+    fn destroyCustomPayload(event_item: *const Event) void {
+        if (event_item.type != .custom) return;
+        const custom_data = event_item.data.custom;
+        if (custom_data.destructor != null and custom_data.data != null) {
+            custom_data.destructor.?(custom_data.data.?);
+        }
+    }
+
+    fn destroyQueuedCustomPayloads(self: *EventQueue) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (self.head < self.queue.items.len) {
+            for (self.queue.items[self.head..]) |*event_item| {
+                destroyCustomPayload(event_item);
+            }
+        }
+        self.recycle();
     }
 
     pub fn popFront(self: *EventQueue) ?Event {
@@ -686,12 +718,7 @@ pub const EventQueue = struct {
             traceEvent(self.debug_hooks, &event, .target, event.target);
 
             // Clean up custom event data if needed
-            if (event.type == .custom) {
-                const custom_data = event.data.custom;
-                if (custom_data.destructor != null and custom_data.data != null) {
-                    custom_data.destructor.?(custom_data.data.?);
-                }
-            }
+            destroyCustomPayload(&event);
         }
     }
 
@@ -1515,6 +1542,25 @@ pub const ShortcutOverlay = struct {
         }
     }
 };
+
+test "event queue deinit destroys queued custom payloads" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+
+    var destroyed = false;
+    const Destructor = struct {
+        fn destroy(data: *anyopaque) void {
+            const flag = @as(*bool, @ptrCast(@alignCast(data)));
+            flag.* = true;
+        }
+    };
+
+    try queue.createCustomEvent(42, @ptrCast(&destroyed), Destructor.destroy, null);
+    queue.deinit();
+
+    try std.testing.expect(destroyed);
+}
+
 test "drag manager enqueues lifecycle events" {
     const alloc = std.testing.allocator;
     var queue = EventQueue.init(alloc);
@@ -2021,6 +2067,8 @@ pub const Application = struct {
     style_theme: ?widget.theme.Theme = null,
     /// Optional terminal-size binding for automatic renderer/root relayout.
     resize_binding: ResizeBinding = .{},
+    /// Background tasks owned by the application until released or shutdown.
+    background_tasks: std.ArrayList(*BackgroundTask),
 
     /// Components updated when a resize event reaches the application.
     pub const ResizeBinding = struct {
@@ -2038,6 +2086,7 @@ pub const Application = struct {
             .timer_manager = timer.TimerManager.init(allocator),
             .drag_manager = undefined,
             .shortcut_registry = ShortcutRegistry.init(allocator),
+            .background_tasks = std.ArrayList(*BackgroundTask).empty,
         };
 
         app.focus_manager = FocusManager.init(allocator, &app.event_queue);
@@ -2068,6 +2117,8 @@ pub const Application = struct {
 
     /// Clean up application resources
     pub fn deinit(self: *Application) void {
+        self.cancelAndJoinBackgroundTasks();
+
         if (self.io_manager) |manager| {
             manager.deinit();
             self.allocator.destroy(manager);
@@ -2083,6 +2134,7 @@ pub const Application = struct {
         self.focus_manager.deinit();
         self.drag_manager.deinit();
         self.shortcut_registry.deinit();
+        self.background_tasks.deinit(self.allocator);
         self.event_queue.deinit();
     }
 
@@ -2214,6 +2266,7 @@ pub const Application = struct {
         }
 
         self.ensureShortcutHook();
+        self.collectReleasedBackgroundTasks();
 
         if (self.memory_manager) |manager| {
             manager.resetFrame();
@@ -2231,6 +2284,7 @@ pub const Application = struct {
         self.animator.tick(delta);
         self.timer_manager.tick(now_ms);
         self.last_frame_ms = now_ms;
+        self.collectReleasedBackgroundTasks();
     }
 
     /// Poll until a deadline, useful when embedding zit into an external loop.
@@ -2393,14 +2447,17 @@ pub const Application = struct {
 
     /// Start a background task that will emit a custom event on completion.
     pub fn startBackgroundTask(self: *Application, work: BackgroundTaskFn, ctx: ?*anyopaque, target: ?*widget.Widget) !BackgroundTaskHandle {
-        const flag = try self.allocator.create(std.atomic.Value(bool));
-        flag.* = std.atomic.Value(bool).init(false);
-        errdefer self.allocator.destroy(flag);
+        const task = try self.allocator.create(BackgroundTask);
+        task.* = BackgroundTask{};
+        errdefer self.allocator.destroy(task);
 
         const worker = struct {
-            fn run(stop_flag: *std.atomic.Value(bool), queue: *EventQueue, allocator: std.mem.Allocator, work_fn: BackgroundTaskFn, ctx_ptr: ?*anyopaque, target_widget: ?*widget.Widget) void {
+            fn run(task_ptr: *BackgroundTask, queue: *EventQueue, allocator: std.mem.Allocator, work_fn: BackgroundTaskFn, ctx_ptr: ?*anyopaque, target_widget: ?*widget.Widget) void {
+                defer task_ptr.completed.store(true, .release);
+
                 var status: BackgroundTaskStatus = .success;
                 var message: []const u8 = "";
+                const stop_flag = &task_ptr.flag;
 
                 work_fn(stop_flag, ctx_ptr) catch |err| {
                     status = .failed;
@@ -2431,10 +2488,16 @@ pub const Application = struct {
             }
         }.run;
 
-        const thread = try std.Thread.spawn(.{}, worker, .{ flag, &self.event_queue, self.allocator, work, ctx, target });
-        thread.detach();
+        task.thread = try std.Thread.spawn(.{}, worker, .{ task, &self.event_queue, self.allocator, work, ctx, target });
+        errdefer {
+            task.flag.store(true, .release);
+            if (task.thread) |thread| thread.join();
+            self.allocator.destroy(task);
+        }
 
-        return BackgroundTaskHandle{ .flag = flag };
+        try self.background_tasks.append(self.allocator, task);
+
+        return BackgroundTaskHandle{ .flag = &task.flag, .task = task };
     }
 
     /// Request cancellation for a running background task.
@@ -2443,9 +2506,46 @@ pub const Application = struct {
         handle.flag.store(true, .release);
     }
 
-    /// Free the stop flag associated with a background task handle once it is no longer needed.
+    /// Mark a background task handle as no longer needed and collect it after completion.
     pub fn releaseBackgroundTaskHandle(self: *Application, handle: BackgroundTaskHandle) void {
-        self.allocator.destroy(handle.flag);
+        const task_ptr = handle.task orelse {
+            self.allocator.destroy(handle.flag);
+            return;
+        };
+        const task = @as(*BackgroundTask, @ptrCast(@alignCast(task_ptr)));
+        task.released = true;
+        self.collectReleasedBackgroundTasks();
+    }
+
+    fn collectReleasedBackgroundTasks(self: *Application) void {
+        var i: usize = 0;
+        while (i < self.background_tasks.items.len) {
+            const task = self.background_tasks.items[i];
+            if (task.released and task.completed.load(.acquire)) {
+                self.joinAndDestroyBackgroundTask(i);
+                continue;
+            }
+            i += 1;
+        }
+    }
+
+    fn joinAndDestroyBackgroundTask(self: *Application, index: usize) void {
+        const task = self.background_tasks.orderedRemove(index);
+        if (task.thread) |thread| {
+            thread.join();
+            task.thread = null;
+        }
+        self.allocator.destroy(task);
+    }
+
+    fn cancelAndJoinBackgroundTasks(self: *Application) void {
+        for (self.background_tasks.items) |task| {
+            task.flag.store(true, .release);
+        }
+
+        while (self.background_tasks.items.len > 0) {
+            self.joinAndDestroyBackgroundTask(self.background_tasks.items.len - 1);
+        }
     }
 
     /// Enable accessibility support and wire into focus events
@@ -2694,4 +2794,32 @@ test "background tasks emit completion events" {
     try std.testing.expect(completed);
     try std.testing.expect(announcement_seen);
     app.releaseBackgroundTaskHandle(handle);
+}
+
+test "application deinit cancels and joins running background tasks" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+
+    var stopped = std.atomic.Value(bool).init(false);
+    const Worker = struct {
+        fn run(stop_flag: *std.atomic.Value(bool), ctx: ?*anyopaque) anyerror!void {
+            const stopped_flag = @as(*std.atomic.Value(bool), @ptrCast(@alignCast(ctx.?)));
+            while (!stop_flag.load(.acquire)) {
+                compat.sleepMillis(1);
+            }
+            stopped_flag.store(true, .release);
+        }
+    };
+
+    const handle = try app.startBackgroundTask(Worker.run, @ptrCast(&stopped), null);
+    try std.testing.expectEqual(@as(usize, 1), app.background_tasks.items.len);
+
+    app.releaseBackgroundTaskHandle(handle);
+    try std.testing.expectEqual(@as(usize, 1), app.background_tasks.items.len);
+
+    app.cancelAndJoinBackgroundTasks();
+    try std.testing.expect(stopped.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), app.background_tasks.items.len);
+
+    app.deinit();
 }

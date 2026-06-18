@@ -52,7 +52,7 @@ const cli = b.addExecutable(.{ .name = "cli", .root_source_file = b.path("src/cl
 cli.root_module.addImport("zit", zit_mod);
 ```
 - **Custom render backends**: `zit.render.Renderer` is allocator-driven. If you need to drive rendering from another loop, call `renderer.render()` only when your backend says the terminal is ready, use `Application.tickOnce()` for non-blocking event processing, and bind terminal resizing with `Application.bindResize(&renderer, reflow_or_null)`.
-- **Async/background work**: keep UI smooth by using `Application.startBackgroundTask()` and listen for the completion event before mutating widgets.
+- **Async/background work**: keep UI smooth by using `Application.startBackgroundTask()` and listen for the completion event before mutating widgets. `Application.deinit()` cancels and joins outstanding tasks before the event queue is destroyed.
 
 ## Project patterns that pair well with Zit
 

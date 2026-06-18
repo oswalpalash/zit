@@ -38,7 +38,7 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 
 ## Async Patterns
 - `Application.tickOnce()`/`pollUntil()` let you pump events, animations, and timers from an external loop without sleeping the current thread.
-- `Application.startBackgroundTask()` runs work on a helper thread and emits a `BACKGROUND_TASK_EVENT_ID` custom event carrying a `BackgroundTaskResult` (success/failed/cancelled). Use `cancelBackgroundTask()` to flip the shared stop flag and `releaseBackgroundTaskHandle()` once you no longer need the handle.
+- `Application.startBackgroundTask()` runs work on a helper thread and emits a `BACKGROUND_TASK_EVENT_ID` custom event carrying a `BackgroundTaskResult` (success/failed/cancelled). Use `cancelBackgroundTask()` to flip the shared stop flag and `releaseBackgroundTaskHandle()` once you no longer need the handle; the application owns task storage, joins outstanding tasks on shutdown, and cleans queued completion payloads during teardown.
 - Timers stay central for periodic updates: pair `scheduleTimer()` with `TimerManager` ticks to drive clock widgets or auto-refresh data.
 
 ## Accessibility and High Contrast
