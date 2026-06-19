@@ -1167,6 +1167,7 @@ pub const DragManager = struct {
     }
 
     pub fn begin(self: *DragManager, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
+        try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 1);
         if (self.active) self.cancel();
         self.active = true;
         self.source = source;
@@ -1182,6 +1183,7 @@ pub const DragManager = struct {
 
     pub fn update(self: *DragManager, x: u16, y: u16, target: ?*widget.Widget) !void {
         if (!self.active) return;
+        try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 1);
         self.last_x = x;
         self.last_y = y;
         const resolved = self.resolveTarget(x, y, target);
@@ -1190,6 +1192,7 @@ pub const DragManager = struct {
 
     pub fn end(self: *DragManager, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
         if (!self.active) return;
+        try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 2);
         self.last_x = x;
         self.last_y = y;
         const resolved = self.resolveTarget(x, y, drop_target);
@@ -1763,6 +1766,81 @@ test "drop targets gate acceptance" {
     try mgr.end(6, 6, null);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
     try std.testing.expect(queue.queue.items[3].data.drop.accepted);
+}
+
+test "drag manager begin preserves active drag on event allocation failure" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.begin(null, 1, 2, 3, .{});
+    queue.queue.shrinkAndFree(alloc, queue.queue.items.len);
+    try std.testing.expectEqual(queue.queue.items.len, queue.queue.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = queue.allocator;
+    queue.allocator = failing.allocator();
+    defer queue.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, mgr.begin(null, 9, 8, 7, .{}));
+    try std.testing.expect(mgr.active);
+    try std.testing.expectEqual(@as(u16, 1), mgr.start_x);
+    try std.testing.expectEqual(@as(u16, 2), mgr.start_y);
+    try std.testing.expectEqual(@as(u16, 1), mgr.last_x);
+    try std.testing.expectEqual(@as(u16, 2), mgr.last_y);
+    try std.testing.expectEqual(@as(u8, 3), mgr.button);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.drag_start, queue.queue.items[0].type);
+}
+
+test "drag manager update preserves coordinates on event allocation failure" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.begin(null, 1, 2, 3, .{});
+    queue.queue.shrinkAndFree(alloc, queue.queue.items.len);
+    try std.testing.expectEqual(queue.queue.items.len, queue.queue.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = queue.allocator;
+    queue.allocator = failing.allocator();
+    defer queue.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, mgr.update(9, 8, null));
+    try std.testing.expect(mgr.active);
+    try std.testing.expectEqual(@as(u16, 1), mgr.last_x);
+    try std.testing.expectEqual(@as(u16, 2), mgr.last_y);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.drag_start, queue.queue.items[0].type);
+}
+
+test "drag manager end preserves active drag on event allocation failure" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.begin(null, 1, 2, 3, .{});
+    queue.queue.shrinkAndFree(alloc, queue.queue.items.len);
+    try std.testing.expectEqual(queue.queue.items.len, queue.queue.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = queue.allocator;
+    queue.allocator = failing.allocator();
+    defer queue.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, mgr.end(9, 8, null));
+    try std.testing.expect(mgr.active);
+    try std.testing.expectEqual(@as(u16, 1), mgr.last_x);
+    try std.testing.expectEqual(@as(u16, 2), mgr.last_y);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.drag_start, queue.queue.items[0].type);
 }
 
 test "propagation captures target then bubbles with current target set" {
