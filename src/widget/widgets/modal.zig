@@ -73,6 +73,7 @@ pub const Modal = struct {
 
     /// Clean up modal resources
     pub fn deinit(self: *Modal) void {
+        self.detachContent();
         if (self.title.len > 0) {
             self.allocator.free(self.title);
         }
@@ -81,13 +82,18 @@ pub const Modal = struct {
 
     /// Set the modal content
     pub fn setContent(self: *Modal, content: *Widget) void {
+        self.detachContent();
+        self.content = content;
+        content.parent = &self.widget;
+    }
+
+    fn detachContent(self: *Modal) void {
         if (self.content) |current| {
             if (current.parent == &self.widget) {
                 current.parent = null;
             }
         }
-        self.content = content;
-        content.parent = &self.widget;
+        self.content = null;
     }
 
     /// Set the modal title
@@ -448,4 +454,17 @@ test "modal maintains parent linkage for content" {
     modal.setContent(&second.widget);
     try std.testing.expect(first.widget.parent == null);
     try std.testing.expectEqual(&modal.widget, second.widget.parent.?);
+}
+
+test "modal deinit detaches content parent link" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+
+    var content = try @import("block.zig").Block.init(alloc);
+    defer content.deinit();
+
+    modal.setContent(&content.widget);
+    modal.deinit();
+
+    try std.testing.expect(content.widget.parent == null);
 }
