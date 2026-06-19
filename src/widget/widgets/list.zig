@@ -442,16 +442,18 @@ pub const List = struct {
         active_drag = null;
     }
 
-    fn acceptExternalDrop(self: *List, drag: ActiveDrag, drop_index: usize) void {
+    fn acceptExternalDrop(self: *List, drag: ActiveDrag, drop_index: usize) !void {
         if (!self.accept_external_drops) return;
 
         if (self.item_provider == null) {
             const target_idx = @min(drop_index, self.itemCount());
-            const copy = self.allocator.dupe(u8, drag.text) catch return;
-            self.items.insert(self.allocator, target_idx, copy) catch {
+            const copy = try self.allocator.dupe(u8, drag.text);
+            errdefer self.allocator.free(copy);
+            try self.items.insert(self.allocator, target_idx, copy);
+            errdefer {
                 self.allocator.free(copy);
-                return;
-            };
+                _ = self.items.orderedRemove(target_idx);
+            }
             if (self.cross_drop_mode == .move and drag.source.item_provider == null) {
                 drag.source.removeItem(drag.from_index);
             }
@@ -621,7 +623,7 @@ pub const List = struct {
                                 self.reorderInPlace(start_idx, self.drag_hover_index.?);
                             }
                         } else {
-                            self.acceptExternalDrop(drag, self.drag_hover_index.?);
+                            try self.acceptExternalDrop(drag, self.drag_hover_index.?);
                         }
                         self.endDrag();
                         return true;
@@ -1005,6 +1007,35 @@ test "list accepts cross-list drops and moves items" {
     try std.testing.expectEqualStrings("alpha", target.items.items[0]);
     try std.testing.expectEqualStrings("one", target.items.items[1]);
     try std.testing.expect(!source.dragging);
+}
+
+test "list external drop reports allocation failure without changing lists" {
+    const alloc = std.testing.allocator;
+    var source = try List.init(alloc);
+    defer source.deinit();
+    var target = try List.init(alloc);
+    defer target.deinit();
+
+    try source.addItem("alpha");
+    try source.addItem("beta");
+    try target.addItem("one");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = target.allocator;
+    target.allocator = failing.allocator();
+    defer target.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, target.acceptExternalDrop(.{
+        .source = source,
+        .from_index = 0,
+        .text = source.items.items[0],
+    }, 0));
+
+    try std.testing.expectEqual(@as(usize, 2), source.items.items.len);
+    try std.testing.expectEqualStrings("alpha", source.items.items[0]);
+    try std.testing.expectEqualStrings("beta", source.items.items[1]);
+    try std.testing.expectEqual(@as(usize, 1), target.items.items.len);
+    try std.testing.expectEqualStrings("one", target.items.items[0]);
 }
 
 test "list virtual provider samples preferred size within limit" {
