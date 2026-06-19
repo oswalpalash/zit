@@ -13,6 +13,7 @@ Mark all that apply. Use `zig build release-check` before maintainers cut or mer
 - [ ] `python3 scripts/check_example_coverage.py`
 - [ ] `python3 scripts/check_mouse_hit_coverage.py`
 - [ ] `python3 scripts/check_owned_allocation_patterns.py`
+- [ ] `python3 scripts/check_unreachable_catches.py`
 - [ ] `python3 scripts/check_widget_owner_casts.py`
 - [ ] `zig build release-check`
 - [ ] Targeted examples/benchmarks (list):

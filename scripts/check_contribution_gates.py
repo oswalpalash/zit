@@ -18,6 +18,7 @@ REQUIRED_WORKFLOW_GATES = (
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",
+    "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )
@@ -33,6 +34,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",
+    "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )
@@ -47,6 +49,7 @@ REQUIRED_RELEASE_VERIFY_GATES = (
     '"example coverage", ("python3", "scripts/check_example_coverage.py")',
     '"mouse hit coverage", ("python3", "scripts/check_mouse_hit_coverage.py")',
     '"owned allocation patterns", ("python3", "scripts/check_owned_allocation_patterns.py")',
+    '"unreachable catch patterns", ("python3", "scripts/check_unreachable_catches.py")',
     '"mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build")',
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
 )
@@ -62,6 +65,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",
+    "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "zig build release-check",
 )

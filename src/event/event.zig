@@ -1700,15 +1700,15 @@ test "propagation captures target then bubbles with current target set" {
     branch.widget.parent = &root.widget;
     leaf.widget.parent = &branch.widget;
 
-    var order = std.ArrayList([]const u8).empty;
-    defer order.deinit(alloc);
+    var order: [5][]const u8 = undefined;
+    var order_len: usize = 0;
 
     const Logger = struct {
-        pub var log: *std.ArrayList([]const u8) = undefined;
+        pub var log: *[5][]const u8 = undefined;
+        pub var log_len: *usize = undefined;
         pub var root_ptr: *widget.Widget = undefined;
         pub var branch_ptr: *widget.Widget = undefined;
         pub var leaf_ptr: *widget.Widget = undefined;
-        pub var allocator: std.mem.Allocator = undefined;
 
         pub fn listener(ev: *Event) bool {
             const current = ev.current_target orelse return false;
@@ -1718,16 +1718,19 @@ test "propagation captures target then bubbles with current target set" {
                 "branch"
             else
                 "leaf";
-            log.append(allocator, label) catch unreachable;
+            if (log_len.* < log.len) {
+                log[log_len.*] = label;
+                log_len.* += 1;
+            }
             return false;
         }
     };
 
     Logger.log = &order;
+    Logger.log_len = &order_len;
     Logger.root_ptr = &root.widget;
     Logger.branch_ptr = &branch.widget;
     Logger.leaf_ptr = &leaf.widget;
-    Logger.allocator = alloc;
     _ = try dispatcher.addEventListener(.key_press, Logger.listener, null);
 
     var ev = Event.init(.key_press, &leaf.widget, Event.EventData{
@@ -1741,12 +1744,12 @@ test "propagation captures target then bubbles with current target set" {
     const propagation = @import("propagation.zig");
     _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
-    try std.testing.expectEqual(@as(usize, 5), order.items.len);
-    try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
-    try std.testing.expect(std.mem.eql(u8, "branch", order.items[1]));
-    try std.testing.expect(std.mem.eql(u8, "leaf", order.items[2]));
-    try std.testing.expect(std.mem.eql(u8, "branch", order.items[3]));
-    try std.testing.expect(std.mem.eql(u8, "root", order.items[4]));
+    try std.testing.expectEqual(@as(usize, 5), order_len);
+    try std.testing.expect(std.mem.eql(u8, "root", order[0]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order[1]));
+    try std.testing.expect(std.mem.eql(u8, "leaf", order[2]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order[3]));
+    try std.testing.expect(std.mem.eql(u8, "root", order[4]));
 }
 
 test "stopPropagation halts remaining phases" {
@@ -1785,29 +1788,36 @@ test "stopPropagation halts remaining phases" {
     branch.widget.parent = &root.widget;
     leaf.widget.parent = &branch.widget;
 
-    var order = std.ArrayList([]const u8).empty;
-    defer order.deinit(alloc);
+    var order: [2][]const u8 = undefined;
+    var order_len: usize = 0;
 
     const Stopper = struct {
-        pub var log: *std.ArrayList([]const u8) = undefined;
+        pub var log: *[2][]const u8 = undefined;
+        pub var log_len: *usize = undefined;
         pub var branch_ptr: *widget.Widget = undefined;
-        pub var allocator: std.mem.Allocator = undefined;
+
+        fn append(label: []const u8) void {
+            if (log_len.* < log.len) {
+                log[log_len.*] = label;
+                log_len.* += 1;
+            }
+        }
 
         pub fn listener(ev: *Event) bool {
             const current = ev.current_target orelse return false;
             if (current == branch_ptr) {
-                log.append(allocator, "branch") catch unreachable;
+                append("branch");
                 ev.stopPropagation();
             } else {
-                log.append(allocator, "root") catch unreachable;
+                append("root");
             }
             return false;
         }
     };
 
     Stopper.log = &order;
+    Stopper.log_len = &order_len;
     Stopper.branch_ptr = &branch.widget;
-    Stopper.allocator = alloc;
     _ = try dispatcher.addEventListener(.key_press, Stopper.listener, null);
 
     var ev = Event.init(.key_press, &leaf.widget, Event.EventData{
@@ -1821,9 +1831,9 @@ test "stopPropagation halts remaining phases" {
     const propagation = @import("propagation.zig");
     _ = try propagation.dispatchWithPropagation(&dispatcher, &ev, alloc, .{});
 
-    try std.testing.expectEqual(@as(usize, 2), order.items.len);
-    try std.testing.expect(std.mem.eql(u8, "root", order.items[0]));
-    try std.testing.expect(std.mem.eql(u8, "branch", order.items[1]));
+    try std.testing.expectEqual(@as(usize, 2), order_len);
+    try std.testing.expect(std.mem.eql(u8, "root", order[0]));
+    try std.testing.expect(std.mem.eql(u8, "branch", order[1]));
     try std.testing.expect(ev.stop_propagation);
 }
 

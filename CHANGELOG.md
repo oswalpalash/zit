@@ -23,6 +23,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Public widget coverage checker (`scripts/check_widget_coverage.py`) fails when an exported widget lacks declared visual or snapshot coverage.
 - Public example coverage checker (`scripts/check_example_coverage.py`, `zig build example-coverage`) fails when a build-targeted interactive example is missing from PTY smoke coverage, public build-step classification, or repeated visual snapshot coverage.
 - Owned allocation pattern checker (`scripts/check_owned_allocation_patterns.py`, `zig build owned-allocation-patterns`) rejects non-transactional owned-string append and replacement patterns before they can regress widget OOM behavior.
+- Unreachable catch checker (`scripts/check_unreachable_catches.py`, `zig build unreachable-catches`) rejects `catch unreachable` in Zig sources so recoverable failures are not converted into panics.
 - DebugAllocator cleanup checker (`scripts/check_debug_allocator_cleanup.py`) fails when public examples or memory tests ignore allocator deinit status.
 - Repeat visual capture checker (`scripts/visual_repeat_check.py`) runs four deterministic `--snapshot` frames per target and emits a contact sheet for flicker/drift review.
 - Repeat visual capture checker now also captures deterministic `--ansi-snapshot` frames and renders PNG contact sheets with terminal foreground/background colors for visual polish review.

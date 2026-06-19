@@ -351,6 +351,10 @@ pub fn build(b: *std.Build) void {
     const owned_alloc_patterns_step = b.step("owned-allocation-patterns", "Check owned allocations are transactional");
     owned_alloc_patterns_step.dependOn(&owned_alloc_patterns_cmd.step);
 
+    const unreachable_catches_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_unreachable_catches.py" });
+    const unreachable_catches_step = b.step("unreachable-catches", "Check recoverable errors are not converted to panics");
+    unreachable_catches_step.dependOn(&unreachable_catches_cmd.step);
+
     const example_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_example_coverage.py" });
     const example_coverage_step = b.step("example-coverage", "Check public examples are covered by PTY and visual gates");
     example_coverage_step.dependOn(&example_coverage_cmd.step);
@@ -386,6 +390,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(mouse_hit_coverage_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);
+    quality_step.dependOn(unreachable_catches_step);
     quality_step.dependOn(example_coverage_step);
     quality_step.dependOn(memory_cleanup_step);
     quality_step.dependOn(contribution_gates_step);
