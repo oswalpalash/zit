@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Rich text viewer that renders styled spans (color, bold, italic).
 pub const RichText = struct {
@@ -36,6 +37,7 @@ pub const RichText = struct {
             .allocator = allocator,
             .spans = std.ArrayList(Span).empty,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Rich text", "");
         return self;
     }
 

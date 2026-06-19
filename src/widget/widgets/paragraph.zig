@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Paragraph widget: read-only text with wrapping, padding, alignment, and scroll offset.
 pub const Paragraph = struct {
@@ -40,6 +41,7 @@ pub const Paragraph = struct {
             .allocator = allocator,
             .text = try allocator.dupe(u8, text),
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Paragraph", "");
         return self;
     }
 
@@ -52,6 +54,7 @@ pub const Paragraph = struct {
         const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
         self.text = next;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Paragraph", "");
         self.widget.markDirty();
     }
 

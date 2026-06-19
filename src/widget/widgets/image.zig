@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Widget that renders a simple color buffer (useful for icons, previews, and charts).
 pub const RenderMode = enum {
@@ -43,6 +44,7 @@ pub const ImageWidget = struct {
             .height = height,
             .pixels = pixels,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.canvas), "Image", "");
         return self;
     }
 

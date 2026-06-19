@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Palette-based color picker widget with keyboard and mouse selection.
 pub const ColorPicker = struct {
@@ -32,6 +33,7 @@ pub const ColorPicker = struct {
             .palette = std.ArrayList(render.Color).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Color picker", "");
         try self.setPalette(palette);
         return self;
     }

@@ -57,6 +57,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_debug_allocator_cleanup.py`
 - `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_contribution_gates.py`
+- `python3 scripts/check_accessibility_metadata.py` to require every public widget export to expose semantic accessibility metadata for focus announcements and assistive integrations.
 - `python3 scripts/check_example_coverage.py`
 - `python3 scripts/check_owned_allocation_patterns.py`
 - `python3 scripts/check_widget_coverage.py`

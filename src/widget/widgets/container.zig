@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Container widget for holding and arranging other widgets
 pub const Container = struct {
@@ -41,6 +42,7 @@ pub const Container = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Container", "");
 
         return self;
     }

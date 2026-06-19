@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Hierarchical tree widget with keyboard navigation.
 pub const TreeView = struct {
@@ -42,6 +43,7 @@ pub const TreeView = struct {
             .palette = theme.Theme.dark(),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Tree view", "");
         return self;
     }
 

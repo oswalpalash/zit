@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Minimal-yet-solid charting primitives for dashboards: bar, line, area, and more.
 pub const ChartType = enum { bar, stacked_bar, line, area, pie, scatter };
@@ -50,6 +51,7 @@ pub const Chart = struct {
             .y_axis_label = null,
             .show_legend = true,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.canvas), "Chart", "");
         return self;
     }
 

@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Block widget: border + padding + optional title around a single child.
 /// Mirrors the core "Block" primitive from other TUI stacks (ratatui/blessed).
@@ -39,6 +40,7 @@ pub const Block = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Block", "");
         return self;
     }
 
@@ -60,6 +62,7 @@ pub const Block = struct {
         const next = try self.allocator.dupe(u8, title);
         if (self.title) |t| self.allocator.free(t);
         self.title = next;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), self.title.?, "");
     }
 
     pub fn setTitleStyle(self: *Block, color: render.Color, style: render.Style) void {

@@ -15,6 +15,7 @@ REQUIRED_WORKFLOW_GATES = (
     "python3 scripts/interactive_example_smoke.py",
     "python3 scripts/resize_smoke.py",
     "python3 scripts/mouse_alignment_smoke.py",
+    "python3 scripts/check_accessibility_metadata.py",
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",
@@ -29,6 +30,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/resize_smoke.py --no-build",
     "python3 scripts/mouse_alignment_smoke.py --no-build",
     "python3 scripts/visual_repeat_check.py --count 4",
+    "python3 scripts/check_accessibility_metadata.py",
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",
@@ -42,6 +44,7 @@ REQUIRED_STABILITY_GATES = REQUIRED_PR_GATES + (
 
 REQUIRED_RELEASE_VERIFY_GATES = (
     '"contribution gates", ("python3", "scripts/check_contribution_gates.py")',
+    '"accessibility metadata", ("python3", "scripts/check_accessibility_metadata.py")',
     '"example coverage", ("python3", "scripts/check_example_coverage.py")',
     '"mouse hit coverage", ("python3", "scripts/check_mouse_hit_coverage.py")',
     '"owned allocation patterns", ("python3", "scripts/check_owned_allocation_patterns.py")',
@@ -56,6 +59,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/resize_smoke.py --no-build",
     "python3 scripts/mouse_alignment_smoke.py --no-build",
     "python3 scripts/visual_repeat_check.py --count 4",
+    "python3 scripts/check_accessibility_metadata.py",
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_mouse_hit_coverage.py",
     "python3 scripts/check_owned_allocation_patterns.py",

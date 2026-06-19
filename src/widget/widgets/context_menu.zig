@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Item entry for context menus.
 pub const MenuItem = struct {
@@ -46,6 +47,7 @@ pub const ContextMenu = struct {
             .items = items,
             .theme_value = theme.Theme.dark(),
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), "Context menu", "");
         return self;
     }
 

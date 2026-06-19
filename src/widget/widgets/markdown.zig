@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme_mod = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 const InlineSegment = struct {
     text: []const u8,
@@ -58,6 +59,7 @@ pub const Markdown = struct {
             .content = try allocator.dupe(u8, text),
             .lines = std.ArrayList(Line).empty,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Markdown", "");
 
         try self.parse();
         return self;

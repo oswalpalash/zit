@@ -27,6 +27,7 @@ class Command:
 
 
 SCRIPT_COMPILE_TARGETS = (
+    "scripts/check_accessibility_metadata.py",
     "scripts/check_build_steps.py",
     "scripts/check_ci_script_coverage.py",
     "scripts/check_contribution_gates.py",
@@ -92,6 +93,7 @@ def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
         Command("debug allocator cleanup", ("python3", "scripts/check_debug_allocator_cleanup.py"), 120),
         Command("CI script coverage", ("python3", "scripts/check_ci_script_coverage.py"), 120),
         Command("contribution gates", ("python3", "scripts/check_contribution_gates.py"), 120),
+        Command("accessibility metadata", ("python3", "scripts/check_accessibility_metadata.py"), 120),
         Command("example coverage", ("python3", "scripts/check_example_coverage.py"), 120),
         Command("mouse hit coverage", ("python3", "scripts/check_mouse_hit_coverage.py"), 120),
         Command("owned allocation patterns", ("python3", "scripts/check_owned_allocation_patterns.py"), 120),

@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 const CanvasCell = struct {
     char: u21,
@@ -39,6 +40,7 @@ pub const Canvas = struct {
             .cells = std.ArrayList(CanvasCell).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.canvas), "Canvas", "");
 
         try self.resizeInternal(self.width, self.height);
         return self;

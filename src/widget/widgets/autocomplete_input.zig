@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 const InputField = @import("input_field.zig").InputField;
 
 /// Text input with live typeahead suggestions.
@@ -49,6 +50,7 @@ pub const AutocompleteInput = struct {
             .theme_value = theme_value,
         };
         self.input_field.widget.parent = &self.widget;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), "Autocomplete input", "");
         return self;
     }
 

@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Tiny sparkline chart for quick trend visualization.
 pub const Sparkline = struct {
@@ -34,6 +35,7 @@ pub const Sparkline = struct {
             .theme_value = default_theme,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Sparkline", "");
         return self;
     }
 

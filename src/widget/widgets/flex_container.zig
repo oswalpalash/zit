@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Flex container widget that arranges children using FlexLayout.
 pub const FlexContainer = struct {
@@ -35,6 +36,7 @@ pub const FlexContainer = struct {
             .children = std.ArrayList(*base.Widget).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Flex container", "");
         return self;
     }
 

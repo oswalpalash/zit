@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 pub const ToastLevel = enum {
     info,
@@ -41,6 +42,7 @@ pub const ToastManager = struct {
             .toasts = std.ArrayList(ToastEntry).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.alert), "Toast notifications", "");
         return self;
     }
 

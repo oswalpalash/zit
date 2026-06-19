@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Lightweight popup panel for transient messages or contextual overlays.
 pub const Popup = struct {
@@ -31,6 +32,7 @@ pub const Popup = struct {
             .message = try allocator.dupe(u8, message),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.message, "");
         return self;
     }
 
@@ -43,6 +45,7 @@ pub const Popup = struct {
         const next = try self.allocator.dupe(u8, message);
         self.allocator.free(self.message);
         self.message = next;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.message, "");
         self.widget.markDirty();
     }
 

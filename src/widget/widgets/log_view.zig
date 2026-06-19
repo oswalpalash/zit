@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// LogView renders append-only log lines with automatic scrolling.
 pub const LogView = struct {
@@ -34,6 +35,7 @@ pub const LogView = struct {
             .entries = std.ArrayList(Entry).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Log view", "");
         return self;
     }
 

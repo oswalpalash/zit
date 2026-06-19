@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const theme = @import("../theme.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Gauge orientation.
 pub const GaugeOrientation = enum {
@@ -46,6 +47,7 @@ pub const Gauge = struct {
             .fill = render.Color.named(render.NamedColor.green),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), "Gauge", "");
         return self;
     }
 
@@ -77,6 +79,7 @@ pub const Gauge = struct {
             self.allocator.free(self.label);
         }
         self.label = next;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), self.label, "");
     }
 
     pub fn setOrientation(self: *Gauge, orientation: GaugeOrientation) void {

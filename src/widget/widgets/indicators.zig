@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const theme = @import("../theme.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Battery indicator with charge/alert visuals.
 pub const BatteryIndicator = struct {
@@ -27,6 +28,7 @@ pub const BatteryIndicator = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Battery", "");
         return self;
     }
 
@@ -130,6 +132,7 @@ pub const SignalStrength = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Signal strength", "");
         return self;
     }
 
@@ -218,6 +221,7 @@ pub const ResourceMeter = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), self.label, "");
         return self;
     }
 
@@ -235,6 +239,7 @@ pub const ResourceMeter = struct {
         }
         self.label = next;
         self.owns_label = true;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), self.label, "");
     }
 
     pub fn setValue(self: *ResourceMeter, value: f32) void {
@@ -312,6 +317,7 @@ pub const TrafficLight = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Traffic light", "");
         return self;
     }
 

@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Label widget for displaying text
 pub const Label = struct {
@@ -49,6 +50,7 @@ pub const Label = struct {
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), self.text, "");
 
         return self;
     }
@@ -64,6 +66,7 @@ pub const Label = struct {
         const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
         self.text = next;
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), self.text, "");
         self.widget.markDirty();
     }
 

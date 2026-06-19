@@ -14,6 +14,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Benchmarks and testing harness wired through `zig build` to keep render paths and layouts stable.
 - Benchmark suite now enforces conservative render, table-scroll, input-decode, and string-interning budgets so major efficiency regressions fail CI.
 - Mouse-capable public widgets now require explicit hit-test coverage declarations so rendered/click-coordinate regressions cannot ship silently.
+- All public widget exports now expose accessibility metadata, with a release gate preventing new widgets from shipping without semantic roles/names.
 - `zig build quality` aggregates smoke compilation, unit/snapshot tests, and benchmarks for local pre-push verification.
 - Real-world snapshot regressions cover htop-style, file manager, dashboard, and editor compositions.
 - Deterministic widget gallery snapshot target for screenshot-based review of core widgets and advanced controls.

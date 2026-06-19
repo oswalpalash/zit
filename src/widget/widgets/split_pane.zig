@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Orientation for the split pane divider.
 pub const SplitOrientation = enum {
@@ -40,6 +41,7 @@ pub const SplitPane = struct {
             .palette = default_theme,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Split pane", "");
         return self;
     }
 

@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Grid container widget that arranges children using GridLayout.
 pub const GridContainer = struct {
@@ -42,6 +43,7 @@ pub const GridContainer = struct {
             .children = std.ArrayList(Child).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Grid container", "");
         return self;
     }
 

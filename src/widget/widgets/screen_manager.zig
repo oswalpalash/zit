@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const animation = @import("../animation.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Lifecycle hooks fired as screens are shown/hidden.
 pub const ScreenLifecycle = struct {
@@ -88,6 +89,7 @@ pub const ScreenManager = struct {
             .screens = std.ArrayList(ScreenEntry).empty,
             .animator = animation.Animator.init(allocator),
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Screen manager", "");
         return self;
     }
 

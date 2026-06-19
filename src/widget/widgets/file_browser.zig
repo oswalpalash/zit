@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const compat = @import("../../compat.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// File browser widget with basic directory navigation and selection.
 pub const FileBrowser = struct {
@@ -55,6 +56,7 @@ pub const FileBrowser = struct {
             .current_path = normalized,
             .entries = std.ArrayList(Entry).empty,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "File browser", "");
 
         try self.refresh();
         return self;

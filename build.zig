@@ -335,6 +335,10 @@ pub fn build(b: *std.Build) void {
     const widget_coverage_step = b.step("widget-coverage", "Check public widget visual and snapshot coverage declarations");
     widget_coverage_step.dependOn(&widget_coverage_cmd.step);
 
+    const accessibility_metadata_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_accessibility_metadata.py" });
+    const accessibility_metadata_step = b.step("accessibility-metadata", "Check public widgets expose accessibility metadata");
+    accessibility_metadata_step.dependOn(&accessibility_metadata_cmd.step);
+
     const mouse_hit_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_mouse_hit_coverage.py" });
     const mouse_hit_coverage_step = b.step("mouse-hit-coverage", "Check public mouse-capable widgets have hit-test coverage");
     mouse_hit_coverage_step.dependOn(&mouse_hit_coverage_cmd.step);
@@ -378,6 +382,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(test_step);
     quality_step.dependOn(bench_step);
     quality_step.dependOn(widget_coverage_step);
+    quality_step.dependOn(accessibility_metadata_step);
     quality_step.dependOn(mouse_hit_coverage_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);

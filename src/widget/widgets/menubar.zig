@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 pub const MenuItem = struct {
     label: []const u8,
@@ -35,6 +36,7 @@ pub const MenuBar = struct {
             .items = std.ArrayList(MenuItem).empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), "Menu bar", "");
         return self;
     }
 

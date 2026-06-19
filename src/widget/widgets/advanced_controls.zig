@@ -4,6 +4,7 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
+const accessibility = @import("../accessibility.zig");
 
 fn appendOwnedString(list: *std.ArrayListUnmanaged([]const u8), allocator: std.mem.Allocator, value: []const u8) !void {
     try list.ensureUnusedCapacity(allocator, 1);
@@ -61,6 +62,7 @@ pub const ToggleSwitch = struct {
             .label = try allocator.dupe(u8, label),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.checkbox), self.label, "");
         return self;
     }
 
@@ -180,6 +182,7 @@ pub const RadioGroup = struct {
             try appendOwnedString(&self.options, self.allocator, opt);
         }
 
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Radio group", "");
         return self;
     }
 
@@ -315,6 +318,7 @@ pub const Slider = struct {
             .value = min,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.slider), "Slider", "");
         return self;
     }
 
@@ -439,6 +443,7 @@ pub const RatingStars = struct {
             .max_stars = max_stars,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.slider), "Rating", "");
         return self;
     }
 
@@ -540,6 +545,7 @@ pub const StatusBar = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Status bar", "");
         return self;
     }
 
@@ -623,6 +629,7 @@ pub const Toolbar = struct {
         for (labels) |lbl| {
             try appendOwnedString(&self.items, self.allocator, lbl);
         }
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), "Toolbar", "");
         return self;
     }
 
@@ -746,6 +753,7 @@ pub const Breadcrumbs = struct {
         for (parts) |part| {
             try appendOwnedPart(&self.parts, self.allocator, .{ .label = part });
         }
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Breadcrumbs", "");
         return self;
     }
 
@@ -935,6 +943,7 @@ pub const Pagination = struct {
             .total = if (total == 0) 1 else total,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), "Pagination", "");
         return self;
     }
 
@@ -1060,6 +1069,7 @@ pub const CommandPalette = struct {
         for (commands) |cmd| {
             try appendOwnedString(&self.commands, self.allocator, cmd);
         }
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), self.title, "");
         return self;
     }
 
@@ -1172,6 +1182,7 @@ pub const NotificationCenter = struct {
             .notifications = .empty,
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.alert), "Notification center", "");
         return self;
     }
 
@@ -1301,6 +1312,7 @@ pub const Accordion = struct {
                 .expanded = section.expanded,
             });
         }
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Accordion", "");
         return self;
     }
 
@@ -1418,6 +1430,7 @@ pub const WizardStepper = struct {
         for (steps) |step| {
             try appendOwnedString(&self.steps, self.allocator, step);
         }
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Wizard stepper", "");
         return self;
     }
 

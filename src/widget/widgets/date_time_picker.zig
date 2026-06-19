@@ -3,6 +3,7 @@ const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
+const accessibility = @import("../accessibility.zig");
 
 /// Interactive date/time picker with keyboard navigation.
 pub const DateTimePicker = struct {
@@ -41,6 +42,7 @@ pub const DateTimePicker = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
         };
+        self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), "Date time picker", "");
         return self;
     }
 
