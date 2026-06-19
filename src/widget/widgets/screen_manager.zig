@@ -120,6 +120,9 @@ pub const ScreenManager = struct {
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
         try self.primeEntry(&entry);
+        errdefer if (!entry_owned_by_stack and entry.screen.widget.parent == &self.widget) {
+            entry.screen.widget.parent = null;
+        };
 
         if (self.topEntry()) |prev| {
             try self.runHook(prev, prev.label_copy, prev.screen.lifecycle.on_pause);
@@ -169,6 +172,9 @@ pub const ScreenManager = struct {
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
         try self.primeEntry(&entry);
+        errdefer if (!entry_owned_by_stack and entry.screen.widget.parent == &self.widget) {
+            entry.screen.widget.parent = null;
+        };
         try self.runHook(&self.screens.items[exiting_idx], self.screens.items[exiting_idx].label_copy, self.screens.items[exiting_idx].screen.lifecycle.on_pause);
 
         self.screens.appendAssumeCapacity(entry);
@@ -594,6 +600,68 @@ test "screen manager rejected entering screen is detached" {
     try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
     try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
     try std.testing.expect(block_b.widget.parent == null);
+}
+
+test "screen manager rejected push after pause failure is detached" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    const FailingPause = struct {
+        fn pause(_: *ScreenContext) anyerror!void {
+            return error.PauseFailed;
+        }
+    };
+
+    try manager.push(.{
+        .widget = &block_a.widget,
+        .label = "good",
+        .lifecycle = .{ .on_pause = FailingPause.pause },
+    });
+    try manager.tick(1000);
+    try std.testing.expectError(error.PauseFailed, manager.push(.{ .widget = &block_b.widget, .label = "bad" }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
+    try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
+    try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+}
+
+test "screen manager rejected replace after pause failure is detached" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    const FailingPause = struct {
+        fn pause(_: *ScreenContext) anyerror!void {
+            return error.PauseFailed;
+        }
+    };
+
+    try manager.push(.{
+        .widget = &block_a.widget,
+        .label = "good",
+        .lifecycle = .{ .on_pause = FailingPause.pause },
+    });
+    try manager.tick(1000);
+    try std.testing.expectError(error.PauseFailed, manager.replace(.{ .widget = &block_b.widget, .label = "bad" }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
+    try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
+    try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
 }
 
 test "screen manager layout propagates child layout failure" {
