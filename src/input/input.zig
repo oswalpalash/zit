@@ -1480,14 +1480,26 @@ pub const InputHandler = struct {
         }
     }
 
-    /// Convert mouse coordinates to screen coordinates
+    /// Return normalized screen coordinates for a Zit mouse event.
+    ///
+    /// `pollEvent` and `decodeEventFromBytes` already normalize terminal
+    /// protocol coordinates to the zero-based coordinate system used by
+    /// rendering and widget layout. This helper is intentionally idempotent so
+    /// callers do not accidentally shift clicks one row/column above the
+    /// rendered target.
     pub fn translateMouseCoordinates(_: *InputHandler, x: u16, y: u16) struct { x: u16, y: u16 } {
-        // In a TUI application, mouse coordinates are usually 1-indexed
-        // This converts them to 0-indexed for internal use
-        const adjusted_x = terminalMouseCoordToScreenCoord(x);
-        const adjusted_y = terminalMouseCoordToScreenCoord(y);
+        return .{ .x = x, .y = y };
+    }
 
-        return .{ .x = adjusted_x, .y = adjusted_y };
+    /// Convert raw terminal protocol coordinates to Zit screen coordinates.
+    ///
+    /// Use this only for coordinates read outside `InputHandler`; events
+    /// returned by `pollEvent` are already normalized.
+    pub fn translateTerminalMouseCoordinates(_: *InputHandler, x: u16, y: u16) struct { x: u16, y: u16 } {
+        return .{
+            .x = terminalMouseCoordToScreenCoord(x),
+            .y = terminalMouseCoordToScreenCoord(y),
+        };
     }
 };
 
@@ -1833,6 +1845,24 @@ test "parse SGR mouse coordinates are zero based for widgets" {
     try std.testing.expectEqual(MouseAction.press, mouse_event.action);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.y);
+}
+
+test "translateMouseCoordinates is idempotent for decoded mouse events" {
+    var reader = SliceByteReader{ .data = "<0;1;1M" };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+
+    var handler: InputHandler = undefined;
+    const translated = handler.translateMouseCoordinates(event.mouse.x, event.mouse.y);
+    try std.testing.expectEqual(@as(u16, 0), translated.x);
+    try std.testing.expectEqual(@as(u16, 0), translated.y);
+}
+
+test "translateTerminalMouseCoordinates converts raw terminal coordinates" {
+    var handler: InputHandler = undefined;
+    const translated = handler.translateTerminalMouseCoordinates(1, 1);
+    try std.testing.expectEqual(@as(u16, 0), translated.x);
+    try std.testing.expectEqual(@as(u16, 0), translated.y);
 }
 
 test "parse legacy mouse press" {

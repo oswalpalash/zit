@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- `InputHandler.translateMouseCoordinates` is now idempotent for mouse events returned by `pollEvent`, with `translateTerminalMouseCoordinates` available for raw 1-based terminal protocol coordinates, preventing accidental double-normalization that shifts clicks above or left of rendered targets.
 - `button-example` now uses `@fieldParentPtr("widget", ...)` in its custom layout wrapper instead of demonstrating unsafe embedded-widget owner casts.
 - RichText, MenuBar, ToastManager, SyntaxHighlighter, advanced controls, Block, Gauge, and ResourceMeter now preserve existing owned text/collections and clean up partial allocations when public setters or initializers hit `OutOfMemory`.
 - Widget vtable callbacks now recover concrete owners with `@fieldParentPtr("widget", ...)` instead of assuming the embedded `Widget` sits at offset zero, fixing corrupted widget state reads that could misalign mouse clicks from rendered controls.

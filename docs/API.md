@@ -4,7 +4,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 
 ## Core Modules
 - `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`.
-- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, plus key codes (`KeyCode.*`) and modifiers.
+- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, decoded mouse events in zero-based render coordinates, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
 - `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, `bindInput(&input)`, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement` adapters let widgets participate in container layouts.
@@ -46,6 +46,22 @@ while (true) {
     try app.tickOnce();
     try renderer.render();
 }
+```
+
+### Mouse Coordinates
+```zig
+const maybe_event = try input_handler.pollEvent(0);
+if (maybe_event) |event| switch (event) {
+    .mouse => |mouse| {
+        // Already zero-based and aligned with renderer/widget layout rects.
+        const point = input_handler.translateMouseCoordinates(mouse.x, mouse.y);
+        _ = point;
+    },
+    else => {},
+};
+
+// Only use this for raw terminal protocol coordinates read outside InputHandler.
+const point = input_handler.translateTerminalMouseCoordinates(1, 1);
 ```
 
 ### Automatic Resize
