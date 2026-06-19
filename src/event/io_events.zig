@@ -173,8 +173,7 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
                     .owns_error_message = false,
                 };
 
-                // Send an event
-                ctx.event_queue.createCustomEvent(ctx.event_id, @ptrCast(data), ioEventDataCleanup, ctx.target) catch {};
+                postIoEventData(ctx.event_queue, ctx.event_id, data, ctx.target);
             }
 
             last_modified = modified;
@@ -209,6 +208,13 @@ fn ioEventDataCleanup(data: *anyopaque) void {
 
     // Destroy the IoEventData itself
     io_data.allocator.destroy(io_data);
+}
+
+fn postIoEventData(queue: *event.EventQueue, event_id: u32, io_data: *IoEventData, target: ?*event.widget.Widget) void {
+    queue.createCustomEvent(event_id, @ptrCast(io_data), ioEventDataCleanup, target) catch |err| {
+        std.log.debug("zit.event.io: dropping {s} event after enqueue failure: {s}", .{ @tagName(io_data.type), @errorName(err) });
+        ioEventDataCleanup(@ptrCast(io_data));
+    };
 }
 
 /// Network connection context.
@@ -349,8 +355,7 @@ fn sendNetworkEvent(ctx: *NetworkContext, event_type: IoEventType, status: IoSta
         .owns_error_message = false,
     };
 
-    // Send an event
-    ctx.event_queue.createCustomEvent(ctx.event_id, @ptrCast(io_data), ioEventDataCleanup, ctx.target) catch {};
+    postIoEventData(ctx.event_queue, ctx.event_id, io_data, ctx.target);
 }
 
 /// I/O event manager to simplify working with I/O events
@@ -481,4 +486,39 @@ test "ioEventDataCleanup frees owned payloads" {
     };
 
     ioEventDataCleanup(@ptrCast(ptr));
+}
+
+test "postIoEventData cleans payload when enqueue fails" {
+    const alloc = std.testing.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    const fail_alloc = failing.allocator();
+
+    var queue = event.EventQueue.init(fail_alloc);
+    defer queue.deinit();
+
+    var cleaned = false;
+    const Hooks = struct {
+        fn cleanup(data: ?*anyopaque) void {
+            const flag = @as(*bool, @ptrCast(@alignCast(data.?)));
+            flag.* = true;
+        }
+    };
+
+    const ptr = try fail_alloc.create(IoEventData);
+    ptr.* = IoEventData{
+        .type = .network_data,
+        .status = .success,
+        .allocator = fail_alloc,
+        .data = @ptrCast(&cleaned),
+        .size = 0,
+        .error_message = null,
+        .payload_cleanup = Hooks.cleanup,
+        .owns_payload = false,
+        .owns_error_message = false,
+    };
+
+    postIoEventData(&queue, 1, ptr, null);
+
+    try std.testing.expect(cleaned);
+    try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
 }
