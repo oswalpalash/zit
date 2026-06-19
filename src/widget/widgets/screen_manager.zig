@@ -119,7 +119,7 @@ pub const ScreenManager = struct {
         var entry = try ScreenEntry.init(self.allocator, screen);
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
-        self.primeEntry(&entry);
+        try self.primeEntry(&entry);
 
         if (self.topEntry()) |prev| {
             try self.runHook(prev, prev.label_copy, prev.screen.lifecycle.on_pause);
@@ -168,7 +168,7 @@ pub const ScreenManager = struct {
         var entry = try ScreenEntry.init(self.allocator, screen);
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
-        self.primeEntry(&entry);
+        try self.primeEntry(&entry);
         try self.runHook(&self.screens.items[exiting_idx], self.screens.items[exiting_idx].label_copy, self.screens.items[exiting_idx].screen.lifecycle.on_pause);
 
         self.screens.appendAssumeCapacity(entry);
@@ -283,10 +283,10 @@ pub const ScreenManager = struct {
         try cb(&ctx);
     }
 
-    fn primeEntry(self: *ScreenManager, entry: *ScreenEntry) void {
+    fn primeEntry(self: *ScreenManager, entry: *ScreenEntry) !void {
         entry.screen.widget.setParent(&self.widget);
         if (self.last_rect) |rect| {
-            entry.screen.widget.layout(rect) catch {};
+            try entry.screen.widget.layout(rect);
         }
         entry.screen.widget.visibility_transition.snap(false);
         entry.screen.widget.visible = false;
@@ -345,7 +345,7 @@ pub const ScreenManager = struct {
         self.widget.rect = rect;
         self.last_rect = rect;
         for (self.screens.items) |entry| {
-            entry.screen.widget.layout(rect) catch {};
+            try entry.screen.widget.layout(rect);
         }
     }
 
@@ -385,6 +385,40 @@ fn popOutFor(self: ScreenTransitions, kind: TransitionKind) animation.Visibility
         .pop => self.pop_out,
     };
 }
+
+const FailingLayoutWidget = struct {
+    widget: base.Widget,
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = getPreferredSizeFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn init() FailingLayoutWidget {
+        return .{ .widget = base.Widget.init(&vtable) };
+    }
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {
+        return error.LayoutFailed;
+    }
+
+    fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(1, 1);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
+    }
+};
 
 test "screen manager runs lifecycle hooks on push/pop" {
     const alloc = std.testing.allocator;
@@ -491,4 +525,44 @@ fn screenManagerReplaceAllocationFailureHarness(allocator: std.mem.Allocator) !v
 test "screen manager navigation cleans up every allocation failure path" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, screenManagerPushAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, screenManagerReplaceAllocationFailureHarness, .{});
+}
+
+test "screen manager push propagates priming layout failure" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    var failing = FailingLayoutWidget.init();
+
+    try std.testing.expectError(error.LayoutFailed, manager.push(.{ .widget = &failing.widget, .label = "bad" }));
+    try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
+}
+
+test "screen manager replace preserves active screen on priming layout failure" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block = try @import("block.zig").Block.init(alloc);
+    defer block.deinit();
+    try manager.push(.{ .widget = &block.widget, .label = "good" });
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+
+    var failing = FailingLayoutWidget.init();
+    try std.testing.expectError(error.LayoutFailed, manager.replace(.{ .widget = &failing.widget, .label = "bad" }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block.widget, manager.active().?.widget);
+}
+
+test "screen manager layout propagates child layout failure" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var failing = FailingLayoutWidget.init();
+    try manager.push(.{ .widget = &failing.widget, .label = "bad" });
+
+    try std.testing.expectError(error.LayoutFailed, manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6)));
 }
