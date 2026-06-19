@@ -12,6 +12,8 @@ pub fn main() !void {
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "terminal-test")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     // Clear screen
     try term.clear();

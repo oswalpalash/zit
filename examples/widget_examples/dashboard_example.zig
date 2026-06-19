@@ -18,6 +18,8 @@ pub fn main() !void {
 
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "dashboard-example")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();

@@ -22,6 +22,8 @@ pub fn main() !void {
 
     var term = (try zit.terminal.initInteractive(allocator, "table-example")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();

@@ -26,6 +26,8 @@ pub fn main() !void {
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "widget-test")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     // Initialize renderer
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);

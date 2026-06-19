@@ -16,6 +16,8 @@ pub fn main() !void {
     // Initialize terminal with memory manager
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "layout-test")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     // Initialize renderer with the parent allocator
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);

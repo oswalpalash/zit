@@ -12,6 +12,8 @@ pub fn main() !void {
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "render-test")) orelse return;
     defer term.deinit() catch {};
+    try term.enterAlternateScreen();
+    defer term.exitAlternateScreen() catch {};
 
     // Get terminal size
     const width = term.width;
