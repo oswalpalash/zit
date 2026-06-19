@@ -172,6 +172,31 @@ test "menubar navigates and triggers callbacks" {
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
 }
 
+test "menubar mouse selects rendered item row" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    test_menu_bar_calls = 0;
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", struct {
+        fn thunk() void {
+            test_menu_bar_calls += 1;
+        }
+    }.thunk);
+
+    try bar.widget.layout(layout_module.Rect.init(3, 4, 20, 1));
+
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 3, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
+    try std.testing.expectEqual(@as(usize, 0), test_menu_bar_calls);
+
+    try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
 fn menuBarAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
     var bar = try MenuBar.init(allocator);
     defer bar.deinit();

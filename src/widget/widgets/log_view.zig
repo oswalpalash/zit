@@ -244,3 +244,19 @@ test "log view auto scrolls to newest entries" {
         \\
     );
 }
+
+test "log view mouse wheel scrolls rendered viewport" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("first");
+    try log.appendText("second");
+    try log.appendText("third");
+    try log.appendText("fourth");
+    try log.widget.layout(layout_module.Rect.init(3, 2, 12, 2));
+
+    try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
+    try std.testing.expect(try log.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 4, 2, 0, -1) }));
+    try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
+}

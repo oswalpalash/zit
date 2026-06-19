@@ -335,6 +335,10 @@ pub fn build(b: *std.Build) void {
     const widget_coverage_step = b.step("widget-coverage", "Check public widget visual and snapshot coverage declarations");
     widget_coverage_step.dependOn(&widget_coverage_cmd.step);
 
+    const mouse_hit_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_mouse_hit_coverage.py" });
+    const mouse_hit_coverage_step = b.step("mouse-hit-coverage", "Check public mouse-capable widgets have hit-test coverage");
+    mouse_hit_coverage_step.dependOn(&mouse_hit_coverage_cmd.step);
+
     const widget_owner_casts_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_owner_casts.py" });
     const widget_owner_casts_step = b.step("widget-owner-casts", "Check widget vtable callbacks use safe owner recovery");
     widget_owner_casts_step.dependOn(&widget_owner_casts_cmd.step);
@@ -374,6 +378,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(test_step);
     quality_step.dependOn(bench_step);
     quality_step.dependOn(widget_coverage_step);
+    quality_step.dependOn(mouse_hit_coverage_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);
     quality_step.dependOn(example_coverage_step);

@@ -150,6 +150,20 @@ test "popup centers and dismisses" {
     try std.testing.expect(!popup.widget.visible);
 }
 
+test "popup dismisses on outside mouse press" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "Hello");
+    defer popup.deinit();
+
+    try popup.widget.layout(layout_module.Rect.init(0, 0, 30, 10));
+
+    try std.testing.expect(!try popup.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, popup.widget.rect.x, popup.widget.rect.y, 1, 0) }));
+    try std.testing.expect(popup.widget.visible);
+
+    try std.testing.expect(try popup.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 29, 9, 1, 0) }));
+    try std.testing.expect(!popup.widget.visible);
+}
+
 test "popup setMessage preserves message on allocation failure" {
     const alloc = std.testing.allocator;
     var popup = try Popup.init(alloc, "Stable");

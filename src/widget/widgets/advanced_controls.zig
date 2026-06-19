@@ -1520,6 +1520,20 @@ test "toggle switch renders state" {
     try snap.expectEqual("[ ON ] Turbo    \n");
 }
 
+test "toggle switch mouse toggles rendered row only" {
+    const alloc = std.testing.allocator;
+    var toggle = try ToggleSwitch.init(alloc, "Turbo");
+    defer toggle.deinit();
+
+    toggle.widget.rect = layout_module.Rect.init(4, 3, 14, 1);
+
+    try std.testing.expect(!try toggle.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 2, 1, 0) }));
+    try std.testing.expect(!toggle.on);
+
+    try std.testing.expect(try toggle.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 3, 1, 0) }));
+    try std.testing.expect(toggle.on);
+}
+
 test "radio group updates selection" {
     const alloc = std.testing.allocator;
 
@@ -1532,12 +1546,41 @@ test "radio group updates selection" {
     try snap.expectEqual("( ) A \n( ) B \n(*) C \n");
 }
 
+test "radio group mouse selects rendered option rows" {
+    const alloc = std.testing.allocator;
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{ "A", "B", "C" });
+    defer radio.deinit();
+
+    radio.widget.rect = layout_module.Rect.init(5, 4, 8, 3);
+
+    try std.testing.expect(!try radio.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 3, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), radio.selected);
+
+    try std.testing.expect(try radio.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), radio.selected);
+}
+
 test "slider clamps values" {
     const alloc = std.testing.allocator;
     var slider = try Slider.init(alloc, 0, 10);
     defer slider.deinit();
     slider.setValue(15);
     try std.testing.expectEqual(@as(f32, 10), slider.value);
+}
+
+test "slider mouse maps rendered track to value" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    slider.widget.rect = layout_module.Rect.init(3, 6, 12, 1);
+
+    try std.testing.expect(!try slider.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 8, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+
+    try std.testing.expect(try slider.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 8, 6, 1, 0) }));
+    try std.testing.expect(slider.value > 0);
+    try std.testing.expect(slider.value < 10);
 }
 
 test "rating stars increments with input" {
@@ -1548,12 +1591,103 @@ test "rating stars increments with input" {
     try std.testing.expectEqual(@as(f32, 2), stars.value);
 }
 
+test "rating stars mouse maps rendered columns to values" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 5);
+    defer stars.deinit();
+
+    stars.widget.rect = layout_module.Rect.init(7, 4, 5, 1);
+
+    try std.testing.expect(!try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 3, 1, 0) }));
+    try std.testing.expectEqual(@as(f32, 0), stars.value);
+
+    try std.testing.expect(try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(f32, 3), stars.value);
+}
+
 test "pagination advances pages" {
     const alloc = std.testing.allocator;
     var pager = try Pagination.init(alloc, 5);
     defer pager.deinit();
     pager.setPage(3);
     try std.testing.expectEqual(@as(usize, 3), pager.current);
+}
+
+test "toolbar mouse selects rendered item row" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{ "Open", "Save", "Close" });
+    defer toolbar.deinit();
+
+    toolbar.widget.rect = layout_module.Rect.init(5, 8, 30, 1);
+
+    try std.testing.expect(!try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 14, 7, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), toolbar.active);
+
+    try std.testing.expect(try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 14, 8, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), toolbar.active);
+}
+
+var test_breadcrumb_click_index: ?usize = null;
+
+test "breadcrumbs mouse clicks rendered segment only" {
+    const alloc = std.testing.allocator;
+    var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{ "home", "repo" });
+    defer crumbs.deinit();
+
+    test_breadcrumb_click_index = null;
+    crumbs.setOnClick(struct {
+        fn call(idx: usize) void {
+            test_breadcrumb_click_index = idx;
+        }
+    }.call);
+    crumbs.widget.rect = layout_module.Rect.init(5, 5, 20, 1);
+
+    try std.testing.expect(!try crumbs.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 12, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(?usize, null), test_breadcrumb_click_index);
+
+    try std.testing.expect(!try crumbs.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(?usize, null), test_breadcrumb_click_index);
+
+    try std.testing.expect(try crumbs.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 13, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
+}
+
+test "pagination mouse activates rendered arrows" {
+    const alloc = std.testing.allocator;
+    var pager = try Pagination.init(alloc, 5);
+    defer pager.deinit();
+
+    pager.setPage(2);
+    pager.widget.rect = layout_module.Rect.init(4, 6, 20, 1);
+
+    try std.testing.expect(!try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 2), pager.current);
+
+    try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), pager.current);
+
+    try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 2), pager.current);
+}
+
+test "accordion mouse toggles rendered section rows" {
+    const alloc = std.testing.allocator;
+    var accordion = try Accordion.init(alloc, &[_]Accordion.Section{
+        .{ .title = "Build", .body = "Run tests" },
+        .{ .title = "Ship", .body = "Push main" },
+    });
+    defer accordion.deinit();
+
+    accordion.widget.rect = layout_module.Rect.init(2, 7, 30, 5);
+
+    try std.testing.expect(!try accordion.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 6, 1, 0) }));
+    try std.testing.expect(!accordion.sections.items[0].expanded);
+
+    try std.testing.expect(try accordion.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 7, 1, 0) }));
+    try std.testing.expect(accordion.sections.items[0].expanded);
+
+    try std.testing.expect(!try accordion.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 8, 1, 0) }));
+    try std.testing.expect(accordion.sections.items[0].expanded);
 }
 
 fn radioGroupInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {

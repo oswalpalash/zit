@@ -34,6 +34,9 @@ jobs:
       - name: Check widget coverage declarations
         run: python3 scripts/check_widget_coverage.py
 
+      - name: Check mouse hit-test coverage declarations
+        run: python3 scripts/check_mouse_hit_coverage.py
+
       - name: Check widget owner casts
         run: python3 scripts/check_widget_owner_casts.py
 
@@ -116,7 +119,7 @@ jobs:
         run: zig fmt --check src/ examples/ build.zig
       
       - name: Check scripts compile
-        run: python3 -m py_compile scripts/check_build_steps.py scripts/check_ci_script_coverage.py scripts/check_contribution_gates.py scripts/check_debug_allocator_cleanup.py scripts/check_example_coverage.py scripts/check_owned_allocation_patterns.py scripts/check_widget_owner_casts.py scripts/check_widget_coverage.py scripts/interactive_example_smoke.py scripts/mouse_alignment_smoke.py scripts/release_verify.py scripts/resize_smoke.py scripts/visual_repeat_check.py
+        run: python3 -m py_compile scripts/check_build_steps.py scripts/check_ci_script_coverage.py scripts/check_contribution_gates.py scripts/check_debug_allocator_cleanup.py scripts/check_example_coverage.py scripts/check_mouse_hit_coverage.py scripts/check_owned_allocation_patterns.py scripts/check_widget_owner_casts.py scripts/check_widget_coverage.py scripts/interactive_example_smoke.py scripts/mouse_alignment_smoke.py scripts/release_verify.py scripts/resize_smoke.py scripts/visual_repeat_check.py
 
       - name: Check CI script coverage
         run: python3 scripts/check_ci_script_coverage.py

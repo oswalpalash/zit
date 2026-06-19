@@ -880,6 +880,26 @@ test "tab view tab bar keyboard navigation updates tabs" {
     try std.testing.expectEqualStrings("three", tab_view.tabs.items[1].title);
 }
 
+test "tab bar mouse selects rendered tab row" {
+    const alloc = std.testing.allocator;
+    var tab_bar = try TabBar.init(alloc);
+    defer tab_bar.deinit();
+
+    const tabs = [_]TabItem{
+        .{ .title = "one" },
+        .{ .title = "two" },
+        .{ .title = "three" },
+    };
+    tab_bar.setTabs(&tabs);
+    try tab_bar.widget.layout(layout_module.Rect.init(2, 5, 30, 1));
+
+    try std.testing.expect(!try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), tab_bar.active_tab);
+
+    try std.testing.expect(try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), tab_bar.active_tab);
+}
+
 test "tab view clamps active tab index" {
     const alloc = std.testing.allocator;
     var tab_view = try TabView.init(alloc);
