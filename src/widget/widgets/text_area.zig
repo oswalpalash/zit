@@ -103,7 +103,7 @@ pub const TextArea = struct {
 
     pub fn setText(self: *TextArea, text: []const u8) !void {
         try self.writeText(text);
-        self.finalizeChange(true, self.validate_on_change);
+        try self.finalizeChange(true, self.validate_on_change);
     }
 
     pub fn getText(self: *TextArea) []const u8 {
@@ -324,12 +324,12 @@ pub const TextArea = struct {
         }
     }
 
-    fn finalizeChange(self: *TextArea, capture_history: bool, force_validate: bool) void {
+    fn finalizeChange(self: *TextArea, capture_history: bool, force_validate: bool) !void {
         self.clampCursor();
         self.resetPreferredColumn();
-        if (capture_history) self.pushHistory() catch {};
+        if (capture_history) try self.pushHistory();
         if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
-            self.runValidation() catch {};
+            try self.runValidation();
         }
         self.notifyChange();
     }
@@ -524,7 +524,7 @@ pub const TextArea = struct {
         if (content.len == 0) return false;
 
         if (try self.replaceSelection(content)) {
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -536,12 +536,12 @@ pub const TextArea = struct {
             try self.buffer.insertSlice(self.allocator, self.cursor, content[0..insert_len]);
             self.cursor += insert_len;
             self.clearSelection();
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
         if (try self.insertSliceMulti(content)) {
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
         return false;
@@ -575,7 +575,7 @@ pub const TextArea = struct {
         if (removed == 0) return false;
         try self.applyCursorMarks(new_marks.items);
         self.clearSelection();
-        self.finalizeChange(true, self.validate_on_change);
+        try self.finalizeChange(true, self.validate_on_change);
         return true;
     }
 
@@ -602,7 +602,7 @@ pub const TextArea = struct {
         if (removed == 0) return false;
         try self.applyCursorMarks(new_marks.items);
         self.clearSelection();
-        self.finalizeChange(true, self.validate_on_change);
+        try self.finalizeChange(true, self.validate_on_change);
         return true;
     }
 
@@ -635,7 +635,7 @@ pub const TextArea = struct {
 
     fn applySnapshot(self: *TextArea, snapshot: []const u8) !void {
         try self.writeText(snapshot);
-        self.finalizeChange(false, self.validate_on_change);
+        try self.finalizeChange(false, self.validate_on_change);
     }
 
     const Selection = struct { start: usize, end: usize };
@@ -834,7 +834,7 @@ pub const TextArea = struct {
             if (slice.len == 0) return false;
             try self.clipboard.copy(slice);
             _ = try self.replaceSelection(&[_]u8{});
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -848,7 +848,7 @@ pub const TextArea = struct {
         self.scroll_col = 0;
         self.clearSelection();
         self.clearExtraCursors();
-        self.finalizeChange(true, self.validate_on_change);
+        try self.finalizeChange(true, self.validate_on_change);
         return true;
     }
 
@@ -865,7 +865,7 @@ pub const TextArea = struct {
 
     fn deleteBackward(self: *TextArea) !bool {
         if (try self.replaceSelection(&[_]u8{})) {
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -876,7 +876,7 @@ pub const TextArea = struct {
             self.removeRange(remove_start, self.cursor);
             self.cursor = remove_start;
             self.resetPreferredColumn();
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -885,7 +885,7 @@ pub const TextArea = struct {
 
     fn deleteForward(self: *TextArea) !bool {
         if (try self.replaceSelection(&[_]u8{})) {
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -894,7 +894,7 @@ pub const TextArea = struct {
             const remove_end = nextCodepointBoundary(self.buffer.items, self.cursor);
             self.removeRange(self.cursor, remove_end);
             self.resetPreferredColumn();
-            self.finalizeChange(true, self.validate_on_change);
+            try self.finalizeChange(true, self.validate_on_change);
             return true;
         }
 
@@ -1233,7 +1233,10 @@ test "text area preserves validation result on allocation failure" {
     const area = try TextArea.init(alloc, 64);
     defer area.deinit();
 
-    const rules = [_]form.Rule{form.required("body required")};
+    const rules = [_]form.Rule{
+        form.required("body required"),
+        form.minLength(10, "too short"),
+    };
     try area.setValidation("body", &rules, true);
     const first = area.validationState().?;
     try std.testing.expect(!first.*.isValid());
@@ -1244,6 +1247,50 @@ test "text area preserves validation result on allocation failure" {
     defer area.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, area.revalidate());
+    const preserved = area.validationState().?;
+    try std.testing.expect(!preserved.*.isValid());
+    try std.testing.expectEqualStrings("body required", preserved.*.firstError().?.message);
+}
+
+test "text area setText propagates history allocation failure" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("stable");
+    try std.testing.expectEqual(@as(usize, 2), area.undo_redo.undo.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.undo_redo.allocator;
+    area.undo_redo.allocator = failing.allocator();
+    defer area.undo_redo.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, area.setText("next"));
+    try std.testing.expectEqualStrings("next", area.getText());
+    try std.testing.expectEqual(@as(usize, 2), area.undo_redo.undo.items.len);
+    try std.testing.expectEqualStrings("stable", area.undo_redo.undo.items[1]);
+}
+
+test "text area setText propagates validation allocation failure" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    const rules = [_]form.Rule{
+        form.required("body required"),
+        form.minLength(10, "too short"),
+    };
+    try area.setValidation("body", &rules, true);
+    const first = area.validationState().?;
+    try std.testing.expect(!first.*.isValid());
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
+    area.allocator = failing.allocator();
+    defer area.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, area.setText("tiny"));
+    try std.testing.expectEqualStrings("tiny", area.getText());
     const preserved = area.validationState().?;
     try std.testing.expect(!preserved.*.isValid());
     try std.testing.expectEqualStrings("body required", preserved.*.firstError().?.message);
