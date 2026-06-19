@@ -446,10 +446,10 @@ pub const TabView = struct {
     }
 
     /// Move a tab to a new index for reordering.
-    pub fn moveTab(self: *TabView, from: usize, to: usize) !void {
+    pub fn moveTab(self: *TabView, from: usize, to: usize) void {
         if (from >= self.tabs.items.len or to >= self.tabs.items.len or from == to) return;
         const moved = self.tabs.orderedRemove(from);
-        try self.tabs.insert(self.allocator, to, moved);
+        self.tabs.insertAssumeCapacity(to, moved);
 
         if (self.active_tab == from) {
             self.active_tab = to;
@@ -725,7 +725,7 @@ pub const TabView = struct {
 
     fn onTabReordered(from: usize, to: usize, ctx: ?*anyopaque) void {
         const self = @as(*TabView, @ptrCast(@alignCast(ctx orelse return)));
-        self.moveTab(from, to) catch {};
+        self.moveTab(from, to);
     }
 };
 
@@ -768,7 +768,9 @@ test "tab view reorders tabs and keeps active index in sync" {
     try tab_view.addTab("one", &a.widget);
     try tab_view.addTab("two", &b.widget);
     tab_view.setActiveTab(1);
-    try tab_view.moveTab(1, 0);
+    const capacity = tab_view.tabs.capacity;
+    tab_view.moveTab(1, 0);
+    try std.testing.expectEqual(capacity, tab_view.tabs.capacity);
     try std.testing.expectEqual(@as(usize, 0), tab_view.getActiveTab());
     try std.testing.expectEqualStrings("two", tab_view.tabs.items[0].title);
 }

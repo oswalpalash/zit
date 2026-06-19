@@ -435,11 +435,7 @@ pub const List = struct {
             to -= 1;
         }
 
-        self.items.insert(self.allocator, to, moved) catch {
-            // Try to restore original ordering if insert fails.
-            _ = self.items.insert(self.allocator, from, moved) catch {};
-            return;
-        };
+        self.items.insertAssumeCapacity(to, moved);
 
         self.setSelectedIndex(to);
         if (self.on_reorder) |cb| cb(from, to, self, self);
@@ -954,6 +950,34 @@ test "list drag reorder updates item order and selection" {
     try std.testing.expectEqual(@as(usize, 1), list.selected_index);
     try std.testing.expect(!list.dragging);
     try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
+}
+
+test "list reorder in place moves items without changing capacity" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("a");
+    try list.addItem("b");
+    try list.addItem("c");
+    try list.addItem("d");
+    const capacity = list.items.capacity;
+
+    list.reorderInPlace(0, 3);
+    try std.testing.expectEqual(capacity, list.items.capacity);
+    try std.testing.expectEqualStrings("b", list.items.items[0]);
+    try std.testing.expectEqualStrings("c", list.items.items[1]);
+    try std.testing.expectEqualStrings("a", list.items.items[2]);
+    try std.testing.expectEqualStrings("d", list.items.items[3]);
+    try std.testing.expectEqual(@as(usize, 2), list.selected_index);
+
+    list.reorderInPlace(3, 0);
+    try std.testing.expectEqual(capacity, list.items.capacity);
+    try std.testing.expectEqualStrings("d", list.items.items[0]);
+    try std.testing.expectEqualStrings("b", list.items.items[1]);
+    try std.testing.expectEqualStrings("c", list.items.items[2]);
+    try std.testing.expectEqualStrings("a", list.items.items[3]);
+    try std.testing.expectEqual(@as(usize, 0), list.selected_index);
 }
 
 test "list accepts cross-list drops and moves items" {

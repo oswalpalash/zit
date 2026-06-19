@@ -1452,7 +1452,7 @@ pub const ShortcutRegistry = struct {
 
         self.lookup.clearRetainingCapacity();
         for (self.shortcuts.items, 0..) |entry, entry_idx| {
-            self.lookup.put(entry.combo, entry_idx) catch {};
+            self.lookup.putAssumeCapacityNoClobber(entry.combo, entry_idx);
         }
         return true;
     }
@@ -1560,6 +1560,12 @@ fn shortcutTestCallback(_: ShortcutContext, _: ?*anyopaque) bool {
     return true;
 }
 
+fn countingShortcutCallback(_: ShortcutContext, user_data: ?*anyopaque) bool {
+    const counter = @as(*usize, @ptrCast(@alignCast(user_data orelse return false)));
+    counter.* += 1;
+    return true;
+}
+
 fn freeShortcutSummaries(allocator: std.mem.Allocator, summaries: []ShortcutSummary) void {
     for (summaries) |summary| {
         allocator.free(summary.combo);
@@ -1602,6 +1608,36 @@ fn shortcutSummariesAllocationFailureHarness(allocator: std.mem.Allocator) !void
 
 test "shortcut summaries clean up every allocation failure path" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, shortcutSummariesAllocationFailureHarness, .{});
+}
+
+test "shortcut unregister rebuilds shifted lookup indices" {
+    const alloc = std.testing.allocator;
+    var registry = ShortcutRegistry.init(alloc);
+    defer registry.deinit();
+
+    var first_count: usize = 0;
+    var second_count: usize = 0;
+    var third_count: usize = 0;
+
+    const first_id = try registry.register(.{ .key = 'a' }, "First", countingShortcutCallback, &first_count, .global);
+    _ = try registry.register(.{ .key = 'b' }, "Second", countingShortcutCallback, &second_count, .global);
+    _ = try registry.register(.{ .key = 'c' }, "Third", countingShortcutCallback, &third_count, .global);
+
+    try std.testing.expect(registry.unregister(first_id));
+
+    var removed_event = fromInputEvent(.{ .key = input.KeyEvent.init('a', .{}) }, null);
+    try std.testing.expect(!registry.handle(&removed_event));
+    try std.testing.expectEqual(@as(usize, 0), first_count);
+
+    var second_event = fromInputEvent(.{ .key = input.KeyEvent.init('b', .{}) }, null);
+    try std.testing.expect(registry.handle(&second_event));
+    try std.testing.expect(second_event.handled);
+    try std.testing.expectEqual(@as(usize, 1), second_count);
+
+    var third_event = fromInputEvent(.{ .key = input.KeyEvent.init('c', .{}) }, null);
+    try std.testing.expect(registry.handle(&third_event));
+    try std.testing.expect(third_event.handled);
+    try std.testing.expectEqual(@as(usize, 1), third_count);
 }
 
 test "event queue deinit destroys queued custom payloads" {
@@ -2914,6 +2950,7 @@ test "application input binding stores non-blocking poll configuration" {
         .stdin_fd = std.Io.File.stdin().handle,
         .stdout_fd = std.Io.File.stdout().handle,
         .original_termios = .none,
+        .original_stdin_flags = null,
         .width = 80,
         .height = 24,
         .is_raw_mode = false,
