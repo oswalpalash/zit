@@ -46,6 +46,7 @@ pub const SplitPane = struct {
     }
 
     pub fn deinit(self: *SplitPane) void {
+        self.detachChildren();
         self.allocator.destroy(self);
     }
 
@@ -55,13 +56,39 @@ pub const SplitPane = struct {
     }
 
     pub fn setFirst(self: *SplitPane, widget: *base.Widget) void {
-        self.first = widget;
+        if (self.first != widget) {
+            self.detachSlot(&self.first);
+            self.first = widget;
+        }
+        if (self.second == widget) {
+            self.second = null;
+        }
         widget.parent = &self.widget;
     }
 
     pub fn setSecond(self: *SplitPane, widget: *base.Widget) void {
-        self.second = widget;
+        if (self.second != widget) {
+            self.detachSlot(&self.second);
+            self.second = widget;
+        }
+        if (self.first == widget) {
+            self.first = null;
+        }
         widget.parent = &self.widget;
+    }
+
+    fn detachChildren(self: *SplitPane) void {
+        self.detachSlot(&self.first);
+        self.detachSlot(&self.second);
+    }
+
+    fn detachSlot(self: *SplitPane, slot: *?*base.Widget) void {
+        if (slot.*) |current| {
+            if (current.parent == &self.widget) {
+                current.parent = null;
+            }
+        }
+        slot.* = null;
     }
 
     pub fn setRatio(self: *SplitPane, ratio: f32) void {
@@ -207,4 +234,57 @@ test "split pane lays out children" {
     try std.testing.expectEqual(@as(u16, 30), pane.widget.rect.width);
     try std.testing.expect(left.widget.rect.width > 0);
     try std.testing.expect(right.widget.rect.width > 0);
+}
+
+test "split pane replacing first child detaches previous child" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var old_child = try @import("label.zig").Label.init(alloc, "old");
+    defer old_child.deinit();
+    var new_child = try @import("label.zig").Label.init(alloc, "new");
+    defer new_child.deinit();
+
+    pane.setFirst(&old_child.widget);
+    pane.setFirst(&new_child.widget);
+
+    try std.testing.expect(pane.first != null);
+    try std.testing.expectEqual(&new_child.widget, pane.first.?);
+    try std.testing.expect(old_child.widget.parent == null);
+    try std.testing.expectEqual(&pane.widget, new_child.widget.parent.?);
+}
+
+test "split pane moves child between slots without duplicate ownership" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var child = try @import("label.zig").Label.init(alloc, "child");
+    defer child.deinit();
+
+    pane.setFirst(&child.widget);
+    pane.setSecond(&child.widget);
+
+    try std.testing.expect(pane.first == null);
+    try std.testing.expect(pane.second != null);
+    try std.testing.expectEqual(&child.widget, pane.second.?);
+    try std.testing.expectEqual(&pane.widget, child.widget.parent.?);
+}
+
+test "split pane deinit detaches owned child parent links" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    defer second.deinit();
+
+    pane.setFirst(&first.widget);
+    pane.setSecond(&second.widget);
+    pane.deinit();
+
+    try std.testing.expect(first.widget.parent == null);
+    try std.testing.expect(second.widget.parent == null);
 }
