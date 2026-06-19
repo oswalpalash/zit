@@ -1398,26 +1398,32 @@ pub const GridLayout = struct {
 
     /// Update the column track sizing
     pub fn setColumns(self: *GridLayout, tracks: []const GridTrack) !*GridLayout {
-        self.column_tracks.clearRetainingCapacity();
+        const columns = std.math.cast(u16, tracks.len) orelse return error.GridTooLarge;
+        const rows: u16 = @intCast(self.row_tracks.items.len);
+        const cell_count = @as(usize, columns) * @as(usize, rows);
+
         try self.column_tracks.ensureTotalCapacity(self.base.allocator, tracks.len);
-        for (tracks) |track| {
-            try self.column_tracks.append(self.base.allocator, track);
-        }
-        self.columns = @intCast(tracks.len);
-        try self.initCells();
+        try self.cells.ensureTotalCapacity(self.base.allocator, cell_count);
+
+        self.column_tracks.clearRetainingCapacity();
+        self.column_tracks.appendSliceAssumeCapacity(tracks);
+        self.resetCellsAssumeCapacity(columns, rows);
         self.invalidateCache();
         return self;
     }
 
     /// Update the row track sizing
     pub fn setRows(self: *GridLayout, tracks: []const GridTrack) !*GridLayout {
-        self.row_tracks.clearRetainingCapacity();
+        const columns: u16 = @intCast(self.column_tracks.items.len);
+        const rows = std.math.cast(u16, tracks.len) orelse return error.GridTooLarge;
+        const cell_count = @as(usize, columns) * @as(usize, rows);
+
         try self.row_tracks.ensureTotalCapacity(self.base.allocator, tracks.len);
-        for (tracks) |track| {
-            try self.row_tracks.append(self.base.allocator, track);
-        }
-        self.rows = @intCast(tracks.len);
-        try self.initCells();
+        try self.cells.ensureTotalCapacity(self.base.allocator, cell_count);
+
+        self.row_tracks.clearRetainingCapacity();
+        self.row_tracks.appendSliceAssumeCapacity(tracks);
+        self.resetCellsAssumeCapacity(columns, rows);
         self.invalidateCache();
         return self;
     }
@@ -1689,17 +1695,16 @@ pub const GridLayout = struct {
     fn initCells(self: *GridLayout) !void {
         const columns: u16 = @intCast(self.column_tracks.items.len);
         const rows: u16 = @intCast(self.row_tracks.items.len);
-        // Clear any existing cells
-        self.cells.clearRetainingCapacity();
-
-        // Ensure capacity
         try self.cells.ensureTotalCapacity(self.base.allocator, @as(usize, columns) * @as(usize, rows));
+        self.resetCellsAssumeCapacity(columns, rows);
+    }
 
-        // Fill with nulls using addManyAsSlice
+    fn resetCellsAssumeCapacity(self: *GridLayout, columns: u16, rows: u16) void {
+        self.cells.clearRetainingCapacity();
         const null_value: ?LayoutElement = null;
         var i: usize = 0;
         while (i < @as(usize, columns) * @as(usize, rows)) : (i += 1) {
-            try self.cells.append(self.base.allocator, null_value);
+            self.cells.appendAssumeCapacity(null_value);
         }
 
         self.columns = columns;
@@ -2291,6 +2296,103 @@ test "grid layout resolves fixed and flexible tracks" {
     try std.testing.expectEqual(@as(u16, 6), r3.y);
     try std.testing.expectEqual(@as(u16, 11), r3.width);
     try std.testing.expectEqual(@as(u16, 2), r3.height);
+}
+
+test "grid setColumns preserves state on track allocation failure" {
+    const allocator = std.testing.allocator;
+
+    const Dummy = struct {
+        fn layout(_: *anyopaque, constraints: Constraints) Size {
+            return constraints.constrain(1, 1);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement() LayoutElement {
+            return .{
+                .layoutFn = layout,
+                .renderFn = render,
+                .ctx = undefined,
+            };
+        }
+    };
+
+    var grid = try GridLayout.init(allocator, 1, 1);
+    defer grid.deinit();
+    grid.column_tracks.deinit(allocator);
+    grid.column_tracks = .empty;
+    try grid.column_tracks.ensureTotalCapacityPrecise(allocator, 1);
+    grid.column_tracks.appendAssumeCapacity(GridTrack{ .flex = 1 });
+    grid.cells.deinit(allocator);
+    grid.cells = .empty;
+    try grid.cells.ensureTotalCapacityPrecise(allocator, 1);
+    grid.cells.appendAssumeCapacity(null);
+    try grid.addChild(Dummy.asElement(), 0, 0);
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    grid.base.allocator = failing.allocator();
+    const result = grid.setColumns(&[_]GridTrack{
+        GridTrack{ .fixed = 3 },
+        GridTrack{ .flex = 1 },
+    });
+    grid.base.allocator = allocator;
+
+    try std.testing.expectError(error.OutOfMemory, result);
+    try std.testing.expectEqual(@as(u16, 1), grid.columns);
+    try std.testing.expectEqual(@as(u16, 1), grid.rows);
+    try std.testing.expectEqual(@as(usize, 1), grid.column_tracks.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.row_tracks.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.cells.items.len);
+    try std.testing.expect(grid.cells.items[0] != null);
+}
+
+test "grid setRows preserves state on cell allocation failure" {
+    const allocator = std.testing.allocator;
+
+    const Dummy = struct {
+        fn layout(_: *anyopaque, constraints: Constraints) Size {
+            return constraints.constrain(1, 1);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement() LayoutElement {
+            return .{
+                .layoutFn = layout,
+                .renderFn = render,
+                .ctx = undefined,
+            };
+        }
+    };
+
+    var grid = try GridLayout.init(allocator, 1, 1);
+    defer grid.deinit();
+    grid.row_tracks.deinit(allocator);
+    grid.row_tracks = .empty;
+    try grid.row_tracks.ensureTotalCapacityPrecise(allocator, 3);
+    grid.row_tracks.appendAssumeCapacity(GridTrack{ .flex = 1 });
+    grid.cells.deinit(allocator);
+    grid.cells = .empty;
+    try grid.cells.ensureTotalCapacityPrecise(allocator, 1);
+    grid.cells.appendAssumeCapacity(null);
+    try grid.addChild(Dummy.asElement(), 0, 0);
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    grid.base.allocator = failing.allocator();
+    const result = grid.setRows(&[_]GridTrack{
+        GridTrack{ .fixed = 1 },
+        GridTrack{ .flex = 1 },
+        GridTrack{ .flex = 2 },
+    });
+    grid.base.allocator = allocator;
+
+    try std.testing.expectError(error.OutOfMemory, result);
+    try std.testing.expectEqual(@as(u16, 1), grid.columns);
+    try std.testing.expectEqual(@as(u16, 1), grid.rows);
+    try std.testing.expectEqual(@as(usize, 1), grid.column_tracks.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.row_tracks.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.cells.items.len);
+    try std.testing.expect(grid.cells.items[0] != null);
 }
 
 test "grid track cache is not partially rewritten on allocation failure" {
