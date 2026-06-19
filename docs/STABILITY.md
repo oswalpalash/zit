@@ -61,6 +61,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_example_coverage.py`
 - `python3 scripts/check_interactive_alt_screen.py`
 - `python3 scripts/check_owned_allocation_patterns.py`
+- `python3 scripts/check_terminal_state_cleanup.py`
 - `python3 scripts/check_unreachable_catches.py`
 - `python3 scripts/check_widget_coverage.py`
 - `python3 scripts/check_widget_owner_casts.py`
@@ -73,6 +74,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_example_coverage.py` keeps the build target list, interactive PTY smoke manifest, public build-step classification, and repeated visual target manifest in sync.
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
+- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
 

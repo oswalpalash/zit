@@ -363,6 +363,10 @@ pub fn build(b: *std.Build) void {
     const interactive_alt_screen_step = b.step("interactive-alt-screen", "Check interactive examples render in the alternate screen");
     interactive_alt_screen_step.dependOn(&interactive_alt_screen_cmd.step);
 
+    const terminal_state_cleanup_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_terminal_state_cleanup.py" });
+    const terminal_state_cleanup_step = b.step("terminal-state-cleanup", "Check interactive examples restore terminal state");
+    terminal_state_cleanup_step.dependOn(&terminal_state_cleanup_cmd.step);
+
     const memory_cleanup_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_debug_allocator_cleanup.py" });
     const memory_cleanup_step = b.step("memory-cleanup", "Check DebugAllocator users assert clean deinit");
     memory_cleanup_step.dependOn(&memory_cleanup_cmd.step);
@@ -397,6 +401,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(unreachable_catches_step);
     quality_step.dependOn(example_coverage_step);
     quality_step.dependOn(interactive_alt_screen_step);
+    quality_step.dependOn(terminal_state_cleanup_step);
     quality_step.dependOn(memory_cleanup_step);
     quality_step.dependOn(contribution_gates_step);
 }
