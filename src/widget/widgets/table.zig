@@ -433,6 +433,9 @@ pub const Table = struct {
             return;
         }
 
+        const previous_selected = self.selected_row;
+        const previous_editing = self.editing_row;
+
         // Free all cell text in the row
         if (self.string_intern == null) {
             for (self.rows.items[row].items) |cell| {
@@ -445,10 +448,38 @@ pub const Table = struct {
         _ = self.rows.orderedRemove(row);
 
         // Update selected row if needed
-        if (self.selected_row != null and self.selected_row.? >= self.rows.items.len) {
-            self.selected_row = if (self.rows.items.len > 0) self.rows.items.len - 1 else null;
+        var notify_replacement = false;
+        if (previous_selected) |selected| {
+            if (self.rows.items.len == 0) {
+                self.selected_row = null;
+            } else if (row < selected) {
+                self.selected_row = selected - 1;
+            } else if (row == selected) {
+                self.selected_row = @min(selected, self.rows.items.len - 1);
+                notify_replacement = true;
+            } else if (selected >= self.rows.items.len) {
+                self.selected_row = self.rows.items.len - 1;
+                notify_replacement = true;
+            }
         }
+
+        if (previous_editing) |editing| {
+            if (row < editing) {
+                self.editing_row = editing - 1;
+            } else if (row == editing) {
+                self.cancelEdit();
+            }
+        }
+
         self.view_dirty = true;
+        if (self.selected_row) |selected| {
+            self.ensureRowVisible(selected);
+            if (notify_replacement and self.on_row_select != null) {
+                self.on_row_select.?(selected);
+            }
+        } else {
+            self.clampScroll();
+        }
     }
 
     /// Clear all rows from the table
@@ -1908,4 +1939,119 @@ test "table selection clamps after row removal" {
 
     try std.testing.expectEqual(@as(usize, 2), table.rows.items.len);
     try std.testing.expectEqual(@as(usize, 1), table.selected_row.?);
+}
+
+test "table remove before selection preserves selected row" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+    try table.addColumn("B", 4, true);
+
+    try table.addRow(&.{ "one", "1" });
+    try table.addRow(&.{ "two", "2" });
+    try table.addRow(&.{ "three", "3" });
+    try table.addRow(&.{ "four", "4" });
+
+    table.setSelectedRow(2);
+
+    const Callback = struct {
+        var count: usize = 0;
+        fn selected(_: usize) void {
+            count += 1;
+        }
+    };
+    table.setOnRowSelect(Callback.selected);
+
+    table.removeRow(0);
+
+    try std.testing.expectEqual(@as(usize, 3), table.rows.items.len);
+    try std.testing.expectEqual(@as(usize, 1), table.selected_row.?);
+    try std.testing.expectEqualStrings("three", table.cellView(table.selected_row.?, 0).text);
+    try std.testing.expectEqual(@as(usize, 0), Callback.count);
+}
+
+test "table remove selected row notifies when replacement selected" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+    try table.addColumn("B", 4, true);
+
+    try table.addRow(&.{ "one", "1" });
+    try table.addRow(&.{ "two", "2" });
+    try table.addRow(&.{ "three", "3" });
+
+    table.setSelectedRow(1);
+
+    const Callback = struct {
+        var count: usize = 0;
+        var last: usize = 99;
+        fn selected(row: usize) void {
+            count += 1;
+            last = row;
+        }
+    };
+    table.setOnRowSelect(Callback.selected);
+
+    table.removeRow(1);
+
+    try std.testing.expectEqual(@as(usize, 2), table.rows.items.len);
+    try std.testing.expectEqual(@as(usize, 1), table.selected_row.?);
+    try std.testing.expectEqualStrings("three", table.cellView(table.selected_row.?, 0).text);
+    try std.testing.expectEqual(@as(usize, 1), Callback.count);
+    try std.testing.expectEqual(@as(usize, 1), Callback.last);
+}
+
+test "table remove before edit preserves edited row" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+
+    try table.addRow(&.{"one"});
+    try table.addRow(&.{"two"});
+    try table.addRow(&.{"three"});
+
+    table.setSelectedRow(2);
+    try table.beginEdit();
+    try std.testing.expectEqual(@as(?usize, 2), table.editing_row);
+
+    table.removeRow(0);
+
+    try std.testing.expectEqual(@as(?usize, 1), table.editing_row);
+    try std.testing.expectEqual(@as(?usize, 0), table.editing_col);
+    try std.testing.expectEqualStrings("three", table.edit_buffer.items);
+
+    try table.edit_buffer.append(table.allocator, '!');
+    try table.commitEdit();
+
+    try std.testing.expectEqualStrings("two", table.cellView(0, 0).text);
+    try std.testing.expectEqualStrings("three!", table.cellView(1, 0).text);
+}
+
+test "table remove edited row cancels edit" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+
+    try table.addRow(&.{"one"});
+    try table.addRow(&.{"two"});
+    try table.addRow(&.{"three"});
+
+    table.setSelectedRow(1);
+    try table.beginEdit();
+    try table.edit_buffer.append(table.allocator, '!');
+
+    table.removeRow(1);
+
+    try std.testing.expectEqual(@as(?usize, null), table.editing_row);
+    try std.testing.expectEqual(@as(?usize, null), table.editing_col);
+    try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
+    try std.testing.expectEqualStrings("three", table.cellView(table.selected_row.?, 0).text);
 }
