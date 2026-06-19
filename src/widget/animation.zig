@@ -301,6 +301,14 @@ pub const VisibilityController = struct {
         return handle;
     }
 
+    /// Cancel a running transition and keep the current sampled visibility state.
+    pub fn cancel(self: *VisibilityController, animator: *Animator) void {
+        if (self.handle) |h| {
+            _ = animator.cancel(h);
+            self.handle = null;
+        }
+    }
+
     pub fn isAnimating(self: VisibilityController) bool {
         return self.handle != null;
     }

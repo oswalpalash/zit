@@ -290,6 +290,7 @@ pub const ScreenManager = struct {
     }
 
     fn deinitEntry(self: *ScreenManager, entry: *ScreenEntry) void {
+        entry.screen.widget.visibility_transition.cancel(&self.animator);
         if (entry.screen.widget.parent == &self.widget) {
             entry.screen.widget.parent = null;
         }
@@ -662,6 +663,34 @@ test "screen manager rejected replace after pause failure is detached" {
     try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
     try std.testing.expect(block_b.widget.parent == null);
     try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+}
+
+test "screen manager reset cancels active transition handles" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    try manager.tick(1000);
+    try manager.push(.{ .widget = &block_b.widget, .label = "b" });
+
+    try std.testing.expect(manager.animator.animations.items.len > 0);
+    try std.testing.expect(block_a.widget.visibility_transition.handle != null);
+    try std.testing.expect(block_b.widget.visibility_transition.handle != null);
+
+    manager.reset();
+
+    try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 0), manager.animator.animations.items.len);
+    try std.testing.expect(block_a.widget.visibility_transition.handle == null);
+    try std.testing.expect(block_b.widget.visibility_transition.handle == null);
+    try std.testing.expect(block_a.widget.parent == null);
+    try std.testing.expect(block_b.widget.parent == null);
 }
 
 test "screen manager layout propagates child layout failure" {
