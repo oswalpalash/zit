@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !void {
     var input_field = try zit.widget.InputField.init(allocator, 64);
     defer input_field.deinit();
     try input_field.setPlaceholder("Search commands");
-    input_field.setText("status --watch");
+    try input_field.setText("status --watch");
     input_field.setBorder(.rounded);
     input_field.widget.focused = true;
     try input_field.widget.layout(Rect.init(2, 6, 28, 3));
@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
 
     var autocomplete = try zit.widget.AutocompleteInput.init(allocator, 32);
     defer autocomplete.deinit();
-    autocomplete.input_field.setText("zi");
+    try autocomplete.input_field.setText("zi");
     try autocomplete.setSuggestions(&[_][]const u8{ "zig build test", "zig build quality", "zls check", "zit gallery" });
     autocomplete.widget.focused = true;
     try autocomplete.widget.layout(Rect.init(2, 10, 28, 5));

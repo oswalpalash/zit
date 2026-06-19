@@ -373,7 +373,7 @@ fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try autocomplete.setSuggestions(&suggestions);
     autocomplete.setMaxVisible(6);
     try autocomplete.input_field.setPlaceholder("Search metrics...");
-    autocomplete.input_field.setText("latency");
+    try autocomplete.input_field.setText("latency");
     autocomplete.widget.focused = true;
 
     var ctx_menu = try widget.ContextMenu.init(allocator);

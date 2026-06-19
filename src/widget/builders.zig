@@ -404,7 +404,7 @@ pub const InputBuilder = struct {
     pub fn build(self: *InputBuilder) !*InputField {
         var field = try InputField.init(self.allocator, self.max_len);
         if (self.placeholder.len > 0) try field.setPlaceholder(self.placeholder);
-        if (self.initial.len > 0) field.setText(self.initial);
+        if (self.initial.len > 0) try field.setText(self.initial);
         field.setColors(self.fg, self.bg, self.focused_fg, self.focused_bg);
         field.disabled_fg = self.disabled_fg;
         field.disabled_bg = self.disabled_bg;

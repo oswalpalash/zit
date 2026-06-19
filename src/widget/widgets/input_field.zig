@@ -270,13 +270,13 @@ pub const InputField = struct {
         }
     }
 
-    fn finalizeChange(self: *InputField, capture_history: bool, force_validate: bool) void {
-        self.applyMask() catch {};
+    fn finalizeChange(self: *InputField, capture_history: bool, force_validate: bool) !void {
+        try self.applyMask();
         self.resetSentinel();
         self.clampCursor();
-        if (capture_history) self.pushHistory() catch {};
+        if (capture_history) try self.pushHistory();
         if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
-            self.runValidation() catch {};
+            try self.runValidation();
         }
         self.notifyChange();
     }
@@ -307,9 +307,9 @@ pub const InputField = struct {
         }
     }
 
-    fn applySnapshot(self: *InputField, snapshot: []const u8) void {
+    fn applySnapshot(self: *InputField, snapshot: []const u8) !void {
         self.writeText(snapshot);
-        self.finalizeChange(false, self.validate_on_change);
+        try self.finalizeChange(false, self.validate_on_change);
     }
 
     /// Share a clipboard instance between multiple input fields.
@@ -332,9 +332,9 @@ pub const InputField = struct {
     }
 
     /// Set the input field text
-    pub fn setText(self: *InputField, text: []const u8) void {
+    pub fn setText(self: *InputField, text: []const u8) !void {
         self.writeText(text);
-        self.finalizeChange(true, self.validate_on_change);
+        try self.finalizeChange(true, self.validate_on_change);
     }
 
     /// Undo the most recent edit, returning true when the buffer changed.
@@ -606,7 +606,7 @@ pub const InputField = struct {
 
     fn performUndo(self: *InputField) anyerror!bool {
         if (self.undo_redo.undoOp()) |snapshot| {
-            self.applySnapshot(snapshot);
+            try self.applySnapshot(snapshot);
             return true;
         }
         return false;
@@ -614,7 +614,7 @@ pub const InputField = struct {
 
     fn performRedo(self: *InputField) anyerror!bool {
         if (self.undo_redo.redoOp()) |snapshot| {
-            self.applySnapshot(snapshot);
+            try self.applySnapshot(snapshot);
             return true;
         }
         return false;
@@ -632,7 +632,7 @@ pub const InputField = struct {
 
         try self.clipboard.copy(slice);
         self.writeText("");
-        self.finalizeChange(true, false);
+        try self.finalizeChange(true, false);
         return true;
     }
 
@@ -656,7 +656,7 @@ pub const InputField = struct {
 
         self.len += insert_len;
         self.cursor += insert_len;
-        self.finalizeChange(true, false);
+        try self.finalizeChange(true, false);
         return true;
     }
 
@@ -673,7 +673,7 @@ pub const InputField = struct {
         std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + value.len], value);
         self.len += value.len;
         self.cursor += value.len;
-        self.finalizeChange(true, false);
+        try self.finalizeChange(true, false);
         return true;
     }
 
@@ -721,7 +721,7 @@ pub const InputField = struct {
                         }
                         self.len -= remove_len;
                         self.cursor = remove_start;
-                        self.finalizeChange(true, false);
+                        try self.finalizeChange(true, false);
                     }
                     return true;
                 },
@@ -734,7 +734,7 @@ pub const InputField = struct {
                             std.mem.copyForwards(u8, self.text[self.cursor .. self.cursor + tail], self.text[remove_end .. remove_end + tail]);
                         }
                         self.len -= remove_len;
-                        self.finalizeChange(true, false);
+                        try self.finalizeChange(true, false);
                     }
                     return true;
                 },
@@ -847,8 +847,8 @@ test "input field supports undo and redo shortcuts" {
     defer field.deinit();
     field.widget.focused = true;
 
-    field.setText("abc");
-    field.setText("abcd");
+    try field.setText("abc");
+    try field.setText("abcd");
 
     const undo_event = input.Event{ .key = input.KeyEvent.init('z', input.KeyModifiers{ .ctrl = true }) };
     try std.testing.expect(try field.widget.handleEvent(undo_event));
@@ -865,11 +865,11 @@ test "input field copy and paste round trips through clipboard" {
     defer field.deinit();
     field.widget.focused = true;
 
-    field.setText("copy-me");
+    try field.setText("copy-me");
     const copy_event = input.Event{ .key = input.KeyEvent.init('c', input.KeyModifiers{ .ctrl = true }) };
     try std.testing.expect(try field.widget.handleEvent(copy_event));
 
-    field.setText("");
+    try field.setText("");
     const paste_event = input.Event{ .key = input.KeyEvent.init('v', input.KeyModifiers{ .ctrl = true }) };
     try std.testing.expect(try field.widget.handleEvent(paste_event));
 
@@ -906,7 +906,7 @@ test "input field applies input mask formatting" {
     defer field.deinit();
 
     try field.setMaskPattern("(###) ###-####");
-    field.setText("12345");
+    try field.setText("12345");
     try std.testing.expectEqualStrings("(123) 45", field.getText());
 }
 
@@ -921,11 +921,11 @@ test "input field can surface real-time validation results" {
     };
 
     try field.setValidation("name", &rules, true);
-    field.setText("ab");
+    try field.setText("ab");
     const first_state = field.validationState().?;
     try std.testing.expect(!first_state.*.isValid());
 
-    field.setText("abcd");
+    try field.setText("abcd");
     const second_state = field.validationState().?;
     try std.testing.expect(second_state.*.isValid());
 }
@@ -951,6 +951,50 @@ test "input field preserves validation result on allocation failure" {
     try std.testing.expectEqualStrings("needed", preserved.*.firstError().?.message);
 }
 
+test "input field setText propagates history allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    try field.setText("stable");
+    try std.testing.expectEqual(@as(usize, 2), field.undo_redo.undo.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.undo_redo.allocator;
+    field.undo_redo.allocator = failing.allocator();
+    defer field.undo_redo.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, field.setText("next"));
+    try std.testing.expectEqualStrings("next", field.getText());
+    try std.testing.expectEqual(@as(usize, 2), field.undo_redo.undo.items.len);
+    try std.testing.expectEqualStrings("stable", field.undo_redo.undo.items[1]);
+}
+
+test "input field setText propagates validation allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    const rules = [_]form.Rule{
+        form.required("needed"),
+        form.minLength(10, "too short"),
+    };
+    try field.setValidation("name", &rules, true);
+    const first_state = field.validationState().?;
+    try std.testing.expect(!first_state.*.isValid());
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.allocator;
+    field.allocator = failing.allocator();
+    defer field.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, field.setText("tiny"));
+    try std.testing.expectEqualStrings("tiny", field.getText());
+    const preserved = field.validationState().?;
+    try std.testing.expect(!preserved.*.isValid());
+    try std.testing.expectEqualStrings("needed", preserved.*.firstError().?.message);
+}
+
 test "input field expands capacity for longer masks" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 4);
@@ -961,7 +1005,7 @@ test "input field expands capacity for longer masks" {
     try std.testing.expectEqual(@as(usize, 14), field.max_length);
     try std.testing.expectEqual(field.max_length, field.text.len);
 
-    field.setText("123456789012");
+    try field.setText("123456789012");
     try std.testing.expectEqualStrings("1234-5678-9012", field.getText());
 }
 
@@ -970,7 +1014,7 @@ test "input field mask survives allocation failure" {
     const field = try InputField.init(alloc, 8);
     defer field.deinit();
 
-    field.setText("1234");
+    try field.setText("1234");
     try field.setMaskPattern("##-##");
     try std.testing.expectEqualStrings("12-34", field.getText());
     try std.testing.expect(field.mask != null);
@@ -992,7 +1036,7 @@ test "input field clamps cursor beyond bounds during edits" {
     defer field.deinit();
     field.widget.focused = true;
 
-    field.setText("abc");
+    try field.setText("abc");
     field.cursor = 99;
 
     _ = try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, input.KeyModifiers{}) });
@@ -1014,7 +1058,7 @@ test "input field setText clamps to max length" {
     const field = try InputField.init(alloc, 4);
     defer field.deinit();
 
-    field.setText("abcdef");
+    try field.setText("abcdef");
     try std.testing.expectEqualStrings("abcd", field.getText());
     try std.testing.expectEqual(@as(usize, 4), field.cursor);
 }
@@ -1045,9 +1089,9 @@ test "input field capacity does not split UTF-8 sequences" {
     defer field.deinit();
     field.widget.focused = true;
 
-    field.setText("éx");
+    try field.setText("éx");
     try std.testing.expectEqualStrings("éx", field.getText());
-    field.setText("éxy");
+    try field.setText("éxy");
     try std.testing.expectEqualStrings("éx", field.getText());
 
     try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) }));

@@ -272,7 +272,7 @@ pub const AutocompleteInput = struct {
         if (self.filtered.items.len == 0) return false;
         const idx = self.filtered.items[@min(self.selected, self.filtered.items.len - 1)];
         const choice = self.suggestions.items[idx];
-        self.input_field.setText(choice);
+        try self.input_field.setText(choice);
         if (self.on_select) |cb| {
             cb(choice);
         }
@@ -291,7 +291,7 @@ test "autocomplete filters suggestions" {
     var ac = try AutocompleteInput.init(alloc, 32);
     defer ac.deinit();
     try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
-    ac.input_field.setText("alp");
+    try ac.input_field.setText("alp");
     try ac.updateFilter();
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
 }
@@ -302,7 +302,7 @@ test "autocomplete selection commits suggestion" {
     defer ac.deinit();
     ac.widget.focused = true;
     try ac.setSuggestions(&[_][]const u8{ "one", "two" });
-    ac.input_field.setText("t");
+    try ac.input_field.setText("t");
     try ac.updateFilter();
     const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(enter_event));
@@ -323,7 +323,7 @@ fn autocompleteSetSuggestionsAllocationFailureHarness(allocator: std.mem.Allocat
     defer ac.deinit();
 
     try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
-    ac.input_field.setText("alp");
+    try ac.input_field.setText("alp");
     try ac.updateFilter();
     try ac.setSuggestions(&[_][]const u8{ "delta", "delphi", "deal" });
 }
@@ -338,7 +338,7 @@ test "autocomplete suggestions survive allocation failure" {
     defer ac.deinit();
 
     try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
-    ac.input_field.setText("alp");
+    try ac.input_field.setText("alp");
     try ac.updateFilter();
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
 
@@ -361,11 +361,11 @@ test "autocomplete filter survives allocation failure" {
     defer ac.deinit();
 
     try ac.setSuggestions(&[_][]const u8{ "alpha", "beta", "alpaca" });
-    ac.input_field.setText("alp");
+    try ac.input_field.setText("alp");
     try ac.updateFilter();
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
 
-    ac.input_field.setText("beta");
+    try ac.input_field.setText("beta");
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
     const original_allocator = ac.allocator;
     ac.allocator = failing.allocator();
@@ -383,7 +383,7 @@ test "autocomplete case sensitivity survives allocation failure" {
     defer ac.deinit();
 
     try ac.setSuggestions(&[_][]const u8{ "Alpha", "alpine" });
-    ac.input_field.setText("alp");
+    try ac.input_field.setText("alp");
     try ac.updateFilter();
     try std.testing.expect(!ac.case_sensitive);
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
