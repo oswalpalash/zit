@@ -1585,13 +1585,13 @@ pub const GridLayout = struct {
         const rows = try resolveTracks(scratch, self.row_tracks.items, available_height, vertical_gap);
         defer scratch.free(rows);
 
-        self.cache.columns.clearRetainingCapacity();
         try self.cache.columns.ensureTotalCapacity(self.base.allocator, columns.len);
-        try self.cache.columns.appendSlice(self.base.allocator, columns);
-
-        self.cache.rows.clearRetainingCapacity();
         try self.cache.rows.ensureTotalCapacity(self.base.allocator, rows.len);
-        try self.cache.rows.appendSlice(self.base.allocator, rows);
+
+        self.cache.columns.clearRetainingCapacity();
+        self.cache.rows.clearRetainingCapacity();
+        self.cache.columns.appendSliceAssumeCapacity(columns);
+        self.cache.rows.appendSliceAssumeCapacity(rows);
 
         self.cache.available_width = available_width;
         self.cache.available_height = available_height;
@@ -2291,6 +2291,45 @@ test "grid layout resolves fixed and flexible tracks" {
     try std.testing.expectEqual(@as(u16, 6), r3.y);
     try std.testing.expectEqual(@as(u16, 11), r3.width);
     try std.testing.expectEqual(@as(u16, 2), r3.height);
+}
+
+test "grid track cache is not partially rewritten on allocation failure" {
+    const allocator = std.testing.allocator;
+
+    var grid = try GridLayout.init(allocator, 1, 1);
+    defer grid.deinit();
+
+    const first = grid.calculateLayout(Constraints.tight(10, 4));
+    try std.testing.expectEqual(@as(u16, 10), first.width);
+    try std.testing.expectEqual(@as(u16, 4), first.height);
+    try std.testing.expect(grid.cache.valid);
+    try std.testing.expectEqual(@as(usize, 1), grid.cache.columns.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.cache.rows.items.len);
+    try std.testing.expectEqual(@as(u16, 10), grid.cache.columns.items[0]);
+    try std.testing.expectEqual(@as(u16, 4), grid.cache.rows.items[0]);
+
+    _ = try grid.setColumns(&[_]GridTrack{GridTrack{ .fixed = 3 }});
+    var rows: [512]GridTrack = undefined;
+    for (&rows, 0..) |*track, idx| {
+        track.* = if (idx == 0) GridTrack{ .fixed = 1 } else GridTrack{ .flex = 1 };
+    }
+    _ = try grid.setRows(&rows);
+
+    const original_allocator = grid.base.allocator;
+    _ = grid.setScratchAllocator(original_allocator);
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    grid.base.allocator = failing.allocator();
+    const failed = grid.calculateLayout(Constraints.tight(12, 6));
+    grid.base.allocator = original_allocator;
+    _ = grid.setScratchAllocator(null);
+
+    try std.testing.expectEqual(@as(u16, 0), failed.width);
+    try std.testing.expectEqual(@as(u16, 0), failed.height);
+    try std.testing.expect(!grid.cache.valid);
+    try std.testing.expectEqual(@as(usize, 1), grid.cache.columns.items.len);
+    try std.testing.expectEqual(@as(usize, 1), grid.cache.rows.items.len);
+    try std.testing.expectEqual(@as(u16, 10), grid.cache.columns.items[0]);
+    try std.testing.expectEqual(@as(u16, 4), grid.cache.rows.items[0]);
 }
 
 /// Constraints for positioning a child within a constraint layout

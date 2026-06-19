@@ -126,12 +126,17 @@ fn sigwinchInstallCountForTest() usize {
 }
 
 fn managesNonBlockingFileStatusFlags() bool {
-    if (builtin.os.tag == .windows or builtin.os.tag == .macos) return false;
-    return @hasField(std.posix.O, "NONBLOCK");
+    return comptime blk: {
+        if (builtin.os.tag == .windows or builtin.os.tag == .macos) break :blk false;
+        break :blk @hasField(std.posix.O, "NONBLOCK");
+    };
 }
 
 fn nonBlockingFileStatusFlag() usize {
-    return @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
+    return comptime blk: {
+        if (!managesNonBlockingFileStatusFlags()) break :blk 0;
+        break :blk @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
+    };
 }
 
 fn fileStatusFlagsWithNonBlocking(flags: usize) usize {
@@ -835,7 +840,7 @@ test "changedSize reports only actual terminal geometry changes" {
 }
 
 test "non-blocking file status flag preserves existing bits" {
-    if (!@hasField(std.posix.O, "NONBLOCK")) return error.SkipZigTest;
+    if (comptime !managesNonBlockingFileStatusFlags()) return error.SkipZigTest;
 
     const existing: usize = 0x20;
     const flag = nonBlockingFileStatusFlag();
@@ -846,10 +851,10 @@ test "non-blocking file status flag preserves existing bits" {
 }
 
 test "file status flags restore non-blocking changes" {
-    if (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe")) {
+    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
         return error.SkipZigTest;
     }
-    if (!@hasField(std.posix.O, "NONBLOCK")) return error.SkipZigTest;
+    if (comptime !managesNonBlockingFileStatusFlags()) return error.SkipZigTest;
 
     var fds: [2]std.posix.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
@@ -869,7 +874,7 @@ test "file status flags restore non-blocking changes" {
 }
 
 test "restoreFileStatusFlagsIfNeeded restores and clears saved flags" {
-    if (!managesNonBlockingFileStatusFlags() or !builtin.link_libc or !@hasDecl(std.c, "pipe")) {
+    if (comptime (!managesNonBlockingFileStatusFlags() or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
         return error.SkipZigTest;
     }
 
