@@ -733,7 +733,7 @@ pub const FlexLayout = struct {
 
         const child_count = self.children.items.len;
         const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
-        const metrics = self.measureChildren(available_main, available_cross);
+        const metrics = self.measureChildren(available_main, available_cross) orelse return;
         const main_limit_u32: u32 = available_main;
         const free_space: u32 = if (metrics.used_main >= main_limit_u32) 0 else main_limit_u32 - metrics.used_main;
 
@@ -805,7 +805,7 @@ pub const FlexLayout = struct {
         };
     }
 
-    fn measureChildren(self: *FlexLayout, main_limit: u16, cross_limit: u16) LayoutMetrics {
+    fn measureChildren(self: *FlexLayout, main_limit: u16, cross_limit: u16) ?LayoutMetrics {
         const child_count = self.children.items.len;
         const child_count_u32: u32 = @intCast(@min(child_count, @as(usize, std.math.maxInt(u32))));
         const base_gap_total: u32 = if (child_count_u32 > 1)
@@ -824,10 +824,10 @@ pub const FlexLayout = struct {
 
         if (child_count > 0) {
             self.naturals_scratch.resize(allocator, child_count) catch {
-                return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+                return null;
             };
             self.assigned_scratch.resize(allocator, child_count) catch {
-                return LayoutMetrics{ .used_main = 0, .max_cross = 0, .gap_total = 0 };
+                return null;
             };
         }
 
@@ -1890,6 +1890,60 @@ test "flex layout addChild is transactional when scratch allocation fails" {
     try std.testing.expectEqual(@as(usize, 0), layout.children.items.len);
     try std.testing.expectEqual(@as(usize, 0), layout.naturals_scratch.items.len);
     try std.testing.expectEqual(@as(usize, 0), layout.assigned_scratch.items.len);
+}
+
+test "flex layout preserves cache when measurement scratch allocation fails" {
+    const allocator = std.testing.allocator;
+
+    const Tracker = struct {
+        calls: usize = 0,
+    };
+
+    const Dummy = struct {
+        fn layout(ctx: *anyopaque, constraints: Constraints) Size {
+            const tracker = @as(*Tracker, @ptrCast(@alignCast(ctx)));
+            tracker.calls += 1;
+            return constraints.constrain(5, 2);
+        }
+
+        fn render(_: *anyopaque, _: *renderer_mod.Renderer, _: Rect) void {}
+
+        fn asElement(tracker: *Tracker) LayoutElement {
+            return LayoutElement{
+                .layoutFn = layout,
+                .renderFn = render,
+                .ctx = tracker,
+            };
+        }
+    };
+
+    var tracker = Tracker{};
+    var layout = try FlexLayout.init(allocator, .row);
+    defer layout.deinit();
+
+    try layout.addChild(FlexChild.init(Dummy.asElement(&tracker), 0));
+    const first = layout.calculateLayout(Constraints.tight(20, 5));
+    try std.testing.expect(layout.cache.valid);
+    try std.testing.expectEqual(@as(u16, 5), first.width);
+    try std.testing.expectEqual(@as(u16, 2), first.height);
+    const calls_after_first = tracker.calls;
+
+    layout.naturals_scratch.deinit(allocator);
+    layout.naturals_scratch = .empty;
+    layout.assigned_scratch.deinit(allocator);
+    layout.assigned_scratch = .empty;
+
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    layout.base.allocator = failing.allocator();
+    const preserved = layout.calculateLayout(Constraints.tight(30, 6));
+    layout.base.allocator = allocator;
+
+    try std.testing.expect(layout.cache.valid);
+    try std.testing.expectEqual(@as(u16, 20), layout.cache.available_main);
+    try std.testing.expectEqual(@as(u16, 5), layout.cache.available_cross);
+    try std.testing.expectEqual(@as(u16, 5), preserved.width);
+    try std.testing.expectEqual(@as(u16, 2), preserved.height);
+    try std.testing.expectEqual(calls_after_first, tracker.calls);
 }
 
 test "flex layout supports rtl rows" {
