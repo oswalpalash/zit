@@ -91,10 +91,10 @@ pub const DropdownMenu = struct {
 
     /// Add an item to the dropdown menu
     pub fn addItem(self: *DropdownMenu, text: []const u8, enabled: bool, data: ?*anyopaque) !void {
-        const text_copy = try self.allocator.alloc(u8, text.len);
-        @memcpy(text_copy, text);
+        try self.items.ensureUnusedCapacity(self.allocator, 1);
+        const text_copy = try self.allocator.dupe(u8, text);
 
-        try self.items.append(self.allocator, MenuItem{
+        self.items.appendAssumeCapacity(MenuItem{
             .text = text_copy,
             .enabled = enabled,
             .data = data,
@@ -121,12 +121,12 @@ pub const DropdownMenu = struct {
 
     /// Set the dropdown label/caption
     pub fn setLabel(self: *DropdownMenu, label: []const u8) !void {
+        const label_copy = if (label.len == 0) "" else try self.allocator.dupe(u8, label);
+
         if (self.label.len > 0) {
             self.allocator.free(self.label);
         }
 
-        const label_copy = try self.allocator.alloc(u8, label.len);
-        @memcpy(label_copy, label);
         self.label = label_copy;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), self.label, "");
     }
@@ -494,6 +494,40 @@ test "dropdown menu init/deinit" {
     try std.testing.expectEqual(@as(usize, 0), menu.items.items.len);
     try menu.setLabel("Pick one");
     try menu.addItem("One", true, null);
+}
+
+test "dropdown menu addItem preserves items on append allocation failure" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("stable", true, null);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = menu.allocator;
+    menu.allocator = failing.allocator();
+    defer menu.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, menu.addItem("new", true, null));
+    try std.testing.expectEqual(@as(usize, 1), menu.items.items.len);
+    try std.testing.expectEqualStrings("stable", menu.items.items[0].text);
+}
+
+test "dropdown menu setLabel preserves label on allocation failure" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.setLabel("Stable");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = menu.allocator;
+    menu.allocator = failing.allocator();
+    defer menu.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, menu.setLabel("Replacement"));
+    try std.testing.expectEqualStrings("Stable", menu.label);
+    try std.testing.expectEqualStrings("Stable", menu.widget.accessibility_name);
 }
 
 test "dropdown menu selects item on click" {

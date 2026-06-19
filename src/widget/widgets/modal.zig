@@ -92,12 +92,12 @@ pub const Modal = struct {
 
     /// Set the modal title
     pub fn setTitle(self: *Modal, title: []const u8) !void {
+        const title_copy = if (title.len == 0) "" else try self.allocator.dupe(u8, title);
+
         if (self.title.len > 0) {
             self.allocator.free(self.title);
         }
 
-        const title_copy = try self.allocator.alloc(u8, title.len);
-        @memcpy(title_copy, title);
         self.title = title_copy;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.accessibilityLabel(), "");
     }
@@ -327,6 +327,23 @@ test "modal init/deinit" {
 
     try modal.setTitle("Confirm");
     try std.testing.expectEqualStrings("Confirm", modal.title);
+}
+
+test "modal setTitle preserves title on allocation failure" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    try modal.setTitle("Stable");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = modal.allocator;
+    modal.allocator = failing.allocator();
+    defer modal.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, modal.setTitle("Replacement"));
+    try std.testing.expectEqualStrings("Stable", modal.title);
+    try std.testing.expectEqualStrings("Stable", modal.widget.accessibility_name);
 }
 
 test "modal closes on escape and fires callback" {
