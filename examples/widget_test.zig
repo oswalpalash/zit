@@ -25,9 +25,9 @@ pub fn main() !void {
 
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "widget-test")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     // Initialize renderer
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);
@@ -35,7 +35,7 @@ pub fn main() !void {
 
     // Enable raw mode
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     // Initialize input handler
     var input_handler = zit.input.InputHandler.init(allocator, &term);
@@ -46,7 +46,7 @@ pub fn main() !void {
     app.setInputPollTimeout(100);
     // Enable mouse tracking
     try input_handler.enableMouse();
-    defer input_handler.disableMouse() catch {};
+    defer input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
 
     // Create a title label
     var title = try zit.widget.Label.init(allocator, "Widget Test - Press 'q' to quit, Tab to navigate");

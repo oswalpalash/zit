@@ -55,6 +55,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_build_steps.py`
 - `python3 scripts/check_build_steps.py --skip-interactive`
 - `python3 scripts/check_debug_allocator_cleanup.py`
+- `python3 scripts/check_docs_links.py` to require public Markdown relative links to resolve and every top-level docs guide to appear in `docs/README.md`.
 - `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_contribution_gates.py`
 - `python3 scripts/check_accessibility_metadata.py` to require every public widget export to expose semantic accessibility metadata for focus announcements and assistive integrations.
@@ -78,7 +79,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_example_coverage.py` keeps the build target list, interactive PTY smoke manifest, public build-step classification, and repeated visual target manifest in sync.
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
-- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable.
+- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable, and rejects empty `catch {}` blocks on terminal cleanup paths.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.

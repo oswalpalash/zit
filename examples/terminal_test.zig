@@ -11,9 +11,9 @@ pub fn main() !void {
 
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "terminal-test")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     // Clear screen
     try term.clear();
@@ -31,7 +31,7 @@ pub fn main() !void {
 
     // Enable raw mode
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
     try writer.writeAll("Raw mode enabled. Press 'q' to quit.\n\n");
 
     // Demonstrate cursor movement and colors

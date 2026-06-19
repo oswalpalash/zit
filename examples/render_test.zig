@@ -11,9 +11,9 @@ pub fn main() !void {
 
     // Initialize terminal
     var term = (try zit.terminal.initInteractive(allocator, "render-test")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     // Get terminal size
     const width = term.width;
@@ -27,12 +27,12 @@ pub fn main() !void {
 
     // Enable raw mode
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     // Initialize input handler
     var input_handler = zit.input.InputHandler.init(allocator, &term);
     try input_handler.enableMouse();
-    defer input_handler.disableMouse() catch {};
+    defer input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
     app.bindResize(&renderer, null);
     app.bindInput(&input_handler);
     app.setInputPollTimeout(100);

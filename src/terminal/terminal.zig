@@ -161,6 +161,15 @@ fn rememberFirstError(first_error: *?anyerror, err: anyerror) void {
     }
 }
 
+/// Report a terminal cleanup failure without hiding it from users.
+///
+/// Public examples use this in deferred cleanup paths where the main function
+/// can no longer return the cleanup error. The message is intentionally brief
+/// because it often appears while restoring raw mode or alternate-screen state.
+pub fn reportCleanupError(action: []const u8, err: anyerror) void {
+    std.debug.print("zit: terminal cleanup failed during {s}: {s}\n", .{ action, @errorName(err) });
+}
+
 /// Terminal abstraction layer
 ///
 /// This module provides cross-platform terminal handling capabilities including:
@@ -998,7 +1007,7 @@ test "terminal initialization" {
         }
         return err;
     };
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| reportCleanupError("term.deinit", err);
 
     try std.testing.expect(term.width > 0);
     try std.testing.expect(term.height > 0);

@@ -3,7 +3,7 @@
 Lightweight pointers to the most-used types and functions. Import via `const zit = @import("zit");`.
 
 ## Core Modules
-- `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`.
+- `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`, and `reportCleanupError(action, err)` for deferred cleanup paths that cannot return errors.
 - `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, decoded mouse events in zero-based render coordinates, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
 - `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, `bindInput(&input)`, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
@@ -25,7 +25,7 @@ var memory_manager = try zit.memory.MemoryManager.init(allocator, 1 * 1024 * 102
 defer memory_manager.deinit();
 
 var term = try zit.terminal.init(allocator);
-defer term.deinit() catch {};
+defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
 try term.enableRawMode();
 
 var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);

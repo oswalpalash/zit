@@ -38,6 +38,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
+- Documentation now has a maintained `docs/README.md` entry point with learning paths for app builders, widget authors, integrators, and maintainers.
+- Documentation link checking (`scripts/check_docs_links.py`, `zig build docs-links`) validates public Markdown relative links and requires every top-level docs guide to be reachable from `docs/README.md`.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - CI now runs the full `zig build release-check` verifier on pull requests and `main` pushes, with contribution-gate checks preventing release verification from becoming tag-only.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
@@ -86,6 +88,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Robust terminal state management (raw mode, cursor restore, resize handling) to avoid leaving sessions in a broken state.
 - POSIX SIGWINCH handling is now reference-counted and restored on terminal teardown, preventing Zit from leaving process-global signal handlers installed after `Terminal.deinit`.
 - `Terminal.deinit` now attempts every registered cleanup action before returning the first error, reducing the chance of stranded raw mode, hidden cursor, mouse tracking, alternate screen, or signal state.
+- Public examples and docs now report terminal cleanup failures with `terminal.reportCleanupError` instead of swallowing restoration errors in empty `catch {}` blocks.
 - Hardened input parsing for mouse, drag payloads, and bracketed paste across terminals.
 - Platform reliability improvements for Windows alongside POSIX terminals.
 - Bordered tables now preserve headers and row content instead of drawing borders or separators over them.

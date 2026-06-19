@@ -79,18 +79,18 @@ fn writeResizeStatus(term: *zit.terminal.Terminal) !void {
 
 fn runText(allocator: std.mem.Allocator, example_name: []const u8, text: []const u8) !void {
     var term = (try zit.terminal.initInteractive(allocator, example_name)) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
 
     var input_handler = zit.input.InputHandler.init(allocator, &term);
 
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     try term.hideCursor();
-    defer term.showCursor() catch {};
+    defer term.showCursor() catch |err| zit.terminal.reportCleanupError("term.showCursor", err);
 
     var running = true;
     var dirty = true;

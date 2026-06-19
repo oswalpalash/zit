@@ -15,9 +15,9 @@ pub fn main() !void {
 
     // Initialize terminal with memory manager
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "layout-test")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     // Initialize renderer with the parent allocator
     var renderer = try zit.render.Renderer.init(allocator, term.width, term.height);
@@ -25,7 +25,7 @@ pub fn main() !void {
 
     // Enable raw mode
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     // Initialize input handler with the parent allocator
     var input_handler = zit.input.InputHandler.init(allocator, &term);

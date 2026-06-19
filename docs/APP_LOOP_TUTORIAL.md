@@ -23,7 +23,7 @@ pub fn main() !void {
     defer memory.deinit();
 
     var term = try zit.terminal.init(memory.getArenaAllocator());
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
 
     var renderer = try zit.render.Renderer.init(memory.getArenaAllocator(), term.width, term.height);
     defer renderer.deinit();
@@ -32,9 +32,9 @@ pub fn main() !void {
     var input = zit.input.InputHandler.init(memory.getArenaAllocator(), &term);
 
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
     try term.hideCursor();
-    defer term.showCursor() catch {};
+    defer term.showCursor() catch |err| zit.terminal.reportCleanupError("term.showCursor", err);
 
     var app = zit.event.Application.initWithMemoryManager(&memory);
     defer app.deinit();

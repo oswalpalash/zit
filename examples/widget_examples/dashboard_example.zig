@@ -17,9 +17,9 @@ pub fn main() !void {
     defer memory_manager.deinit();
 
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "dashboard-example")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
@@ -35,9 +35,9 @@ pub fn main() !void {
     try term.hideCursor();
     try input_handler.enableMouse();
     defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
-        term.disableRawMode() catch {};
+        input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
+        term.showCursor() catch |err| zit.terminal.reportCleanupError("term.showCursor", err);
+        term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
     }
 
     try term.clear();

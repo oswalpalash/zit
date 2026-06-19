@@ -96,9 +96,9 @@ pub fn main() !void {
 
     // Initialize terminal with memory manager
     var terminal = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "button-example")) orelse return;
-    defer terminal.deinit() catch {};
+    defer terminal.deinit() catch |err| zit.terminal.reportCleanupError("terminal.deinit", err);
     try terminal.enterAlternateScreen();
-    defer terminal.exitAlternateScreen() catch {};
+    defer terminal.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("terminal.exitAlternateScreen", err);
 
     // Initialize input handler with the parent allocator
     var input_handler = zit.input.InputHandler.init(allocator, &terminal);
@@ -273,9 +273,9 @@ pub fn main() !void {
     try terminal.hideCursor();
     try input_handler.enableMouse();
     defer {
-        input_handler.disableMouse() catch {};
-        terminal.showCursor() catch {};
-        terminal.disableRawMode() catch {};
+        input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
+        terminal.showCursor() catch |err| zit.terminal.reportCleanupError("terminal.showCursor", err);
+        terminal.disableRawMode() catch |err| zit.terminal.reportCleanupError("terminal.disableRawMode", err);
     }
 
     // Clear screen initially

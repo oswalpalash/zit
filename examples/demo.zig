@@ -31,7 +31,7 @@ pub fn main() !void {
 
     // Initialize terminal with memory manager
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "demo")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
 
     // Initialize renderer with the parent allocator
     var renderer = try render.Renderer.init(allocator, term.width, term.height);
@@ -46,17 +46,17 @@ pub fn main() !void {
     app.setInputPollTimeout(100);
 
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     // Enable raw mode
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     try term.hideCursor();
     try input_handler.enableMouse();
     defer {
-        input_handler.disableMouse() catch {};
-        term.showCursor() catch {};
+        input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
+        term.showCursor() catch |err| zit.terminal.reportCleanupError("term.showCursor", err);
     }
 
     // Create widgets using the widget pool allocator

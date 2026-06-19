@@ -158,7 +158,7 @@ pub fn main(init: std.process.Init) !void {
     defer memory_manager.deinit();
 
     var term = (try zit.terminal.initInteractive(memory_manager.getArenaAllocator(), "file-manager-example")) orelse return;
-    defer term.deinit() catch {};
+    defer term.deinit() catch |err| zit.terminal.reportCleanupError("term.deinit", err);
 
     var renderer = try render.Renderer.init(allocator, term.width, term.height);
     defer renderer.deinit();
@@ -171,16 +171,16 @@ pub fn main(init: std.process.Init) !void {
     app.setInputPollTimeout(64);
 
     try term.enterAlternateScreen();
-    defer term.exitAlternateScreen() catch {};
+    defer term.exitAlternateScreen() catch |err| zit.terminal.reportCleanupError("term.exitAlternateScreen", err);
 
     try term.enableRawMode();
-    defer term.disableRawMode() catch {};
+    defer term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
 
     try term.hideCursor();
-    defer term.showCursor() catch {};
+    defer term.showCursor() catch |err| zit.terminal.reportCleanupError("term.showCursor", err);
 
     try input_handler.enableMouse();
-    defer input_handler.disableMouse() catch {};
+    defer input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
 
     const palette = style.filePalette();
     const ui_theme = style.asTheme(palette);
