@@ -33,6 +33,7 @@ pub const ColorPicker = struct {
             .palette = std.ArrayList(render.Color).empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Color picker", "");
         try self.setPalette(palette);
         return self;
@@ -197,6 +198,23 @@ pub const ColorPicker = struct {
         return self.widget.enabled and self.palette.items.len > 0;
     }
 };
+
+fn colorPickerInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.blue),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), picker.palette.items.len);
+}
+
+test "color picker init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, colorPickerInitAllocationFailureHarness, .{});
+}
 
 test "color picker handles mouse and keyboard selection" {
     const allocator = std.testing.allocator;
