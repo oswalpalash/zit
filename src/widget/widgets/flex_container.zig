@@ -47,14 +47,41 @@ pub const FlexContainer = struct {
     }
 
     pub fn addChild(self: *FlexContainer, child: *base.Widget, flex: u16) !void {
-        try self.children.ensureUnusedCapacity(self.allocator, 1);
+        const has_child = self.childIndex(child) != null;
+        const has_layout_child = self.layoutChildIndex(child) != null;
+        const target_layout_len = self.layout.children.items.len + if (has_layout_child) @as(usize, 0) else 1;
+
+        if (!has_child) {
+            try self.children.ensureUnusedCapacity(self.allocator, 1);
+        }
+        try self.layout.naturals_scratch.ensureTotalCapacity(self.layout.base.allocator, target_layout_len);
+        try self.layout.assigned_scratch.ensureTotalCapacity(self.layout.base.allocator, target_layout_len);
+        if (!has_layout_child) {
+            try self.layout.children.ensureUnusedCapacity(self.layout.base.allocator, 1);
+        }
 
         // Avoid duplicates by removing existing entries first.
         self.removeChild(child);
 
-        try self.layout.addChild(layout_module.FlexChild.init(child.asLayoutElement(), flex));
+        self.layout.children.appendAssumeCapacity(layout_module.FlexChild.init(child.asLayoutElement(), flex));
+        self.layout.cache.valid = false;
         self.children.appendAssumeCapacity(child);
         child.parent = &self.widget;
+    }
+
+    fn childIndex(self: *const FlexContainer, child: *const base.Widget) ?usize {
+        for (self.children.items, 0..) |entry, idx| {
+            if (entry == child) return idx;
+        }
+        return null;
+    }
+
+    fn layoutChildIndex(self: *const FlexContainer, child: *const base.Widget) ?usize {
+        const child_ctx: *anyopaque = @ptrCast(@constCast(child));
+        for (self.layout.children.items, 0..) |entry, idx| {
+            if (entry.element.ctx == child_ctx) return idx;
+        }
+        return null;
     }
 
     pub fn removeChild(self: *FlexContainer, child: *base.Widget) void {
@@ -276,4 +303,48 @@ test "flex container add child preserves state when child list allocation fails"
     try std.testing.expectEqual(@as(usize, 0), flex.children.items.len);
     try std.testing.expectEqual(@as(usize, 0), flex.layout.children.items.len);
     try std.testing.expect(child.widget.parent == null);
+}
+
+test "flex container re-adds existing child without growing child list" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var flex = try FlexContainer.init(alloc, .row);
+    defer flex.deinit();
+
+    var child = Dummy{};
+    try flex.addChild(&child.widget, 1);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = flex.allocator;
+    flex.allocator = failing.allocator();
+    defer flex.allocator = original_allocator;
+
+    try flex.addChild(&child.widget, 3);
+    try std.testing.expectEqual(@as(usize, 1), flex.children.items.len);
+    try std.testing.expectEqual(@as(usize, 1), flex.layout.children.items.len);
+    try std.testing.expectEqual(@as(u16, 3), flex.layout.children.items[0].flex_grow);
+    try std.testing.expectEqual(&flex.widget, child.widget.parent.?);
 }

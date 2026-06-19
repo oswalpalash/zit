@@ -55,11 +55,35 @@ pub const GridContainer = struct {
     }
 
     pub fn addChild(self: *GridContainer, child: *base.Widget, column: u16, row: u16) !void {
-        try self.children.ensureUnusedCapacity(self.allocator, 1);
+        if (column >= self.layout.columns or row >= self.layout.rows) {
+            return error.OutOfBounds;
+        }
+
+        const has_child = self.childIndex(child) != null;
+        const has_target = self.childIndexAt(column, row) != null;
+        if (!has_child and !has_target) {
+            try self.children.ensureUnusedCapacity(self.allocator, 1);
+        }
+
+        self.removeChild(child);
         self.removeChildAt(column, row);
         try self.layout.addChild(child.asLayoutElement(), column, row);
         self.children.appendAssumeCapacity(Child{ .widget = child, .column = column, .row = row });
         child.parent = &self.widget;
+    }
+
+    fn childIndex(self: *const GridContainer, child: *const base.Widget) ?usize {
+        for (self.children.items, 0..) |entry, idx| {
+            if (entry.widget == child) return idx;
+        }
+        return null;
+    }
+
+    fn childIndexAt(self: *const GridContainer, column: u16, row: u16) ?usize {
+        for (self.children.items, 0..) |entry, idx| {
+            if (entry.column == column and entry.row == row) return idx;
+        }
+        return null;
     }
 
     pub fn removeChild(self: *GridContainer, child: *base.Widget) void {
@@ -288,4 +312,97 @@ test "grid container add child preserves state when child list allocation fails"
     try std.testing.expectEqual(@as(usize, 0), grid.children.items.len);
     try std.testing.expect(grid.layout.cells.items[0] == null);
     try std.testing.expect(child.widget.parent == null);
+}
+
+test "grid container replaces occupied cell without growing child list" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 1, 1);
+    defer grid.deinit();
+
+    var old_child = Dummy{};
+    var new_child = Dummy{};
+    try grid.addChild(&old_child.widget, 0, 0);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = grid.allocator;
+    grid.allocator = failing.allocator();
+    defer grid.allocator = original_allocator;
+
+    try grid.addChild(&new_child.widget, 0, 0);
+    try std.testing.expectEqual(@as(usize, 1), grid.children.items.len);
+    try std.testing.expectEqual(&new_child.widget, grid.children.items[0].widget);
+    try std.testing.expect(old_child.widget.parent == null);
+    try std.testing.expectEqual(&grid.widget, new_child.widget.parent.?);
+    try std.testing.expect(grid.layout.cells.items[0].?.ctx == @as(*anyopaque, @ptrCast(&new_child.widget)));
+}
+
+test "grid container moves existing child without duplicate ownership" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 2, 1);
+    defer grid.deinit();
+
+    var child = Dummy{};
+    try grid.addChild(&child.widget, 0, 0);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = grid.allocator;
+    grid.allocator = failing.allocator();
+    defer grid.allocator = original_allocator;
+
+    try grid.addChild(&child.widget, 1, 0);
+    try std.testing.expectEqual(@as(usize, 1), grid.children.items.len);
+    try std.testing.expectEqual(&child.widget, grid.children.items[0].widget);
+    try std.testing.expectEqual(@as(u16, 1), grid.children.items[0].column);
+    try std.testing.expectEqual(@as(u16, 0), grid.children.items[0].row);
+    try std.testing.expect(grid.layout.cells.items[0] == null);
+    try std.testing.expect(grid.layout.cells.items[1].?.ctx == @as(*anyopaque, @ptrCast(&child.widget)));
+    try std.testing.expectEqual(&grid.widget, child.widget.parent.?);
 }
