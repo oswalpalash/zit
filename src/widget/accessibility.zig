@@ -59,23 +59,33 @@ pub const Manager = struct {
     }
 
     pub fn registerNode(self: *Manager, node: AccessibleNode) !void {
+        const name_copy = try self.allocator.dupe(u8, node.name);
+        errdefer if (name_copy.len > 0) self.allocator.free(name_copy);
+        const description_copy = try self.allocator.dupe(u8, node.description);
+        errdefer if (description_copy.len > 0) self.allocator.free(description_copy);
+
         if (self.findNode(node.widget_ptr)) |existing| {
-            if (existing.name.len > 0) self.allocator.free(existing.name);
-            if (existing.description.len > 0) self.allocator.free(existing.description);
+            const old_name = existing.name;
+            const old_description = existing.description;
             existing.* = AccessibleNode{
                 .widget_ptr = node.widget_ptr,
                 .role = node.role,
-                .name = try self.allocator.dupe(u8, node.name),
-                .description = try self.allocator.dupe(u8, node.description),
+                .name = name_copy,
+                .description = description_copy,
                 .bounds = node.bounds,
             };
+            if (old_name.len > 0) self.allocator.free(old_name);
+            if (old_description.len > 0) self.allocator.free(old_description);
             return;
         }
 
-        var stored = node;
-        stored.name = try self.allocator.dupe(u8, node.name);
-        stored.description = try self.allocator.dupe(u8, node.description);
-        try self.nodes.append(self.allocator, stored);
+        try self.nodes.append(self.allocator, AccessibleNode{
+            .widget_ptr = node.widget_ptr,
+            .role = node.role,
+            .name = name_copy,
+            .description = description_copy,
+            .bounds = node.bounds,
+        });
     }
 
     pub fn updateBounds(self: *Manager, ptr: *base.Widget, rect: layout.Rect) void {
@@ -85,39 +95,39 @@ pub const Manager = struct {
     }
 
     pub fn announceFocus(self: *Manager, ptr: *base.Widget) ![]const u8 {
-        if (self.last_announcement.len > 0) {
-            self.allocator.free(self.last_announcement);
-            self.last_announcement = &[_]u8{};
-        }
-
         const node = self.findNode(ptr) orelse {
-            self.last_announcement = try std.fmt.allocPrint(self.allocator, "Focused element", .{});
+            const next = try std.fmt.allocPrint(self.allocator, "Focused element", .{});
+            self.replaceAnnouncement(next);
             return self.last_announcement;
         };
 
         const role_name = roleToString(node.role);
-        if (node.description.len > 0) {
-            self.last_announcement = try std.fmt.allocPrint(self.allocator, "{s}: {s} - {s}", .{ role_name, node.name, node.description });
-        } else {
-            self.last_announcement = try std.fmt.allocPrint(self.allocator, "{s}: {s}", .{ role_name, node.name });
-        }
+        const next = if (node.description.len > 0)
+            try std.fmt.allocPrint(self.allocator, "{s}: {s} - {s}", .{ role_name, node.name, node.description })
+        else
+            try std.fmt.allocPrint(self.allocator, "{s}: {s}", .{ role_name, node.name });
+        self.replaceAnnouncement(next);
         return self.last_announcement;
+    }
+
+    fn replaceAnnouncement(self: *Manager, next: []u8) void {
+        if (self.last_announcement.len > 0) {
+            self.allocator.free(self.last_announcement);
+        }
+        self.last_announcement = next;
     }
 
     /// Announce a state or value change for a widget (e.g. progress updates).
     pub fn announceState(self: *Manager, ptr: *base.Widget, state: []const u8) ![]const u8 {
-        if (self.last_announcement.len > 0) {
-            self.allocator.free(self.last_announcement);
-            self.last_announcement = &[_]u8{};
-        }
-
         const node = self.findNode(ptr) orelse {
-            self.last_announcement = try std.fmt.allocPrint(self.allocator, "{s}", .{state});
+            const next = try std.fmt.allocPrint(self.allocator, "{s}", .{state});
+            self.replaceAnnouncement(next);
             return self.last_announcement;
         };
 
         const role_name = roleToString(node.role);
-        self.last_announcement = try std.fmt.allocPrint(self.allocator, "{s}: {s} ({s})", .{ role_name, node.name, state });
+        const next = try std.fmt.allocPrint(self.allocator, "{s}: {s} ({s})", .{ role_name, node.name, state });
+        self.replaceAnnouncement(next);
         return self.last_announcement;
     }
 
@@ -170,6 +180,59 @@ pub fn roleToString(role: Role) []const u8 {
     };
 }
 
+fn accessibilityRegisterAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var manager = Manager.init(allocator);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .button,
+        .name = "Save",
+        .description = "Writes the file",
+    });
+}
+
+fn accessibilityRegisterUpdateAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var manager = Manager.init(allocator);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .button,
+        .name = "Save",
+        .description = "Writes the file",
+    });
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .input,
+        .name = "Search",
+        .description = "Filters results",
+    });
+    try std.testing.expectEqualStrings("Search", manager.nodes.items[0].name);
+    try std.testing.expectEqualStrings("Filters results", manager.nodes.items[0].description);
+}
+
+test "accessibility register cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, accessibilityRegisterAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, accessibilityRegisterUpdateAllocationFailureHarness, .{});
+}
+
 test "accessibility manager registers nodes and announces focus" {
     const alloc = std.testing.allocator;
     var manager = Manager.init(alloc);
@@ -192,6 +255,43 @@ test "accessibility manager registers nodes and announces focus" {
 
     _ = try manager.announceFocus(&fake_widget);
     try std.testing.expectEqualStrings("button: Submit - Sends form data", manager.lastAnnouncement());
+}
+
+test "accessibility register preserves existing node on allocation failure" {
+    const alloc = std.testing.allocator;
+    var manager = Manager.init(alloc);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .button,
+        .name = "Save",
+        .description = "Writes the file",
+    });
+
+    const original_allocator = manager.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    manager.allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .input,
+        .name = "Search",
+        .description = "Filters results",
+    }));
+    manager.allocator = original_allocator;
+
+    try std.testing.expectEqual(@as(usize, 1), manager.nodes.items.len);
+    try std.testing.expectEqual(Role.button, manager.nodes.items[0].role);
+    try std.testing.expectEqualStrings("Save", manager.nodes.items[0].name);
+    try std.testing.expectEqualStrings("Writes the file", manager.nodes.items[0].description);
 }
 
 test "high contrast preference and state announcements" {
@@ -219,4 +319,64 @@ test "high contrast preference and state announcements" {
     try std.testing.expectEqualStrings("progress bar: Download (50%)", announcement);
     const hc = manager.highContrastTheme();
     try std.testing.expect(hc.style.bold);
+}
+
+test "focus announcement preserves previous text on allocation failure" {
+    const alloc = std.testing.allocator;
+    var manager = Manager.init(alloc);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .button,
+        .name = "Save",
+    });
+    _ = try manager.announceFocus(&widget_instance);
+    try std.testing.expectEqualStrings("button: Save", manager.lastAnnouncement());
+
+    const original_allocator = manager.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    manager.allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, manager.announceFocus(&widget_instance));
+    manager.allocator = original_allocator;
+
+    try std.testing.expectEqualStrings("button: Save", manager.lastAnnouncement());
+}
+
+test "state announcement preserves previous text on allocation failure" {
+    const alloc = std.testing.allocator;
+    var manager = Manager.init(alloc);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    try manager.registerNode(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .progressbar,
+        .name = "Download",
+    });
+    _ = try manager.announceState(&widget_instance, "50%");
+    try std.testing.expectEqualStrings("progress bar: Download (50%)", manager.lastAnnouncement());
+
+    const original_allocator = manager.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    manager.allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, manager.announceState(&widget_instance, "75%"));
+    manager.allocator = original_allocator;
+
+    try std.testing.expectEqualStrings("progress bar: Download (50%)", manager.lastAnnouncement());
 }
