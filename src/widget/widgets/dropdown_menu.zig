@@ -107,6 +107,8 @@ pub const DropdownMenu = struct {
             return;
         }
 
+        const previous_index = self.selected_index;
+
         // Free the item text
         self.allocator.free(self.items.items[index].text);
 
@@ -114,8 +116,12 @@ pub const DropdownMenu = struct {
         _ = self.items.orderedRemove(index);
 
         // Update selected index if needed
-        if (self.selected_index >= self.items.items.len) {
-            self.setSelectedIndex(if (self.items.items.len > 0) self.items.items.len - 1 else 0);
+        if (self.items.items.len == 0) {
+            self.selected_index = 0;
+        } else if (index < previous_index) {
+            self.selected_index = previous_index - 1;
+        } else if (self.selected_index >= self.items.items.len) {
+            self.setSelectedIndex(self.items.items.len - 1);
         }
     }
 
@@ -528,6 +534,35 @@ test "dropdown menu setLabel preserves label on allocation failure" {
     try std.testing.expectError(error.OutOfMemory, menu.setLabel("Replacement"));
     try std.testing.expectEqualStrings("Stable", menu.label);
     try std.testing.expectEqualStrings("Stable", menu.widget.accessibility_name);
+}
+
+test "dropdown menu remove before selection preserves selected item" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    try menu.addItem("Three", true, null);
+    menu.setSelectedIndex(2);
+
+    menu.removeItem(0);
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+    try std.testing.expectEqualStrings("Three", menu.getSelectedItemText().?);
+}
+
+test "dropdown menu remove selected last item clamps selection" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.setSelectedIndex(1);
+
+    menu.removeItem(1);
+    try std.testing.expectEqual(@as(usize, 0), menu.selected_index);
+    try std.testing.expectEqualStrings("One", menu.getSelectedItemText().?);
 }
 
 test "dropdown menu selects item on click" {
