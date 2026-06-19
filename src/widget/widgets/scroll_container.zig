@@ -68,12 +68,15 @@ pub const ScrollContainer = struct {
     /// Initialize a new scroll container
     pub fn init(allocator: std.mem.Allocator) !*ScrollContainer {
         const self = try allocator.create(ScrollContainer);
+        errdefer allocator.destroy(self);
 
         // Create scrollbars
         const h_scrollbar_widget = try scrollbar.Scrollbar.init(allocator, .horizontal);
+        errdefer h_scrollbar_widget.deinit();
         h_scrollbar_widget.setOnValueChange(onHorizontalScroll);
 
         const v_scrollbar_widget = try scrollbar.Scrollbar.init(allocator, .vertical);
+        errdefer v_scrollbar_widget.deinit();
         v_scrollbar_widget.setOnValueChange(onVerticalScroll);
 
         self.* = ScrollContainer{
@@ -699,6 +702,18 @@ test "scroll container init/deinit" {
     try std.testing.expect(container.v_scrollbar != null);
     try std.testing.expectEqual(&container.widget, container.h_scrollbar.?.widget.parent.?);
     try std.testing.expectEqual(&container.widget, container.v_scrollbar.?.widget.parent.?);
+}
+
+fn scrollContainerInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var container = try ScrollContainer.init(allocator);
+    defer container.deinit();
+
+    try std.testing.expect(container.h_scrollbar != null);
+    try std.testing.expect(container.v_scrollbar != null);
+}
+
+test "scroll container init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, scrollContainerInitAllocationFailureHarness, .{});
 }
 
 test "scroll container maintains parent linkage for content" {
