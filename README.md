@@ -86,7 +86,7 @@ _ = try app.addAnimation(.{
         fn update(progress: f32, ctx: ?*anyopaque) void {
             const widget = @as(*zit.widget.Sparkline, @ptrCast(@alignCast(ctx.?)));
             const value: f32 = 20 + progress * 80;
-            widget.push(value) catch {};
+            widget.push(value) catch |err| std.debug.print("sparkline update failed: {s}\n", .{@errorName(err)});
         }
     }.update,
     .context = @ptrCast(spark),
@@ -95,7 +95,7 @@ _ = try app.addAnimation(.{
 _ = try app.scheduleTimer(1000, 1000, struct {
     fn tick(ctx: ?*anyopaque) void {
         const widget = @as(*zit.widget.Sparkline, @ptrCast(@alignCast(ctx.?)));
-        widget.push(42) catch {};
+        widget.push(42) catch |err| std.debug.print("sparkline tick failed: {s}\n", .{@errorName(err)});
     }
 }.tick, spark);
 ```

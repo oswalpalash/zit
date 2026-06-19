@@ -42,6 +42,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Documentation link checking (`scripts/check_docs_links.py`, `zig build docs-links`) validates public Markdown relative links and requires every top-level docs guide to be reachable from `docs/README.md`.
 - Documentation command checking (`scripts/check_docs_commands.py`, `zig build docs-commands`) validates documented `python3 scripts/...`, `zig build ...`, and `zig fmt ...` command references against existing repo files and build steps.
 - Documentation link checking now validates same-file and cross-file Markdown heading anchors instead of only checking that the target file exists.
+- Documentation Zig snippet checking (`scripts/check_docs_zig_snippets.py`, `zig build docs-zig-snippets`) rejects public Markdown snippets that model empty catches, panic/unreachable paths, or unchecked `DebugAllocator` cleanup.
 - Added `docs/COOKBOOK.md` and `docs/TROUBLESHOOTING.md` for operational recipes covering app loops, resize, cleanup, mouse alignment, memory ownership, visual QA, widgets, and release readiness.
 - Clarified that Markdown guides under `docs/` are the human-facing documentation surface; generated Zig docs remain a release artifact for exported API inspection.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.

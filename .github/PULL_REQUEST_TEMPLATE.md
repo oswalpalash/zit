@@ -13,6 +13,7 @@ Mark all that apply. Use `zig build release-check` before maintainers cut or mer
 - [ ] `python3 scripts/check_application_input_binding.py`
 - [ ] `python3 scripts/check_docs_commands.py`
 - [ ] `python3 scripts/check_docs_links.py`
+- [ ] `python3 scripts/check_docs_zig_snippets.py`
 - [ ] `python3 scripts/check_example_coverage.py`
 - [ ] `python3 scripts/check_interactive_alt_screen.py`
 - [ ] `python3 scripts/check_mouse_coordinate_contract.py`
