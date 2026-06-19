@@ -2069,6 +2069,8 @@ pub const Application = struct {
     accessibility: ?*accessibility.Manager = null,
     /// Drag-and-drop coordinator
     drag_manager: DragManager,
+    /// Whether processInputEvent synthesizes drag lifecycle events from mouse input.
+    automatic_drag: bool = true,
     /// Global shortcut registry
     shortcut_registry: ShortcutRegistry,
     /// Optional stylesheet for CSS-like styling
@@ -2122,6 +2124,11 @@ pub const Application = struct {
         return app;
     }
 
+    fn syncInternalPointers(self: *Application) void {
+        self.focus_manager.event_queue = &self.event_queue;
+        self.drag_manager.queue = &self.event_queue;
+    }
+
     /// Attach a memory manager for per-frame scratch allocations.
     pub fn setMemoryManager(self: *Application, manager: ?*memory.MemoryManager) void {
         self.memory_manager = manager;
@@ -2137,6 +2144,7 @@ pub const Application = struct {
 
     /// Clean up application resources
     pub fn deinit(self: *Application) void {
+        self.syncInternalPointers();
         self.cancelAndJoinBackgroundTasks();
 
         if (self.io_manager) |manager| {
@@ -2454,6 +2462,7 @@ pub const Application = struct {
 
     /// Request focus for a widget
     pub fn requestFocus(self: *Application, target_widget: *widget.Widget) !bool {
+        self.syncInternalPointers();
         return try self.focus_manager.requestFocus(target_widget);
     }
 
@@ -2467,18 +2476,31 @@ pub const Application = struct {
         return self.animator.cancel(handle);
     }
 
+    /// Configure whether processInputEvent automatically maps mouse press/move/release
+    /// events to drag lifecycle events. Disable this when an app starts payload
+    /// drags explicitly from selected hit targets.
+    pub fn setAutomaticDrag(self: *Application, enabled: bool) void {
+        if (!enabled and self.automatic_drag and self.drag_manager.active) {
+            self.drag_manager.cancel();
+        }
+        self.automatic_drag = enabled;
+    }
+
     /// Begin a drag gesture and emit the start event.
     pub fn beginDrag(self: *Application, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
+        self.syncInternalPointers();
         try self.drag_manager.begin(source, x, y, button, payload);
     }
 
     /// Update an in-flight drag gesture.
     pub fn updateDrag(self: *Application, x: u16, y: u16, target: ?*widget.Widget) !void {
+        self.syncInternalPointers();
         try self.drag_manager.update(x, y, target);
     }
 
     /// Finish a drag gesture and emit drop events.
     pub fn endDrag(self: *Application, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
+        self.syncInternalPointers();
         try self.drag_manager.end(x, y, drop_target);
     }
 
@@ -2649,6 +2671,7 @@ pub const Application = struct {
 
     /// Process an input event
     pub fn processInputEvent(self: *Application, input_event: input.Event) !void {
+        self.syncInternalPointers();
         switch (input_event) {
             .resize => |resize_event| {
                 _ = try self.handleResize(resize_event.width, resize_event.height);
@@ -2664,20 +2687,22 @@ pub const Application = struct {
         const event = fromInputEvent(input_event, target);
         try self.event_queue.pushEvent(event);
 
-        switch (input_event) {
-            .mouse => |mouse_event| switch (mouse_event.action) {
-                .press => {
-                    try self.beginDrag(target, mouse_event.x, mouse_event.y, mouse_event.button, .{});
+        if (self.automatic_drag) {
+            switch (input_event) {
+                .mouse => |mouse_event| switch (mouse_event.action) {
+                    .press => {
+                        try self.beginDrag(target, mouse_event.x, mouse_event.y, mouse_event.button, .{});
+                    },
+                    .release => {
+                        try self.endDrag(mouse_event.x, mouse_event.y, target);
+                    },
+                    .move => {
+                        try self.updateDrag(mouse_event.x, mouse_event.y, target);
+                    },
+                    .scroll_up, .scroll_down => {},
                 },
-                .release => {
-                    try self.endDrag(mouse_event.x, mouse_event.y, target);
-                },
-                .move => {
-                    try self.updateDrag(mouse_event.x, mouse_event.y, target);
-                },
-                .scroll_up, .scroll_down => {},
-            },
-            else => {},
+                else => {},
+            }
         }
     }
 
@@ -2855,6 +2880,32 @@ test "application input binding stores non-blocking poll configuration" {
     try std.testing.expect(app.input_binding.handler == null);
     try std.testing.expectEqual(@as(u64, 0), app.input_binding.poll_timeout_ms);
     try std.testing.expect(!app.input_polled_before_tick);
+}
+
+test "application automatic drag can be disabled for explicit payload drags" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    app.setRoot(root);
+
+    try std.testing.expect(app.automatic_drag);
+    app.setAutomaticDrag(false);
+    try std.testing.expect(!app.automatic_drag);
+
+    try app.processInputEvent(input.Event{ .mouse = input.MouseEvent.init(.press, 1, 2, 1, 0) });
+    try std.testing.expect(!app.drag_manager.active);
+
+    const queued = app.event_queue.popFront().?;
+    try std.testing.expectEqual(EventType.mouse_press, queued.type);
+    try std.testing.expectEqual(@as(u16, 1), queued.data.mouse_press.x);
+    try std.testing.expectEqual(@as(u16, 2), queued.data.mouse_press.y);
+
+    app.setAutomaticDrag(true);
+    try app.processInputEvent(input.Event{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) });
+    try std.testing.expect(app.drag_manager.active);
 }
 
 test "background tasks emit completion events" {

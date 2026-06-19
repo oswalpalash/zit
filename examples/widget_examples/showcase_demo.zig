@@ -521,6 +521,9 @@ pub fn main(init: std.process.Init) !void {
     var app = event.Application.initWithMemoryManager(&memory_manager);
     defer app.deinit();
     app.bindResize(&renderer, null);
+    app.bindInput(&input_handler);
+    app.setInputPollTimeout(32);
+    app.setAutomaticDrag(false);
 
     var root = try widget.Container.init(memory_manager.getWidgetPoolAllocator());
     defer root.deinit();
@@ -779,7 +782,7 @@ pub fn main(init: std.process.Init) !void {
         appendSample(&chart.series.items[0].values, chart.allocator, traffic, max_samples);
         appendSample(&chart.series.items[1].values, chart.allocator, latency, max_samples);
 
-        if (try input_handler.pollEvent(32)) |ev| {
+        if (try app.pollInputOnce()) |ev| {
             switch (ev) {
                 .key => |key| {
                     if (key.key == 'q') {
@@ -827,7 +830,7 @@ pub fn main(init: std.process.Init) !void {
                         _ = try autocomplete.widget.handleEvent(ev);
                     }
                 },
-                .resize => try app.processInputEvent(ev),
+                .resize => {},
                 else => {},
             }
         }

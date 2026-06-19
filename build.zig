@@ -339,6 +339,10 @@ pub fn build(b: *std.Build) void {
     const accessibility_metadata_step = b.step("accessibility-metadata", "Check public widgets expose accessibility metadata");
     accessibility_metadata_step.dependOn(&accessibility_metadata_cmd.step);
 
+    const application_input_binding_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_application_input_binding.py" });
+    const application_input_binding_step = b.step("application-input-binding", "Check application examples use bound input polling");
+    application_input_binding_step.dependOn(&application_input_binding_cmd.step);
+
     const mouse_hit_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_mouse_hit_coverage.py" });
     const mouse_hit_coverage_step = b.step("mouse-hit-coverage", "Check public mouse-capable widgets have hit-test coverage");
     mouse_hit_coverage_step.dependOn(&mouse_hit_coverage_cmd.step);
@@ -395,6 +399,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(bench_step);
     quality_step.dependOn(widget_coverage_step);
     quality_step.dependOn(accessibility_metadata_step);
+    quality_step.dependOn(application_input_binding_step);
     quality_step.dependOn(mouse_hit_coverage_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);

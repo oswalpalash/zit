@@ -28,6 +28,7 @@ class Command:
 
 SCRIPT_COMPILE_TARGETS = (
     "scripts/check_accessibility_metadata.py",
+    "scripts/check_application_input_binding.py",
     "scripts/check_build_steps.py",
     "scripts/check_ci_script_coverage.py",
     "scripts/check_contribution_gates.py",
@@ -97,6 +98,7 @@ def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
         Command("CI script coverage", ("python3", "scripts/check_ci_script_coverage.py"), 120),
         Command("contribution gates", ("python3", "scripts/check_contribution_gates.py"), 120),
         Command("accessibility metadata", ("python3", "scripts/check_accessibility_metadata.py"), 120),
+        Command("application input binding", ("python3", "scripts/check_application_input_binding.py"), 120),
         Command("example coverage", ("python3", "scripts/check_example_coverage.py"), 120),
         Command("interactive alternate screen", ("python3", "scripts/check_interactive_alt_screen.py"), 120),
         Command("mouse hit coverage", ("python3", "scripts/check_mouse_hit_coverage.py"), 120),

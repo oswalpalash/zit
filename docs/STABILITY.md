@@ -58,6 +58,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_contribution_gates.py`
 - `python3 scripts/check_accessibility_metadata.py` to require every public widget export to expose semantic accessibility metadata for focus announcements and assistive integrations.
+- `python3 scripts/check_application_input_binding.py`
 - `python3 scripts/check_example_coverage.py`
 - `python3 scripts/check_interactive_alt_screen.py`
 - `python3 scripts/check_owned_allocation_patterns.py`
@@ -71,6 +72,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_mouse_hit_coverage.py` to require every public mouse-capable widget to declare direct hit-test coverage before release.
 - `python3 scripts/visual_repeat_check.py --count 4`
 - Visually inspect the generated contact sheet for the real-world examples (`htop-clone`, `file-manager`, `text-editor`, `dashboard-demo`) and widget galleries (`widget-gallery`, `widget-gallery-extended`, `widget-gallery-layouts`) for alignment, hierarchy, spacing, clipped or overlapping text, and frame-to-frame drift.
+- `python3 scripts/check_application_input_binding.py` requires examples that initialize `Application` and `InputHandler` together to route polling through `Application.bindInput` / `pollInputOnce`.
 - `python3 scripts/check_example_coverage.py` keeps the build target list, interactive PTY smoke manifest, public build-step classification, and repeated visual target manifest in sync.
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.

@@ -78,7 +78,10 @@ MOUSE_HIT_COVERAGE: dict[str, tuple[CoverageRef, ...]] = {
     "Popup": (CoverageRef("src/widget/widgets/popup.zig", ("test \"popup dismisses on outside mouse press\"", "MouseEvent.init")),),
     "RadioGroup": (CoverageRef("src/widget/widgets/advanced_controls.zig", ("test \"radio group mouse selects rendered option rows\"", "MouseEvent.init")),),
     "RatingStars": (CoverageRef("src/widget/widgets/advanced_controls.zig", ("test \"rating stars mouse maps rendered columns to values\"", "MouseEvent.init")),),
-    "ScrollContainer": (CoverageRef("src/widget/widgets/scroll_container.zig", ("test \"scroll container scrolls content with mouse wheel\"", "MouseEvent.init")),),
+    "ScrollContainer": (
+        CoverageRef("src/widget/widgets/scroll_container.zig", ("test \"scroll container scrolls content with mouse wheel\"", "MouseEvent.init")),
+        CoverageRef("src/widget/widgets/scroll_container.zig", ("test \"scroll container translates mouse events into scrolled content space\"", "MouseEvent.init")),
+    ),
     "Scrollbar": (CoverageRef("src/widget/widgets/scrollbar.zig", ("test \"scrollbar updates value on scroll event\"", "MouseEvent.init")),),
     "Slider": (CoverageRef("src/widget/widgets/advanced_controls.zig", ("test \"slider mouse maps rendered track to value\"", "MouseEvent.init")),),
     "TabBar": (CoverageRef("src/widget/widgets/tab_view.zig", ("test \"tab bar mouse selects rendered tab row\"", "MouseEvent.init")),),

@@ -20,6 +20,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Deterministic widget gallery snapshot target for screenshot-based review of core widgets and advanced controls.
 - Extended deterministic widget gallery snapshot target for text entry, structured text, charting, menus, logs, indicators, and drawing primitives.
 - Layout/navigation widget gallery target for container, tab, split-pane, screen-manager, overlay, date/time, image, toast, accordion, and wizard coverage.
+- Application input-binding checker (`scripts/check_application_input_binding.py`, `zig build application-input-binding`) fails when Application-based examples bypass `Application.bindInput` / `pollInputOnce`.
 - Public widget coverage checker (`scripts/check_widget_coverage.py`) fails when an exported widget lacks declared visual or snapshot coverage.
 - Public example coverage checker (`scripts/check_example_coverage.py`, `zig build example-coverage`) fails when a build-targeted interactive example is missing from PTY smoke coverage, public build-step classification, or repeated visual snapshot coverage.
 - Interactive alternate-screen checker (`scripts/check_interactive_alt_screen.py`, `zig build interactive-alt-screen`) fails when public interactive examples render outside the alternate screen, preventing viewport-origin drift between mouse coordinates and rendered rows.
@@ -62,7 +63,10 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Bordered table mouse hit testing now uses the same inner content rectangle as rendering, so border, header separator, row selection, sorting, and resize-handle clicks no longer drift by a row or column.
 - FileBrowser now shares one content/list geometry path for rendering and mouse hit testing, keeping entries off the bottom border and preventing border-row clicks from selecting files.
 - `MemoryManager` aggregate stats now update through the arena and widget-pool allocators it hands out, so allocation/deallocation counts and current/peak managed usage no longer stay at zero in real applications.
+- `Application` now rebinds internal focus and drag manager queue pointers before emitting events, preventing stale self-references after value initialization from corrupting drag/focus dispatch.
+- `ScrollContainer` now translates mouse events into scrolled content coordinates before forwarding them to child widgets, fixing clicks landing above rendered content after vertical or horizontal scrolling.
 - Terminal mouse events are now normalized from protocol 1-based coordinates into Zit screen coordinates at decode time, fixing clickable widgets that responded one row/column away from their rendered position.
+- `Application.setAutomaticDrag(false)` lets apps use bound input polling while starting payload drags explicitly from their own hit targets.
 - DropdownMenu and `widget_test` now tolerate aggressively tiny resize layouts without unsigned underflow during public PTY stress checks.
 - Interactive examples now render a shared live resize marker, and `terminal_test` uses `InputHandler` so its resize handling follows the same event path as the rest of the public examples.
 - Non-blocking stdin reads now treat EAGAIN/EWOULDBLOCK as no-event instead of crashing interactive loops.

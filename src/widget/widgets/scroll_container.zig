@@ -402,6 +402,25 @@ pub const ScrollContainer = struct {
         return content_rect;
     }
 
+    fn translateMouseCoord(coord: u16, offset: i16) u16 {
+        var value: i32 = @intCast(coord);
+        value += @intCast(offset);
+        if (value <= 0) return 0;
+        return @intCast(@min(value, std.math.maxInt(u16)));
+    }
+
+    fn translateContentEvent(self: *ScrollContainer, event: input.Event, content_rect: layout_module.Rect) ?input.Event {
+        if (event != .mouse) return event;
+
+        const mouse_event = event.mouse;
+        if (!content_rect.contains(mouse_event.x, mouse_event.y)) return null;
+
+        var translated = mouse_event;
+        translated.x = translateMouseCoord(mouse_event.x, self.h_offset);
+        translated.y = translateMouseCoord(mouse_event.y, self.v_offset);
+        return input.Event{ .mouse = translated };
+    }
+
     /// Event handling implementation for ScrollContainer
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
@@ -436,8 +455,11 @@ pub const ScrollContainer = struct {
 
         // Check if content handles the event
         if (self.content) |content| {
-            if (try content.handleEvent(event)) {
-                return true;
+            const content_rect = self.getContentRect();
+            if (self.translateContentEvent(event, content_rect)) |content_event| {
+                if (try content.handleEvent(content_event)) {
+                    return true;
+                }
             }
         }
 
@@ -785,4 +807,70 @@ test "scroll container tolerates tiny layouts with overflowing content" {
         try container.widget.layout(rect);
         try container.widget.draw(&renderer);
     }
+}
+
+test "scroll container translates mouse events into scrolled content space" {
+    const Clickable = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        last_x: ?u16 = null,
+        last_y: ?u16 = null,
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn owner(widget_ptr: *anyopaque) *@This() {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            return @fieldParentPtr("widget", widget_ref);
+        }
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+        fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
+            const self = owner(widget_ptr);
+            if (event != .mouse) return false;
+            self.last_x = event.mouse.x;
+            self.last_y = event.mouse.y;
+            return true;
+        }
+
+        fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
+            owner(widget_ptr).widget.rect = rect;
+        }
+
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(20, 20);
+        }
+
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    var clickable = Clickable{};
+    container.setContent(&clickable.widget);
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    container.applyHOffset(2);
+    container.applyVOffset(3);
+
+    const visible_content = container.getContentRect();
+    const click = input.Event{ .mouse = input.MouseEvent.init(
+        .press,
+        visible_content.x + 2,
+        visible_content.y + 1,
+        1,
+        0,
+    ) };
+
+    try std.testing.expect(try container.widget.handleEvent(click));
+    try std.testing.expectEqual(visible_content.x + 4, clickable.last_x.?);
+    try std.testing.expectEqual(visible_content.y + 4, clickable.last_y.?);
 }
