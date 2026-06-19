@@ -401,7 +401,7 @@ pub const TabView = struct {
                 self.tab_bar.setActive(0);
                 self.syncVisibility();
             } else {
-                self.setActiveTab(0);
+                try self.setActiveTab(0);
             }
         }
     }
@@ -464,7 +464,7 @@ pub const TabView = struct {
     }
 
     /// Set the active tab
-    pub fn setActiveTab(self: *TabView, index: usize) void {
+    pub fn setActiveTab(self: *TabView, index: usize) !void {
         if (self.tabs.items.len == 0) {
             self.active_tab = 0;
             self.tab_bar.setActive(0);
@@ -473,13 +473,13 @@ pub const TabView = struct {
 
         const clamped = @min(index, self.tabs.items.len - 1);
         if (clamped == self.active_tab) {
-            self.ensureTabLoaded(clamped);
+            try self.ensureTabLoaded(clamped);
             self.syncVisibility();
             return;
         }
 
         self.active_tab = clamped;
-        self.ensureTabLoaded(clamped);
+        try self.ensureTabLoaded(clamped);
         self.syncVisibility();
         self.tab_bar.setActive(clamped);
 
@@ -494,9 +494,9 @@ pub const TabView = struct {
     }
 
     /// Get the active tab content widget
-    pub fn getActiveContent(self: *TabView) ?*base.Widget {
+    pub fn getActiveContent(self: *TabView) !?*base.Widget {
         if (self.tabs.items.len == 0) return null;
-        self.ensureTabLoaded(self.active_tab);
+        try self.ensureTabLoaded(self.active_tab);
         return self.tabs.items[self.active_tab].content;
     }
 
@@ -532,24 +532,22 @@ pub const TabView = struct {
         self.tab_bar.allow_close = allow;
     }
 
-    fn ensureTabLoaded(self: *TabView, idx: usize) void {
+    fn ensureTabLoaded(self: *TabView, idx: usize) !void {
         if (idx >= self.tabs.items.len) return;
         var tab = &self.tabs.items[idx];
         if (tab.loaded or tab.loader == null) return;
 
         const builder = tab.loader.?;
-        const content = builder(self.allocator) catch |err| {
-            std.log.err("zit.widget: tab loader failed: {s}", .{@errorName(err)});
-            return;
-        };
+        const content = try builder(self.allocator);
+        content.parent = &self.widget;
+        errdefer {
+            if (content.parent == &self.widget) content.parent = null;
+        }
+        const rect = self.contentRect();
+        try content.layout(rect);
+
         tab.content = content;
         tab.loaded = true;
-
-        if (tab.content) |tab_content| {
-            tab_content.parent = &self.widget;
-            const rect = self.contentRect();
-            tab_content.layout(rect) catch {};
-        }
     }
 
     fn isTabClosable(self: *TabView, idx: usize) bool {
@@ -628,7 +626,7 @@ pub const TabView = struct {
         }
 
         if (self.tabs.items.len > 0) {
-            self.ensureTabLoaded(self.active_tab);
+            try self.ensureTabLoaded(self.active_tab);
             if (self.tabs.items[self.active_tab].content) |content| {
                 try content.draw(renderer);
             }
@@ -650,7 +648,7 @@ pub const TabView = struct {
             return true;
         }
 
-        const active_content = self.getActiveContent() orelse return false;
+        const active_content = (try self.getActiveContent()) orelse return false;
         return active_content.handleEvent(event);
     }
 
@@ -684,7 +682,7 @@ pub const TabView = struct {
         width = @max(width, @as(i16, @intCast(@min(header_size.width, std.math.maxInt(i16)))));
         height = @max(height, @as(i16, @intCast(@min(header_size.height, std.math.maxInt(i16)))));
 
-        if (self.getActiveContent()) |content| {
+        if (try self.getActiveContent()) |content| {
             const content_size = try content.getPreferredSize();
             const border_space: i16 = if (self.show_border) 2 else 0;
             const content_width: i16 = @intCast(@min(content_size.width, std.math.maxInt(i16)));
@@ -705,7 +703,7 @@ pub const TabView = struct {
         if (!self.widget.enabled or self.tabs.items.len == 0) return false;
 
         if (self.tab_bar.widget.canFocus()) return true;
-        if (self.getActiveContent()) |content| {
+        if (self.tabs.items[self.active_tab].content) |content| {
             if (content.canFocus()) return true;
         }
         return true;
@@ -713,7 +711,9 @@ pub const TabView = struct {
 
     fn onTabSelected(index: usize, ctx: ?*anyopaque) void {
         const self = @as(*TabView, @ptrCast(@alignCast(ctx orelse return)));
-        self.setActiveTab(index);
+        self.setActiveTab(index) catch |err| {
+            std.log.err("zit.widget: tab activation failed: {s}", .{@errorName(err)});
+        };
     }
 
     fn onTabClosed(index: usize, ctx: ?*anyopaque) void {
@@ -726,6 +726,40 @@ pub const TabView = struct {
     fn onTabReordered(from: usize, to: usize, ctx: ?*anyopaque) void {
         const self = @as(*TabView, @ptrCast(@alignCast(ctx orelse return)));
         self.moveTab(from, to);
+    }
+};
+
+const FailingLayoutWidget = struct {
+    widget: base.Widget,
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = getPreferredSizeFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn init() FailingLayoutWidget {
+        return .{ .widget = base.Widget.init(&vtable) };
+    }
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {
+        return error.LayoutFailed;
+    }
+
+    fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(1, 1);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
     }
 };
 
@@ -746,13 +780,51 @@ test "tab view lazy loads content on first activation" {
     Lazy.loaded = false;
     try tab_view.addLazyTab("lazy", Lazy.build, false);
     try std.testing.expect(!Lazy.loaded);
-    tab_view.setActiveTab(0);
+    try tab_view.setActiveTab(0);
     try std.testing.expect(Lazy.loaded);
-    try std.testing.expect(tab_view.getActiveContent() != null);
-    const content = tab_view.getActiveContent().?;
+    try std.testing.expect(try tab_view.getActiveContent() != null);
+    const content = (try tab_view.getActiveContent()).?;
     const lbl_ptr = @as(*@import("label.zig").Label, @ptrCast(@alignCast(content)));
     lbl_ptr.deinit();
     tab_view.tabs.items[0].content = null;
+}
+
+test "tab view lazy loader failure propagates" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    const Lazy = struct {
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return error.LoaderFailed;
+        }
+    };
+
+    try tab_view.addLazyTab("lazy", Lazy.build, false);
+    try std.testing.expectError(error.LoaderFailed, tab_view.setActiveTab(0));
+    try std.testing.expect(!tab_view.tabs.items[0].loaded);
+    try std.testing.expect(tab_view.tabs.items[0].content == null);
+}
+
+test "tab view lazy content layout failure preserves unloaded state" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    const Lazy = struct {
+        var failing = FailingLayoutWidget.init();
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return &failing.widget;
+        }
+    };
+
+    try tab_view.addLazyTab("lazy", Lazy.build, false);
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    try std.testing.expectError(error.LayoutFailed, tab_view.setActiveTab(0));
+    try std.testing.expect(!tab_view.tabs.items[0].loaded);
+    try std.testing.expect(tab_view.tabs.items[0].content == null);
+    try std.testing.expect(Lazy.failing.widget.parent == null);
 }
 
 test "tab view reorders tabs and keeps active index in sync" {
@@ -767,7 +839,7 @@ test "tab view reorders tabs and keeps active index in sync" {
 
     try tab_view.addTab("one", &a.widget);
     try tab_view.addTab("two", &b.widget);
-    tab_view.setActiveTab(1);
+    try tab_view.setActiveTab(1);
     const capacity = tab_view.tabs.capacity;
     tab_view.moveTab(1, 0);
     try std.testing.expectEqual(capacity, tab_view.tabs.capacity);
@@ -817,8 +889,8 @@ test "tab view links tab content to parent on add and load" {
     };
 
     try tab_view.addLazyTab("lazy", Lazy.build, false);
-    tab_view.setActiveTab(1);
-    const content = tab_view.getActiveContent().?;
+    try tab_view.setActiveTab(1);
+    const content = (try tab_view.getActiveContent()).?;
     try std.testing.expect(content.parent != null);
     try std.testing.expectEqual(&tab_view.widget, content.parent.?);
 
@@ -915,7 +987,7 @@ test "tab view clamps active tab index" {
     try tab_view.addTab("one", &a.widget);
     try tab_view.addTab("two", &b.widget);
 
-    tab_view.setActiveTab(9);
+    try tab_view.setActiveTab(9);
     try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
     try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
 }

@@ -106,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
     try tab_view.addTab("Overview", &tab_a.widget);
     try tab_view.addTab("Metrics", &tab_b.widget);
     try tab_view.addTabSpec(.{ .title = "Logs", .content = &tab_c.widget, .closable = true });
-    tab_view.setActiveTab(1);
+    try tab_view.setActiveTab(1);
     try tab_view.widget.layout(Rect.init(2, 15, 42, 8));
     try tab_view.widget.draw(&mock.renderer);
 
