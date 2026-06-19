@@ -91,9 +91,16 @@ pub const AutocompleteInput = struct {
         self.max_visible = @max(count, @as(usize, 1));
     }
 
-    pub fn setCaseSensitive(self: *AutocompleteInput, enabled: bool) void {
+    pub fn setCaseSensitive(self: *AutocompleteInput, enabled: bool) !void {
+        if (self.case_sensitive == enabled) return;
+
+        const next_filtered = try self.buildFilterWithCase(self.suggestions.items, enabled);
+
+        self.filtered.deinit(self.allocator);
+        self.filtered = next_filtered;
         self.case_sensitive = enabled;
-        self.updateFilter() catch {};
+        self.clampSelection();
+        self.widget.markDirty();
     }
 
     pub fn setOnSelect(self: *AutocompleteInput, callback: *const fn ([]const u8) void) void {
@@ -204,6 +211,10 @@ pub const AutocompleteInput = struct {
     }
 
     fn buildFilter(self: *AutocompleteInput, suggestions: []const []u8) !std.ArrayList(usize) {
+        return self.buildFilterWithCase(suggestions, self.case_sensitive);
+    }
+
+    fn buildFilterWithCase(self: *AutocompleteInput, suggestions: []const []u8, case_sensitive: bool) !std.ArrayList(usize) {
         var next_filtered = try std.ArrayList(usize).initCapacity(self.allocator, 0);
         errdefer next_filtered.deinit(self.allocator);
 
@@ -211,7 +222,7 @@ pub const AutocompleteInput = struct {
         if (query.len == 0 or suggestions.len == 0) return next_filtered;
 
         for (suggestions, 0..) |s, idx| {
-            if (self.matches(query, s)) {
+            if (matches(case_sensitive, query, s)) {
                 try next_filtered.append(self.allocator, idx);
             }
         }
@@ -232,8 +243,8 @@ pub const AutocompleteInput = struct {
         suggestions.deinit(self.allocator);
     }
 
-    fn matches(self: *AutocompleteInput, needle: []const u8, haystack: []const u8) bool {
-        if (self.case_sensitive) {
+    fn matches(case_sensitive: bool, needle: []const u8, haystack: []const u8) bool {
+        if (case_sensitive) {
             return std.mem.indexOf(u8, haystack, needle) != null;
         }
 
@@ -364,4 +375,27 @@ test "autocomplete filter survives allocation failure" {
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
     try std.testing.expectEqual(@as(usize, 0), ac.filtered.items[0]);
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items[1]);
+}
+
+test "autocomplete case sensitivity survives allocation failure" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "Alpha", "alpine" });
+    ac.input_field.setText("alp");
+    try ac.updateFilter();
+    try std.testing.expect(!ac.case_sensitive);
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = ac.allocator;
+    ac.allocator = failing.allocator();
+    defer ac.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, ac.setCaseSensitive(true));
+    try std.testing.expect(!ac.case_sensitive);
+    try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+    try std.testing.expectEqual(@as(usize, 0), ac.filtered.items[0]);
+    try std.testing.expectEqual(@as(usize, 1), ac.filtered.items[1]);
 }
