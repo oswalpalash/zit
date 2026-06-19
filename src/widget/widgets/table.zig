@@ -309,20 +309,17 @@ pub const Table = struct {
             return error.IndexOutOfBounds;
         }
 
-        // Free existing text
-        if (self.string_intern == null) {
-            self.allocator.free(self.rows.items[row].items[col].text);
-        }
-
-        // Copy new text
         const text_copy = try self.ownText(text);
+        const previous = self.rows.items[row].items[col].text;
 
-        // Update cell
         self.rows.items[row].items[col] = TableCell{
             .text = text_copy,
             .fg = fg,
             .bg = bg,
         };
+        if (self.string_intern == null) {
+            self.allocator.free(previous);
+        }
         self.view_dirty = true;
     }
 
@@ -1786,6 +1783,23 @@ test "table begin edit propagates allocation failure" {
     try std.testing.expectError(error.OutOfMemory, table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } }));
     try std.testing.expect(!table.isEditing());
     try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
+}
+
+test "table setCell preserves existing text on allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addRow(&.{"cpu"});
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = table.allocator;
+    table.allocator = failing.allocator();
+    defer table.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, table.setCell(0, 0, "memory", null, null));
+    try std.testing.expectEqualStrings("cpu", table.cellView(0, 0).text);
 }
 
 test "table begin edit preserves active edit on allocation failure" {
