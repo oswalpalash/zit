@@ -27,6 +27,8 @@ pub const Chart = struct {
     x_axis_label: ?[]u8 = null,
     y_axis_label: ?[]u8 = null,
     show_legend: bool = true,
+    pie_totals_scratch: std.ArrayList(f32),
+    pie_thresholds_scratch: std.ArrayList(f32),
 
     pub const vtable = base.Widget.VTable{
         .draw = drawFn,
@@ -42,7 +44,7 @@ pub const Chart = struct {
         self.* = Chart{
             .widget = base.Widget.init(&vtable),
             .chart_type = .line,
-            .series = try std.ArrayList(Series).initCapacity(allocator, 0),
+            .series = .empty,
             .allocator = allocator,
             .theme_value = default_theme,
             .padding = 1,
@@ -50,6 +52,8 @@ pub const Chart = struct {
             .x_axis_label = null,
             .y_axis_label = null,
             .show_legend = true,
+            .pie_totals_scratch = .empty,
+            .pie_thresholds_scratch = .empty,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.canvas), "Chart", "");
         return self;
@@ -61,6 +65,8 @@ pub const Chart = struct {
             s.values.deinit(self.allocator);
         }
         self.series.deinit(self.allocator);
+        self.pie_totals_scratch.deinit(self.allocator);
+        self.pie_thresholds_scratch.deinit(self.allocator);
         if (self.x_axis_label) |label| self.allocator.free(label);
         if (self.y_axis_label) |label| self.allocator.free(label);
         self.allocator.destroy(self);
@@ -83,10 +89,22 @@ pub const Chart = struct {
     }
 
     pub fn setAxisLabels(self: *Chart, x_label: ?[]const u8, y_label: ?[]const u8) !void {
+        var next_x_label: ?[]u8 = null;
+        errdefer if (next_x_label) |label| self.allocator.free(label);
+        if (x_label) |text| {
+            next_x_label = try self.allocator.dupe(u8, text);
+        }
+
+        var next_y_label: ?[]u8 = null;
+        errdefer if (next_y_label) |label| self.allocator.free(label);
+        if (y_label) |text| {
+            next_y_label = try self.allocator.dupe(u8, text);
+        }
+
         if (self.x_axis_label) |label| self.allocator.free(label);
         if (self.y_axis_label) |label| self.allocator.free(label);
-        self.x_axis_label = if (x_label) |text| try self.allocator.dupe(u8, text) else null;
-        self.y_axis_label = if (y_label) |text| try self.allocator.dupe(u8, text) else null;
+        self.x_axis_label = next_x_label;
+        self.y_axis_label = next_y_label;
     }
 
     pub fn setShowLegend(self: *Chart, show: bool) void {
@@ -94,8 +112,16 @@ pub const Chart = struct {
     }
 
     pub fn addSeries(self: *Chart, label: []const u8, values: []const f32, color: ?render.Color, fill: ?render.Color) !void {
+        const next_series_count = self.series.items.len + 1;
+        try self.series.ensureUnusedCapacity(self.allocator, 1);
+        try self.pie_totals_scratch.ensureTotalCapacity(self.allocator, next_series_count);
+        try self.pie_thresholds_scratch.ensureTotalCapacity(self.allocator, next_series_count);
+
         const series_label = try self.allocator.dupe(u8, label);
+        errdefer self.allocator.free(series_label);
+
         var copied_values = try std.ArrayList(f32).initCapacity(self.allocator, values.len);
+        errdefer copied_values.deinit(self.allocator);
         try copied_values.appendSlice(self.allocator, values);
 
         const palette_color = color orelse self.theme_value.color(.accent);
@@ -108,7 +134,7 @@ pub const Chart = struct {
             .fill = fill_color,
         };
 
-        try self.series.append(self.allocator, s);
+        self.series.appendAssumeCapacity(s);
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -319,14 +345,21 @@ pub const Chart = struct {
     fn drawPie(self: *Chart, renderer: *render.Renderer, inner: layout_module.Rect) void {
         if (self.series.items.len == 0 or inner.width == 0 or inner.height == 0) return;
 
-        var totals = std.ArrayList(f32).empty;
-        defer totals.deinit(self.allocator);
-        totals.ensureTotalCapacityPrecise(self.allocator, self.series.items.len) catch return;
+        if (self.pie_totals_scratch.capacity < self.series.items.len or
+            self.pie_thresholds_scratch.capacity < self.series.items.len)
+        {
+            self.drawPieWithoutScratch(renderer, inner);
+            return;
+        }
+
+        self.pie_totals_scratch.clearRetainingCapacity();
+        self.pie_thresholds_scratch.clearRetainingCapacity();
+
         var total_sum: f32 = 0;
         for (self.series.items) |s| {
             var subtotal: f32 = 0;
             for (s.values.items) |v| subtotal += v;
-            totals.appendAssumeCapacity(subtotal);
+            self.pie_totals_scratch.appendAssumeCapacity(subtotal);
             total_sum += subtotal;
         }
         if (total_sum == 0) return;
@@ -337,12 +370,9 @@ pub const Chart = struct {
 
         // Precompute slice thresholds
         var cumulative: f32 = 0;
-        var thresholds = std.ArrayList(f32).empty;
-        thresholds.ensureTotalCapacityPrecise(self.allocator, totals.items.len) catch return;
-        defer thresholds.deinit(self.allocator);
-        for (totals.items) |slice_total| {
+        for (self.pie_totals_scratch.items) |slice_total| {
             cumulative += slice_total / total_sum;
-            thresholds.appendAssumeCapacity(cumulative);
+            self.pie_thresholds_scratch.appendAssumeCapacity(cumulative);
         }
 
         var y: u16 = inner.y;
@@ -357,9 +387,50 @@ pub const Chart = struct {
                 const angle = std.math.atan2(dy, dx);
                 const normalized_angle = if (angle < 0) (angle + std.math.tau) / std.math.tau else angle / std.math.tau;
 
-                var slice_index: usize = thresholds.items.len - 1;
-                for (thresholds.items, 0..) |t, i| {
+                var slice_index: usize = self.pie_thresholds_scratch.items.len - 1;
+                for (self.pie_thresholds_scratch.items, 0..) |t, i| {
                     if (normalized_angle <= t) {
+                        slice_index = i;
+                        break;
+                    }
+                }
+
+                const color = self.series.items[slice_index].color;
+                renderer.drawChar(x, y, ' ', render.Color.named(render.NamedColor.default), color, render.Style{ .bold = true });
+            }
+        }
+    }
+
+    fn drawPieWithoutScratch(self: *Chart, renderer: *render.Renderer, inner: layout_module.Rect) void {
+        var total_sum: f32 = 0;
+        for (self.series.items) |s| {
+            for (s.values.items) |v| total_sum += v;
+        }
+        if (total_sum == 0) return;
+
+        const center_x: f32 = @as(f32, @floatFromInt(inner.x)) + @as(f32, @floatFromInt(inner.width)) / 2.0;
+        const center_y: f32 = @as(f32, @floatFromInt(inner.y)) + @as(f32, @floatFromInt(inner.height)) / 2.0;
+        const radius: f32 = @as(f32, @floatFromInt(@min(inner.width, inner.height))) / 2.2;
+
+        var y: u16 = inner.y;
+        while (y < inner.y + inner.height) : (y += 1) {
+            var x: u16 = inner.x;
+            while (x < inner.x + inner.width) : (x += 1) {
+                const dx = @as(f64, @floatFromInt(x)) - @as(f64, center_x);
+                const dy = @as(f64, @floatFromInt(y)) - @as(f64, center_y);
+                const distance = std.math.sqrt(dx * dx + dy * dy);
+                if (distance > radius) continue;
+
+                const angle = std.math.atan2(dy, dx);
+                const normalized_angle = if (angle < 0) (angle + std.math.tau) / std.math.tau else angle / std.math.tau;
+
+                var cumulative: f32 = 0;
+                var slice_index: usize = self.series.items.len - 1;
+                for (self.series.items, 0..) |s, i| {
+                    var subtotal: f32 = 0;
+                    for (s.values.items) |v| subtotal += v;
+                    cumulative += subtotal / total_sum;
+                    if (normalized_angle <= cumulative) {
                         slice_index = i;
                         break;
                     }
@@ -562,6 +633,42 @@ test "chart renders pie slices" {
     try std.testing.expect(colored > 0);
 }
 
+test "chart pie rendering does not allocate during draw" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+    chart.setType(.pie);
+    chart.setShowAxes(false);
+    chart.setShowLegend(false);
+
+    const red = render.Color.named(render.NamedColor.red);
+    const green = render.Color.named(render.NamedColor.green);
+    try chart.addSeries("one", &[_]f32{ 3, 1 }, red, null);
+    try chart.addSeries("two", &[_]f32{ 2, 2 }, green, null);
+    try chart.widget.layout(layout_module.Rect.init(0, 0, 12, 12));
+
+    var renderer = try render.Renderer.init(alloc, 12, 12);
+    defer renderer.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = chart.allocator;
+    chart.allocator = failing.allocator();
+    defer chart.allocator = original_allocator;
+
+    try chart.widget.draw(&renderer);
+
+    var colored: usize = 0;
+    for (0..12) |x| {
+        for (0..12) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            if (std.meta.eql(cell.bg, red) or std.meta.eql(cell.bg, green)) {
+                colored += 1;
+            }
+        }
+    }
+    try std.testing.expect(colored > 0);
+}
+
 test "chart draws scatter points with legend and labels" {
     const alloc = std.testing.allocator;
     var chart = try Chart.init(alloc);
@@ -603,4 +710,39 @@ test "chart fills background when empty" {
 
     const cell = renderer.back.getCell(0, 0).*;
     try std.testing.expect(std.meta.eql(cell.bg, chart.theme_value.color(.surface)));
+}
+
+test "chart addSeries preserves existing series on allocation failure" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+
+    try chart.addSeries("stable", &[_]f32{ 1, 2, 3 }, null, null);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = chart.allocator;
+    chart.allocator = failing.allocator();
+    defer chart.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, chart.addSeries("new", &[_]f32{ 4, 5 }, null, null));
+    try std.testing.expectEqual(@as(usize, 1), chart.series.items.len);
+    try std.testing.expectEqualStrings("stable", chart.series.items[0].label);
+    try std.testing.expectEqual(@as(usize, 3), chart.series.items[0].values.items.len);
+}
+
+test "chart axis labels preserve old values on replacement allocation failure" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+
+    try chart.setAxisLabels("old-x", "old-y");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    const original_allocator = chart.allocator;
+    chart.allocator = failing.allocator();
+    defer chart.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, chart.setAxisLabels("new-x", "new-y"));
+    try std.testing.expectEqualStrings("old-x", chart.x_axis_label.?);
+    try std.testing.expectEqualStrings("old-y", chart.y_axis_label.?);
 }
