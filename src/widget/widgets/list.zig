@@ -153,6 +153,9 @@ pub const List = struct {
             return;
         }
 
+        const previous_selected_index = self.selected_index;
+        const previous_first_visible_index = self.first_visible_index;
+
         // Free the item
         self.allocator.free(self.items.items[index]);
 
@@ -160,8 +163,19 @@ pub const List = struct {
         _ = self.items.orderedRemove(index);
 
         // Update selected index if needed
-        if (self.selected_index >= self.items.items.len) {
-            self.setSelectedIndex(if (self.items.items.len > 0) self.items.items.len - 1 else 0);
+        if (self.items.items.len == 0) {
+            self.selected_index = 0;
+        } else if (index < previous_selected_index) {
+            self.selected_index = previous_selected_index - 1;
+            self.ensureItemVisible(self.selected_index);
+        } else if (self.selected_index >= self.items.items.len) {
+            self.setSelectedIndex(self.items.items.len - 1);
+        }
+
+        if (index < previous_first_visible_index and previous_first_visible_index > 0) {
+            self.scrollTo(@floatFromInt(previous_first_visible_index - 1));
+        } else {
+            self.clampScroll();
         }
     }
 
@@ -907,6 +921,58 @@ test "list clears selection and ignores events when empty" {
     try list.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
     const handled = try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
+}
+
+test "list remove before selection preserves selected item" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    try list.addItem("Gamma");
+    list.setSelectedIndex(2);
+
+    list.removeItem(0);
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+    try std.testing.expectEqualStrings("Gamma", list.getSelectedItem().?);
+}
+
+test "list remove selected last item clamps selection" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    list.setSelectedIndex(1);
+
+    list.removeItem(1);
+    try std.testing.expectEqual(@as(usize, 0), list.selected_index);
+    try std.testing.expectEqualStrings("Alpha", list.getSelectedItem().?);
+}
+
+test "list remove above viewport preserves visible item" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Zero");
+    try list.addItem("One");
+    try list.addItem("Two");
+    try list.addItem("Three");
+    try list.addItem("Four");
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 12, 2));
+    list.setSelectedIndex(3);
+    try std.testing.expectEqual(@as(usize, 2), list.first_visible_index);
+    try std.testing.expectEqualStrings("Two", list.itemAt(list.first_visible_index));
+
+    list.removeItem(0);
+    try std.testing.expectEqual(@as(usize, 1), list.first_visible_index);
+    try std.testing.expectEqualStrings("Two", list.itemAt(list.first_visible_index));
+    try std.testing.expectEqual(@as(usize, 2), list.selected_index);
+    try std.testing.expectEqualStrings("Three", list.getSelectedItem().?);
 }
 
 test "list border draws around content without consuming first row" {
