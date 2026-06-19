@@ -336,8 +336,10 @@ pub const Table = struct {
         if (self.selected_row == null or self.selected_column >= self.columns.items.len) return;
 
         const data_row = self.selected_row.?;
+        const next_text = self.cellView(data_row, self.selected_column).text;
+        try self.edit_buffer.ensureTotalCapacity(self.allocator, next_text.len);
         self.edit_buffer.clearRetainingCapacity();
-        try self.edit_buffer.appendSlice(self.allocator, self.cellView(data_row, self.selected_column).text);
+        self.edit_buffer.appendSliceAssumeCapacity(next_text);
         self.editing_row = data_row;
         self.editing_col = self.selected_column;
     }
@@ -1753,6 +1755,40 @@ test "table begin edit propagates allocation failure" {
     try std.testing.expectError(error.OutOfMemory, table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } }));
     try std.testing.expect(!table.isEditing());
     try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
+}
+
+test "table begin edit preserves active edit on allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "cpu", "ready and waiting" });
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+    table.selected_column = 0;
+    try table.beginEdit();
+    try table.edit_buffer.appendSlice(table.allocator, "-draft");
+    try std.testing.expect(table.isEditing());
+    try std.testing.expectEqual(@as(usize, 0), table.editing_row.?);
+    try std.testing.expectEqual(@as(usize, 0), table.editing_col.?);
+    try std.testing.expectEqualStrings("cpu-draft", table.edit_buffer.items);
+
+    table.selected_column = 1;
+    table.edit_buffer.shrinkAndFree(table.allocator, table.edit_buffer.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = table.allocator;
+    table.allocator = failing.allocator();
+    defer table.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, table.beginEdit());
+    try std.testing.expect(table.isEditing());
+    try std.testing.expectEqual(@as(usize, 0), table.editing_row.?);
+    try std.testing.expectEqual(@as(usize, 0), table.editing_col.?);
+    try std.testing.expectEqualStrings("cpu-draft", table.edit_buffer.items);
+    try std.testing.expectEqualStrings("ready and waiting", table.cellView(0, 1).text);
 }
 
 test "table edit buffer append propagates allocation failure" {
