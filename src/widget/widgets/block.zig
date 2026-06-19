@@ -45,6 +45,7 @@ pub const Block = struct {
     }
 
     pub fn deinit(self: *Block) void {
+        self.detachChild();
         if (self.title) |t| self.allocator.free(t);
         self.allocator.destroy(self);
     }
@@ -76,10 +77,20 @@ pub const Block = struct {
 
     /// Attach a child widget. Ownership stays with the caller.
     pub fn setChild(self: *Block, child: ?*base.Widget) void {
-        self.child = child;
-        if (child) |c| {
-            c.parent = &self.widget;
+        if (self.child != child) {
+            self.detachChild();
         }
+        self.child = child;
+        if (child) |c| c.parent = &self.widget;
+    }
+
+    fn detachChild(self: *Block) void {
+        if (self.child) |current| {
+            if (current.parent == &self.widget) {
+                current.parent = null;
+            }
+        }
+        self.child = null;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -258,4 +269,50 @@ test "block setTitle preserves title on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, block.setTitle("Replacement"));
     try std.testing.expectEqualStrings("Stable", block.title.?);
+}
+
+test "block replacing child detaches previous child" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+
+    var old_child = try @import("label.zig").Label.init(alloc, "old");
+    defer old_child.deinit();
+    var new_child = try @import("label.zig").Label.init(alloc, "new");
+    defer new_child.deinit();
+
+    block.setChild(&old_child.widget);
+    block.setChild(&new_child.widget);
+
+    try std.testing.expectEqual(&new_child.widget, block.child.?);
+    try std.testing.expect(old_child.widget.parent == null);
+    try std.testing.expectEqual(&block.widget, new_child.widget.parent.?);
+}
+
+test "block clearing child detaches owned parent link" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+
+    var child = try @import("label.zig").Label.init(alloc, "child");
+    defer child.deinit();
+
+    block.setChild(&child.widget);
+    block.setChild(null);
+
+    try std.testing.expect(block.child == null);
+    try std.testing.expect(child.widget.parent == null);
+}
+
+test "block deinit detaches child parent link" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+
+    var child = try @import("label.zig").Label.init(alloc, "child");
+    defer child.deinit();
+
+    block.setChild(&child.widget);
+    block.deinit();
+
+    try std.testing.expect(child.widget.parent == null);
 }
