@@ -34,6 +34,26 @@ fn freePartList(list: *std.ArrayListUnmanaged(Breadcrumbs.Part), allocator: std.
     list.clearRetainingCapacity();
 }
 
+fn appendOwnedSection(list: *std.ArrayListUnmanaged(Accordion.Section), allocator: std.mem.Allocator, section: Accordion.Section) !void {
+    try list.ensureUnusedCapacity(allocator, 1);
+    const title = try allocator.dupe(u8, section.title);
+    errdefer allocator.free(title);
+    const body = try allocator.dupe(u8, section.body);
+    list.appendAssumeCapacity(.{
+        .title = title,
+        .body = body,
+        .expanded = section.expanded,
+    });
+}
+
+fn freeSectionList(list: *std.ArrayListUnmanaged(Accordion.Section), allocator: std.mem.Allocator) void {
+    for (list.items) |section| {
+        allocator.free(section.title);
+        allocator.free(section.body);
+    }
+    list.clearRetainingCapacity();
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -57,9 +77,12 @@ pub const ToggleSwitch = struct {
 
     pub fn init(allocator: std.mem.Allocator, label: []const u8) !*ToggleSwitch {
         const self = try allocator.create(ToggleSwitch);
+        errdefer allocator.destroy(self);
+
+        const label_copy = try allocator.dupe(u8, label);
         self.* = ToggleSwitch{
             .widget = base.Widget.init(&vtable),
-            .label = try allocator.dupe(u8, label),
+            .label = label_copy,
             .allocator = allocator,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.checkbox), self.label, "");
@@ -1305,22 +1328,17 @@ pub const Accordion = struct {
             .sections = .empty,
             .allocator = allocator,
         };
+        errdefer self.deinit();
+
         for (sections) |section| {
-            try self.sections.append(self.allocator, .{
-                .title = try allocator.dupe(u8, section.title),
-                .body = try allocator.dupe(u8, section.body),
-                .expanded = section.expanded,
-            });
+            try appendOwnedSection(&self.sections, self.allocator, section);
         }
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "Accordion", "");
         return self;
     }
 
     pub fn deinit(self: *Accordion) void {
-        for (self.sections.items) |section| {
-            self.allocator.free(section.title);
-            self.allocator.free(section.body);
-        }
+        freeSectionList(&self.sections, self.allocator);
         self.sections.deinit(self.allocator);
         self.allocator.destroy(self);
     }
@@ -1736,13 +1754,28 @@ fn notificationPushAllocationFailureHarness(allocator: std.mem.Allocator) !void 
     try center.push("Build", "Finished", .success);
 }
 
+fn toggleSwitchInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var toggle = try ToggleSwitch.init(allocator, "Turbo");
+    defer toggle.deinit();
+}
+
+fn accordionInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var accordion = try Accordion.init(allocator, &[_]Accordion.Section{
+        .{ .title = "Build", .body = "Run tests" },
+        .{ .title = "Ship", .body = "Push main", .expanded = true },
+    });
+    defer accordion.deinit();
+}
+
 test "advanced controls clean up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, toggleSwitchInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, radioGroupInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, toolbarInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, breadcrumbsInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, commandPaletteInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, wizardStepperInitAllocationFailureHarness, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, notificationPushAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, accordionInitAllocationFailureHarness, .{});
 }
 
 test "breadcrumbs setParts preserves parts on allocation failure" {

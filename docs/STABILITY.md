@@ -82,6 +82,7 @@ Before a feature is promoted as stable, it needs:
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.
 - Catalog/map-style APIs that accept caller-provided string keys must either document borrowed lifetimes explicitly or own key copies; stable public catalogs default to owning keys and values transactionally.
+- Widget initializers that allocate after `allocator.create` must use `errdefer` cleanup or a fully initialized `deinit` path before any later fallible operation.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
 
 Hosted CI runs the matrix public build-step checker with `--skip-interactive`
