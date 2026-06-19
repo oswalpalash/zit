@@ -258,11 +258,21 @@ pub const TextArea = struct {
             return;
         }
 
-        self.cursor = @min(positions[0], self.buffer.items.len);
-        self.clearExtraCursors();
+        const next_primary = @min(positions[0], self.buffer.items.len);
+        var next_extra = std.ArrayList(usize).empty;
+        errdefer next_extra.deinit(self.allocator);
+
         for (positions[1..]) |pos| {
-            try self.addCursor(pos);
+            const clamped = @min(pos, self.buffer.items.len);
+            if (clamped == next_primary) continue;
+            if (std.mem.indexOfScalar(usize, next_extra.items, clamped) != null) continue;
+            try next_extra.append(self.allocator, clamped);
         }
+        std.sort.pdq(usize, next_extra.items, {}, std.sort.asc(usize));
+
+        self.extra_cursors.deinit(self.allocator);
+        self.extra_cursors = next_extra;
+        self.cursor = next_primary;
     }
 
     pub fn setValidation(self: *TextArea, field_name: []const u8, rules: []const form.Rule, realtime: bool) !void {
@@ -1189,6 +1199,26 @@ test "text area multi-cursor inserts at every caret" {
     try std.testing.expectEqualStrings("aqbcq", area.getText());
     try std.testing.expectEqual(@as(usize, 5), area.cursor);
     try std.testing.expectEqual(@as(usize, 1), area.extra_cursors.items.len);
+}
+
+test "text area setCursors preserves cursors on allocation failure" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("abcdef");
+    try area.setCursors(&[_]usize{ 4, 1, 5 });
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 1, 5 }, area.extra_cursors.items);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
+    area.allocator = failing.allocator();
+    defer area.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, area.setCursors(&[_]usize{ 2, 3, 6 }));
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 1, 5 }, area.extra_cursors.items);
 }
 
 test "text area selection edits collapse and clear extra cursors" {
