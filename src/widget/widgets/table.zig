@@ -356,14 +356,14 @@ pub const Table = struct {
         self.editing_col = null;
     }
 
-    fn handleEditKey(self: *Table, key_event: input.KeyEvent) bool {
+    fn handleEditKey(self: *Table, key_event: input.KeyEvent) !bool {
         if (!self.isEditing()) return false;
         if (key_event.key == input.KeyCode.ESCAPE) {
             self.cancelEdit();
             return true;
         }
         if (key_event.key == input.KeyCode.ENTER) {
-            self.commitEdit() catch {};
+            try self.commitEdit();
             return true;
         }
         if (key_event.key == input.KeyCode.BACKSPACE) {
@@ -373,7 +373,7 @@ pub const Table = struct {
             return true;
         }
         if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
-            self.edit_buffer.append(self.allocator, @as(u8, @intCast(key_event.key))) catch {};
+            try self.edit_buffer.append(self.allocator, @as(u8, @intCast(key_event.key)));
             return true;
         }
         return false;
@@ -1180,7 +1180,7 @@ pub const Table = struct {
         if (event == .key and self.widget.focused and total_rows > 0) {
             const key_event = event.key;
             if (self.isEditing()) {
-                if (self.handleEditKey(key_event)) return true;
+                if (try self.handleEditKey(key_event)) return true;
                 return true;
             }
             const profiles = [_]input.KeybindingProfile{
@@ -1316,7 +1316,7 @@ pub const Table = struct {
                 self.resetTypeahead();
                 return false;
             } else if (key_event.key == input.KeyCode.ENTER) {
-                self.beginEdit() catch {};
+                try self.beginEdit();
                 return true;
             } else if (key_event.key == input.KeyCode.LEFT) {
                 if (self.selected_column > 0) self.selected_column -= 1;
@@ -1650,6 +1650,50 @@ test "table inline edit updates cell" {
 
     const updated = table.cellView(0, 1).text;
     try std.testing.expectEqualStrings("idle x", updated);
+}
+
+test "table begin edit propagates allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addRow(&.{"cpu"});
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = table.allocator;
+    table.allocator = failing.allocator();
+    defer table.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } }));
+    try std.testing.expect(!table.isEditing());
+    try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
+}
+
+test "table edit buffer append propagates allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addRow(&.{"cpu"});
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+    try table.beginEdit();
+    try std.testing.expectEqualStrings("cpu", table.edit_buffer.items);
+    table.edit_buffer.shrinkAndFree(table.allocator, table.edit_buffer.items.len);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = table.allocator;
+    table.allocator = failing.allocator();
+    defer table.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, table.widget.handleEvent(.{ .key = .{ .key = 'x', .modifiers = .{} } }));
+    try std.testing.expect(table.isEditing());
+    try std.testing.expectEqualStrings("cpu", table.edit_buffer.items);
+    try std.testing.expectEqualStrings("cpu", table.cellView(0, 0).text);
 }
 
 test "table string interning migration is transactional on allocation failure" {
