@@ -316,9 +316,10 @@ pub const TextArea = struct {
 
     fn runValidation(self: *TextArea) !void {
         if (self.validation_rules) |rules| {
-            self.clearValidationResult();
             const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
+            var previous = self.last_validation;
             self.last_validation = result;
+            if (previous) |*res| res.deinit();
             if (self.on_validation) |callback| callback(self, &self.last_validation.?);
         }
     }
@@ -1225,6 +1226,27 @@ test "text area real-time validation caches latest result" {
     try area.setText("long enough");
     const second = area.validationState().?;
     try std.testing.expect(second.*.isValid());
+}
+
+test "text area preserves validation result on allocation failure" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    const rules = [_]form.Rule{form.required("body required")};
+    try area.setValidation("body", &rules, true);
+    const first = area.validationState().?;
+    try std.testing.expect(!first.*.isValid());
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
+    area.allocator = failing.allocator();
+    defer area.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, area.revalidate());
+    const preserved = area.validationState().?;
+    try std.testing.expect(!preserved.*.isValid());
+    try std.testing.expectEqualStrings("body required", preserved.*.firstError().?.message);
 }
 
 test "text area setText resets cursor and scroll" {

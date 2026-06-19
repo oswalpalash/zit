@@ -564,6 +564,7 @@ pub const UndoRedoStack = struct {
         }
 
         const copy = try self.allocator.dupe(u8, snapshot);
+        errdefer self.allocator.free(copy);
         try self.undo.append(self.allocator, copy);
         self.trim();
         self.clearRedo();
@@ -573,8 +574,9 @@ pub const UndoRedoStack = struct {
     pub fn undoOp(self: *UndoRedoStack) ?[]const u8 {
         if (self.undo.items.len <= 1) return null;
 
+        self.redo.ensureUnusedCapacity(self.allocator, 1) catch return null;
         const current = self.undo.pop().?;
-        self.appendOrFree(&self.redo, current);
+        self.redo.appendAssumeCapacity(current);
 
         return self.undo.items[self.undo.items.len - 1];
     }
@@ -583,18 +585,12 @@ pub const UndoRedoStack = struct {
     pub fn redoOp(self: *UndoRedoStack) ?[]const u8 {
         if (self.redo.items.len == 0) return null;
 
+        self.undo.ensureUnusedCapacity(self.allocator, 1) catch return null;
         const next = self.redo.pop().?;
-        self.appendOrFree(&self.undo, next);
+        self.undo.appendAssumeCapacity(next);
+        self.trim();
 
         return self.undo.items[self.undo.items.len - 1];
-    }
-
-    fn appendOrFree(self: *UndoRedoStack, list: *std.ArrayList([]u8), item: []u8) void {
-        list.append(self.allocator, item) catch {
-            self.allocator.free(item);
-            return;
-        };
-        if (list == &self.undo) self.trim();
     }
 
     fn freeList(self: *UndoRedoStack, list: *std.ArrayList([]u8)) void {
@@ -613,6 +609,61 @@ pub const UndoRedoStack = struct {
         }
     }
 };
+
+fn undoRedoCaptureAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var stack = UndoRedoStack.init(allocator);
+    defer stack.deinit();
+
+    try stack.capture("one");
+    try stack.capture("two");
+}
+
+test "undo redo capture cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, undoRedoCaptureAllocationFailureHarness, .{});
+}
+
+test "undo preserves history when redo allocation fails" {
+    const alloc = std.testing.allocator;
+    var stack = UndoRedoStack.init(alloc);
+    defer stack.deinit();
+
+    try stack.capture("one");
+    try stack.capture("two");
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = stack.allocator;
+    stack.allocator = failing.allocator();
+    defer stack.allocator = original_allocator;
+
+    try std.testing.expectEqual(@as(?[]const u8, null), stack.undoOp());
+    try std.testing.expectEqual(@as(usize, 2), stack.undo.items.len);
+    try std.testing.expectEqual(@as(usize, 0), stack.redo.items.len);
+    try std.testing.expectEqualStrings("two", stack.undo.items[1]);
+}
+
+test "redo preserves history when undo allocation fails" {
+    const alloc = std.testing.allocator;
+    var stack = UndoRedoStack.init(alloc);
+    defer stack.deinit();
+
+    try stack.capture("one");
+    try stack.capture("two");
+    try std.testing.expectEqualStrings("one", stack.undoOp().?);
+
+    stack.undo.shrinkAndFree(alloc, stack.undo.items.len);
+    try std.testing.expectEqual(stack.undo.items.len, stack.undo.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = stack.allocator;
+    stack.allocator = failing.allocator();
+    defer stack.allocator = original_allocator;
+
+    try std.testing.expectEqual(@as(?[]const u8, null), stack.redoOp());
+    try std.testing.expectEqual(@as(usize, 1), stack.undo.items.len);
+    try std.testing.expectEqual(@as(usize, 1), stack.redo.items.len);
+    try std.testing.expectEqualStrings("one", stack.undo.items[0]);
+    try std.testing.expectEqualStrings("two", stack.redo.items[0]);
+}
 
 /// Clipboard bridge used for copy/paste flows with system fallbacks.
 pub const Clipboard = struct {

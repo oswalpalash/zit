@@ -59,8 +59,8 @@ primary docs experience.
 ## Documentation Quality Gates
 
 - `python3 scripts/check_docs_links.py` validates Markdown relative links,
-  same-file and cross-file heading anchors, and requires every top-level
-  `docs/*.md` guide to be linked from this index.
+  same-file and cross-file heading anchors, local image targets, and requires
+  every top-level `docs/*.md` guide to be linked from this index.
 - `python3 scripts/check_docs_commands.py` validates documented script
   invocations, build steps, and format paths against files and build steps in
   this repository.

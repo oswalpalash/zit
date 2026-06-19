@@ -10,6 +10,8 @@ from urllib.parse import unquote, urlparse
 
 
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
+MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+HTML_IMAGE = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 PUBLIC_MARKDOWN_ROOTS = (
     Path("README.md"),
     Path("CONTRIBUTING.md"),
@@ -120,6 +122,33 @@ def validate_links(root: Path, files: list[Path]) -> list[str]:
     return errors
 
 
+def validate_image_targets(root: Path, files: list[Path]) -> list[str]:
+    errors: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        image_matches = list(MARKDOWN_IMAGE.finditer(text)) + list(HTML_IMAGE.finditer(text))
+        for match in image_matches:
+            raw = match.group(1).strip()
+            target_path, fragment = split_link_target(raw)
+            if not target_path and not fragment:
+                continue
+            if not target_path:
+                continue
+            decoded = unquote(target_path)
+            resolved = (path.parent / decoded).resolve()
+            line = line_number(text, match.start())
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                errors.append(f"{path.relative_to(root)}:{line}: image target escapes repo root: {raw}")
+                continue
+            if not resolved.exists():
+                errors.append(f"{path.relative_to(root)}:{line}: broken image target: {raw}")
+            elif not resolved.is_file():
+                errors.append(f"{path.relative_to(root)}:{line}: image target is not a file: {raw}")
+    return errors
+
+
 def validate_docs_index(root: Path) -> list[str]:
     index = root / "docs" / "README.md"
     if not index.exists():
@@ -139,6 +168,7 @@ def main() -> int:
     root = repo_root()
     files = markdown_files(root)
     errors = validate_links(root, files)
+    errors.extend(validate_image_targets(root, files))
     errors.extend(validate_docs_index(root))
 
     if errors:
@@ -147,7 +177,7 @@ def main() -> int:
             sys.stderr.write(f"  - {error}\n")
         return 1
 
-    print(f"checked {len(files)} public Markdown file(s) for relative links, anchors, and docs index coverage")
+    print(f"checked {len(files)} public Markdown file(s) for relative links, anchors, image targets, and docs index coverage")
     return 0
 
 

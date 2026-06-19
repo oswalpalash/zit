@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const text_metrics = @import("text_metrics.zig");
 const term_caps = @import("../terminal/capabilities.zig");
 const base_widget = @import("../widget/widgets/base_widget.zig");
@@ -1002,12 +1003,20 @@ pub const Renderer = struct {
         const dirty_rows = try allocator.alloc(DirtyRow, height);
         errdefer allocator.free(dirty_rows);
 
+        var capabilities = TerminalCapabilities.detect();
+        if (builtin.is_test) {
+            capabilities.unicode = true;
+            capabilities.colors_256 = true;
+            capabilities.rgb_colors = true;
+            capabilities.bidi = false;
+        }
+
         var renderer = Renderer{
             .front = front,
             .back = back,
             .allocator = allocator,
             .dirty_rows = dirty_rows,
-            .capabilities = TerminalCapabilities.detect(),
+            .capabilities = capabilities,
         };
         renderer.resetDirty();
         renderer.primeBuffers();

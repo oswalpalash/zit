@@ -42,6 +42,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Documentation link checking (`scripts/check_docs_links.py`, `zig build docs-links`) validates public Markdown relative links and requires every top-level docs guide to be reachable from `docs/README.md`.
 - Documentation command checking (`scripts/check_docs_commands.py`, `zig build docs-commands`) validates documented `python3 scripts/...`, `zig build ...`, and `zig fmt ...` command references against existing repo files and build steps.
 - Documentation link checking now validates same-file and cross-file Markdown heading anchors instead of only checking that the target file exists.
+- Documentation link checking now validates local Markdown and HTML image targets so README screenshots cannot point at missing assets.
 - Documentation Zig snippet checking (`scripts/check_docs_zig_snippets.py`, `zig build docs-zig-snippets`) rejects public Markdown snippets that model empty catches, panic/unreachable paths, or unchecked `DebugAllocator` cleanup.
 - Added `docs/COOKBOOK.md` and `docs/TROUBLESHOOTING.md` for operational recipes covering app loops, resize, cleanup, mouse alignment, memory ownership, visual QA, widgets, and release readiness.
 - Clarified that Markdown guides under `docs/` are the human-facing documentation surface; generated Zig docs remain a release artifact for exported API inspection.
@@ -63,6 +64,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- `InputField` and `TextArea` now preserve the last validation result when a later validation run fails during allocation.
+- `UndoRedoStack` now cleans up duplicated snapshots when capture fails and preserves undo/redo history if allocator pressure prevents moving entries between stacks.
 - `ScreenManager.push` and `ScreenManager.replace` now preflight stack/transition allocations and roll back appended entries on later errors, preventing leaked copied labels and half-added screens on `OutOfMemory`.
 - Button, Checkbox, Label, Paragraph, and Popup constructors now clean up widget allocations on owned-text copy failures, and the owned-allocation checker now rejects this initializer leak pattern.
 - `ToggleSwitch.init` and `Accordion.init` now clean up every partial allocation path, preventing leaked widget/section memory when initialization hits `OutOfMemory`.

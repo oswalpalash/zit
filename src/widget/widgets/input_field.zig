@@ -258,9 +258,12 @@ pub const InputField = struct {
 
     fn runValidation(self: *InputField) !void {
         if (self.validation_rules) |rules| {
-            self.clearValidationResult();
             const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
+            var previous = self.last_validation;
             self.last_validation = result;
+            if (previous) |*res| {
+                res.deinit();
+            }
             if (self.on_validation) |callback| {
                 callback(self, &self.last_validation.?);
             }
@@ -914,6 +917,27 @@ test "input field can surface real-time validation results" {
     field.setText("abcd");
     const second_state = field.validationState().?;
     try std.testing.expect(second_state.*.isValid());
+}
+
+test "input field preserves validation result on allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    const rules = [_]form.Rule{form.required("needed")};
+    try field.setValidation("name", &rules, true);
+    const first_state = field.validationState().?;
+    try std.testing.expect(!first_state.*.isValid());
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.allocator;
+    field.allocator = failing.allocator();
+    defer field.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, field.revalidate());
+    const preserved = field.validationState().?;
+    try std.testing.expect(!preserved.*.isValid());
+    try std.testing.expectEqualStrings("needed", preserved.*.firstError().?.message);
 }
 
 test "input field expands capacity for longer masks" {
