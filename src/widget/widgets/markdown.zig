@@ -51,14 +51,21 @@ pub const Markdown = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Markdown {
+        const content = try allocator.dupe(u8, text);
+        var content_owned_by_stack = true;
+        errdefer if (content_owned_by_stack) allocator.free(content);
+
         const self = try allocator.create(Markdown);
         self.* = Markdown{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
             .theme = theme_mod.Theme.dark(),
-            .content = try allocator.dupe(u8, text),
+            .content = content,
             .lines = std.ArrayList(Line).empty,
         };
+        content_owned_by_stack = false;
+        errdefer self.deinit();
+
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Markdown", "");
 
         try self.parse();
@@ -171,12 +178,16 @@ pub const Markdown = struct {
             }
 
             var line = Line.init();
+            var line_owned_by_stack = true;
+            errdefer if (line_owned_by_stack) line.deinit(self.allocator);
+
             if (prefix) |p| {
                 try line.segments.append(self.allocator, p);
             }
 
             try self.parseInline(&line, working, base_style, fg);
             try self.lines.append(self.allocator, line);
+            line_owned_by_stack = false;
         }
     }
 
@@ -308,6 +319,18 @@ test "markdown renders headings and bullets" {
     try std.testing.expectEqual(@as(u21, 'T'), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).codepoint());
     try std.testing.expectEqual(@as(u21, '•'), renderer.back.getCell(0, 1).codepoint());
+}
+
+fn markdownInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var md = try Markdown.init(allocator, "# Title\n- **bold**\n> quote\n`code`");
+    defer md.deinit();
+
+    try std.testing.expect(md.lines.items.len >= 4);
+    try std.testing.expect(md.lines.items[1].segments.items.len >= 2);
+}
+
+test "markdown init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, markdownInitAllocationFailureHarness, .{});
 }
 
 test "markdown setText preserves parsed content on allocation failure" {
