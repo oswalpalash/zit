@@ -313,6 +313,20 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(bench_suite);
     smoke_step.dependOn(&bench_suite.step);
 
+    const bench_suite_tests_module = b.createModule(.{
+        .root_source_file = b.path("examples/benchmarks/bench_suite.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_suite_tests_module.addImport("zit", zit_module);
+
+    const bench_suite_tests = b.addTest(.{
+        .name = "bench-suite-tests",
+        .root_module = bench_suite_tests_module,
+    });
+    const run_bench_suite_tests = b.addRunArtifact(bench_suite_tests);
+    test_step.dependOn(&run_bench_suite_tests.step);
+
     const run_bench_suite = b.addRunArtifact(bench_suite);
     const bench_step = b.step("bench", "Run benchmark suite");
     bench_step.dependOn(&run_bench_suite.step);

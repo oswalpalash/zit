@@ -31,6 +31,7 @@ Before a feature is promoted as stable, it needs:
 - Interactive examples must exit without `DebugAllocator` diagnostics, panic output, or mismatched allocation/free sizes.
 - Tests for lifecycle, bounds, zero-size layout, resize behavior, and error paths.
 - Snapshot coverage when rendering output is user-visible.
+- Benchmarks must enforce conservative budgets for render throughput, large-table scrolling, input decoding, and memory-retention optimizations.
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
@@ -47,6 +48,7 @@ Before a feature is promoted as stable, it needs:
 - `zig build smoke`
 - `zig build test`
 - `zig build bench`
+- `zig build bench` must fail when conservative performance budgets are exceeded; the budgets are intentionally loose enough for CI variance but tight enough to catch algorithmic regressions.
 - `zig build-lib src/main.zig -femit-docs -fno-emit-bin`
 - `zig build smoke -Dtarget=x86_64-linux`
 - `zig build smoke -Dtarget=x86_64-windows`

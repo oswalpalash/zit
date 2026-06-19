@@ -236,7 +236,7 @@ Real-world interactive examples
 
 Benchmarks
 - `zig build render-bench` (`examples/benchmarks/render_bench.zig`): micro-benchmark for renderer throughput.
-- `zig build bench` (`examples/benchmarks/bench_suite.zig`): suite covering layout, widgets, and input decoding costs.
+- `zig build bench` (`examples/benchmarks/bench_suite.zig`): suite covering layout, widgets, input decoding, and memory-retention costs; it fails on conservative performance-budget regressions.
 
 Documentation: `docs/API.md`, `docs/WIDGET_CATALOG.md`, `docs/WIDGET_GUIDE.md`, `docs/APP_LOOP_TUTORIAL.md`, `docs/ARCHITECTURE.md`, `docs/TERMINAL_COMPAT.md`, `docs/INTEGRATION.md`, `docs/STABILITY.md`.
 

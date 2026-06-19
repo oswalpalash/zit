@@ -8,6 +8,16 @@ const widget = zit.widget;
 const layout = zit.layout;
 const input = zit.input;
 
+const PerformanceBudget = struct {
+    render_avg_ns: u64 = 50_000_000, // 20 fps floor in Debug builds.
+    table_scroll_avg_ns: u64 = 20_000_000,
+    input_decode_avg_ns: u64 = 1_000_000,
+    interned_unique_ratio_percent: usize = 75,
+    interned_capacity_ratio_percent: usize = 100,
+};
+
+const DEFAULT_BUDGET = PerformanceBudget{};
+
 fn nowNanos() i96 {
     const io = std.Io.Threaded.global_single_threaded.io();
     return std.Io.Clock.awake.now(io).toNanoseconds();
@@ -31,12 +41,14 @@ pub fn main() !void {
     const table_result = try benchmarkTableScroll(allocator);
     const input_result = try benchmarkInputLatency();
     const memory_result = try benchmarkMemoryUsage(allocator);
+    try checkPerformanceBudgets(DEFAULT_BUDGET, render_result, table_result, input_result, memory_result);
 
     std.debug.print(
         \\Render throughput: {d} frames, avg {d} ns ({d:.2} fps), wrote {d} bytes
         \\Table scroll (10k rows): {d} iterations in {d} ms (avg {d} ns)
         \\Input decode latency: {d} events, avg {d} ns
         \\Memory (table text, 10k rows): plain payload {d} bytes vs interned unique payload {d} bytes across {d} strings (string arena capacity {d} bytes)
+        \\Performance budgets: passed
         \\
     , .{
         render_result.frames,
@@ -53,6 +65,75 @@ pub fn main() !void {
         memory_result.interned_unique_strings,
         memory_result.interned_allocated_bytes,
     });
+}
+
+fn percentOf(value: usize, total: usize) usize {
+    if (total == 0) return std.math.maxInt(usize);
+    return (value / total) * 100 + ((value % total) * 100 / total);
+}
+
+fn checkPerformanceBudgets(
+    budget: PerformanceBudget,
+    render_result: RenderBench,
+    table_result: TableBench,
+    input_result: InputBench,
+    memory_result: MemoryBench,
+) !void {
+    return checkPerformanceBudgetsImpl(budget, render_result, table_result, input_result, memory_result, true);
+}
+
+fn checkPerformanceBudgetsImpl(
+    budget: PerformanceBudget,
+    render_result: RenderBench,
+    table_result: TableBench,
+    input_result: InputBench,
+    memory_result: MemoryBench,
+    emit_diagnostics: bool,
+) !void {
+    var failed = false;
+
+    if (render_result.avg_ns > budget.render_avg_ns) {
+        if (emit_diagnostics) {
+            std.debug.print("performance budget exceeded: render avg {d} ns > {d} ns\n", .{ render_result.avg_ns, budget.render_avg_ns });
+        }
+        failed = true;
+    }
+    if (table_result.avg_ns > budget.table_scroll_avg_ns) {
+        if (emit_diagnostics) {
+            std.debug.print("performance budget exceeded: table scroll avg {d} ns > {d} ns\n", .{ table_result.avg_ns, budget.table_scroll_avg_ns });
+        }
+        failed = true;
+    }
+    if (input_result.avg_ns > budget.input_decode_avg_ns) {
+        if (emit_diagnostics) {
+            std.debug.print("performance budget exceeded: input decode avg {d} ns > {d} ns\n", .{ input_result.avg_ns, budget.input_decode_avg_ns });
+        }
+        failed = true;
+    }
+
+    const unique_ratio = percentOf(memory_result.interned_unique_bytes, memory_result.plain_payload_bytes);
+    if (unique_ratio > budget.interned_unique_ratio_percent) {
+        if (emit_diagnostics) {
+            std.debug.print(
+                "performance budget exceeded: interned unique bytes {d}% of plain payload > {d}%\n",
+                .{ unique_ratio, budget.interned_unique_ratio_percent },
+            );
+        }
+        failed = true;
+    }
+
+    const capacity_ratio = percentOf(memory_result.interned_allocated_bytes, memory_result.plain_payload_bytes);
+    if (capacity_ratio > budget.interned_capacity_ratio_percent) {
+        if (emit_diagnostics) {
+            std.debug.print(
+                "performance budget exceeded: interned arena capacity {d}% of plain payload > {d}%\n",
+                .{ capacity_ratio, budget.interned_capacity_ratio_percent },
+            );
+        }
+        failed = true;
+    }
+
+    if (failed) return error.PerformanceBudgetExceeded;
 }
 
 const RenderBench = struct {
@@ -240,4 +321,36 @@ fn seedTable(table: *widget.Table, rows: usize) !void {
         const payload = try std.fmt.bufPrint(&payload_buf, "payload-{d}", .{i % 512});
         try table.addRow(&.{ id, statuses[i % statuses.len], payload });
     }
+}
+
+test "performance budget rejects slow render" {
+    const budget = PerformanceBudget{ .render_avg_ns = 10 };
+    try std.testing.expectError(error.PerformanceBudgetExceeded, checkPerformanceBudgetsImpl(
+        budget,
+        .{ .frames = 1, .avg_ns = 11, .fps = 1, .bytes_written = 0 },
+        .{ .iterations = 1, .total_ns = 1, .avg_ns = 1 },
+        .{ .decoded = 1, .avg_ns = 1 },
+        .{
+            .plain_payload_bytes = 100,
+            .interned_unique_bytes = 50,
+            .interned_unique_strings = 1,
+            .interned_allocated_bytes = 50,
+        },
+        false,
+    ));
+}
+
+test "performance budget accepts current shape" {
+    try checkPerformanceBudgets(
+        DEFAULT_BUDGET,
+        .{ .frames = 400, .avg_ns = 1_000_000, .fps = 1000, .bytes_written = 1 },
+        .{ .iterations = 400, .total_ns = 10_000_000, .avg_ns = 25_000 },
+        .{ .decoded = 50_000, .avg_ns = 100 },
+        .{
+            .plain_payload_bytes = 200_000,
+            .interned_unique_bytes = 50_000,
+            .interned_unique_strings = 1_000,
+            .interned_allocated_bytes = 70_000,
+        },
+    );
 }
