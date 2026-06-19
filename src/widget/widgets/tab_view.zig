@@ -362,7 +362,8 @@ pub const TabView = struct {
 
     /// Clean up tab view resources
     pub fn deinit(self: *TabView) void {
-        for (self.tabs.items) |tab| {
+        for (self.tabs.items) |*tab| {
+            self.detachTabContent(tab);
             self.allocator.free(tab.title);
         }
         self.tabs.deinit(self.allocator);
@@ -412,14 +413,9 @@ pub const TabView = struct {
         if (index >= self.tabs.items.len) return;
         const old_active = self.active_tab;
         const selection_changed = index == old_active;
-        const removed = self.tabs.items[index];
-        if (removed.content) |content| {
-            if (content.parent == &self.widget) {
-                content.parent = null;
-            }
-        }
+        self.detachTabContent(&self.tabs.items[index]);
+        const removed = self.tabs.orderedRemove(index);
         self.allocator.free(removed.title);
-        _ = self.tabs.orderedRemove(index);
 
         if (self.tabs.items.len == 0) {
             self.active_tab = 0;
@@ -552,6 +548,15 @@ pub const TabView = struct {
 
         tab.content = content;
         tab.loaded = true;
+    }
+
+    fn detachTabContent(self: *TabView, tab: *TabItem) void {
+        if (tab.content) |content| {
+            if (content.parent == &self.widget) {
+                content.parent = null;
+            }
+        }
+        tab.content = null;
     }
 
     fn isTabClosable(self: *TabView, idx: usize) bool {
@@ -939,6 +944,23 @@ test "tab view clears parent when removing tabs" {
 
     try std.testing.expect(a.widget.parent == null);
     try std.testing.expectEqual(&tab_view.widget, b.widget.parent.?);
+}
+
+test "tab view deinit detaches tab content parent links" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+    tab_view.deinit();
+
+    try std.testing.expect(a.widget.parent == null);
+    try std.testing.expect(b.widget.parent == null);
 }
 
 test "tab view remove before active preserves active tab" {
