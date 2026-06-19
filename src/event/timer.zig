@@ -48,11 +48,9 @@ pub const TimerManager = struct {
     }
 
     pub fn cancel(self: *TimerManager, handle: TimerHandle) bool {
-        for (self.timers.items, 0..) |timer, idx| {
-            if (timer.id == handle.id) {
-                _ = self.timers.orderedRemove(idx);
-                return true;
-            }
+        if (self.findTimerIndex(handle.id)) |idx| {
+            _ = self.timers.orderedRemove(idx);
+            return true;
         }
         return false;
     }
@@ -61,21 +59,31 @@ pub const TimerManager = struct {
     pub fn tick(self: *TimerManager, now_ms: u64) void {
         var i: usize = 0;
         while (i < self.timers.items.len) {
-            var timer = self.timers.items[i];
+            const timer = self.timers.items[i];
             if (now_ms >= timer.due_ms) {
                 timer.callback(timer.ctx);
+                const idx = self.findTimerIndex(timer.id) orelse continue;
 
                 if (timer.interval_ms) |interval| {
-                    timer.due_ms = now_ms + interval;
-                    self.timers.items[i] = timer;
-                    i += 1;
+                    var current = self.timers.items[idx];
+                    current.due_ms = now_ms + interval;
+                    self.timers.items[idx] = current;
+                    i = idx + 1;
                 } else {
-                    _ = self.timers.orderedRemove(i);
+                    _ = self.timers.orderedRemove(idx);
+                    i = idx;
                 }
             } else {
                 i += 1;
             }
         }
+    }
+
+    fn findTimerIndex(self: *TimerManager, id: u32) ?usize {
+        for (self.timers.items, 0..) |timer, idx| {
+            if (timer.id == id) return idx;
+        }
+        return null;
     }
 };
 
@@ -125,5 +133,77 @@ test "timer schedule preserves next id on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, manager.schedule(0, 10, null, onFire, null));
     try std.testing.expectEqual(@as(u32, 1), manager.next_id);
+    try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
+}
+
+test "one shot timer self cancel preserves following timers" {
+    const alloc = std.testing.allocator;
+    var manager = TimerManager.init(alloc);
+    defer manager.deinit();
+
+    const Ctx = struct {
+        manager: *TimerManager,
+        handle: TimerHandle = .{ .id = 0 },
+        fired: usize = 0,
+    };
+
+    const SelfCancel = struct {
+        fn cb(raw: ?*anyopaque) void {
+            const ctx = @as(*Ctx, @ptrCast(@alignCast(raw.?)));
+            ctx.fired += 1;
+            _ = ctx.manager.cancel(ctx.handle);
+        }
+    }.cb;
+
+    const Count = struct {
+        fn cb(raw: ?*anyopaque) void {
+            const fired = @as(*usize, @ptrCast(@alignCast(raw.?)));
+            fired.* += 1;
+        }
+    }.cb;
+
+    var ctx = Ctx{ .manager = &manager };
+    ctx.handle = try manager.schedule(0, 5, null, SelfCancel, @ptrCast(&ctx));
+    var later_fired: usize = 0;
+    const later = try manager.schedule(0, 10, null, Count, @ptrCast(&later_fired));
+
+    manager.tick(5);
+    try std.testing.expectEqual(@as(usize, 1), ctx.fired);
+    try std.testing.expectEqual(@as(usize, 1), manager.timers.items.len);
+    try std.testing.expectEqual(later.id, manager.timers.items[0].id);
+
+    manager.tick(10);
+    try std.testing.expectEqual(@as(usize, 1), later_fired);
+    try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
+}
+
+test "repeating timer self cancel is not rearmed" {
+    const alloc = std.testing.allocator;
+    var manager = TimerManager.init(alloc);
+    defer manager.deinit();
+
+    const Ctx = struct {
+        manager: *TimerManager,
+        handle: TimerHandle = .{ .id = 0 },
+        fired: usize = 0,
+    };
+
+    const SelfCancel = struct {
+        fn cb(raw: ?*anyopaque) void {
+            const ctx = @as(*Ctx, @ptrCast(@alignCast(raw.?)));
+            ctx.fired += 1;
+            _ = ctx.manager.cancel(ctx.handle);
+        }
+    }.cb;
+
+    var ctx = Ctx{ .manager = &manager };
+    ctx.handle = try manager.schedule(0, 5, 5, SelfCancel, @ptrCast(&ctx));
+
+    manager.tick(5);
+    try std.testing.expectEqual(@as(usize, 1), ctx.fired);
+    try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
+
+    manager.tick(10);
+    try std.testing.expectEqual(@as(usize, 1), ctx.fired);
     try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
 }
