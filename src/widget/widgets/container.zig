@@ -55,8 +55,20 @@ pub const Container = struct {
 
     /// Add a child widget to the container
     pub fn addChild(self: *Container, child: *base.Widget) !void {
-        try self.children.append(self.allocator, child);
+        if (self.childIndex(child) == null) {
+            try self.children.ensureUnusedCapacity(self.allocator, 1);
+        }
+
+        self.removeChild(child);
+        self.children.appendAssumeCapacity(child);
         child.parent = &self.widget;
+    }
+
+    fn childIndex(self: *const Container, child: *const base.Widget) ?usize {
+        for (self.children.items, 0..) |entry, idx| {
+            if (entry == child) return idx;
+        }
+        return null;
     }
 
     /// Remove a child widget from the container
@@ -280,4 +292,97 @@ test "container preferred size is zero without children" {
     const size = try container.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 0), size.width);
     try std.testing.expectEqual(@as(u16, 0), size.height);
+}
+
+test "container re-adds existing child without duplicate ownership" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    var child = Dummy{};
+    try container.addChild(&child.widget);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = container.allocator;
+    container.allocator = failing.allocator();
+    defer container.allocator = original_allocator;
+
+    try container.addChild(&child.widget);
+    try std.testing.expectEqual(@as(usize, 1), container.children.items.len);
+    try std.testing.expectEqual(&child.widget, container.children.items[0]);
+    try std.testing.expectEqual(&container.widget, child.widget.parent.?);
+}
+
+test "container add child preserves existing state when allocation fails" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    var existing = Dummy{};
+    var new_child = Dummy{};
+    try container.addChild(&existing.widget);
+    container.children.deinit(alloc);
+    container.children = .empty;
+    try container.children.ensureTotalCapacityPrecise(alloc, 1);
+    container.children.appendAssumeCapacity(&existing.widget);
+    existing.widget.parent = &container.widget;
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = container.allocator;
+    container.allocator = failing.allocator();
+    defer container.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, container.addChild(&new_child.widget));
+    try std.testing.expectEqual(@as(usize, 1), container.children.items.len);
+    try std.testing.expectEqual(&existing.widget, container.children.items[0]);
+    try std.testing.expectEqual(&container.widget, existing.widget.parent.?);
+    try std.testing.expect(new_child.widget.parent == null);
 }
