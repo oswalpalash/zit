@@ -33,7 +33,6 @@ pub const TimerManager = struct {
 
     pub fn schedule(self: *TimerManager, now_ms: u64, delay_ms: u64, interval_ms: ?u64, callback: TimerCallback, ctx: ?*anyopaque) !TimerHandle {
         const handle = TimerHandle{ .id = self.next_id };
-        self.next_id += 1;
 
         const entry = TimerEntry{
             .id = handle.id,
@@ -44,6 +43,7 @@ pub const TimerManager = struct {
         };
 
         try self.timers.append(self.allocator, entry);
+        self.next_id += 1;
         return handle;
     }
 
@@ -107,4 +107,23 @@ test "timer manager fires one-shot and repeating timers" {
 
     manager.tick(15);
     try std.testing.expectEqual(@as(usize, 3), repeat_fired);
+}
+
+test "timer schedule preserves next id on allocation failure" {
+    const alloc = std.testing.allocator;
+    var manager = TimerManager.init(alloc);
+    defer manager.deinit();
+
+    const onFire = struct {
+        fn cb(_: ?*anyopaque) void {}
+    }.cb;
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = manager.allocator;
+    manager.allocator = failing.allocator();
+    defer manager.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, manager.schedule(0, 10, null, onFire, null));
+    try std.testing.expectEqual(@as(u32, 1), manager.next_id);
+    try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
 }

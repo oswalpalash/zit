@@ -485,7 +485,6 @@ pub const EventDispatcher = struct {
     /// Add an event listener
     pub fn addEventListener(self: *EventDispatcher, event_type: EventType, listener: EventListenerFn, user_data: ?*anyopaque) !u32 {
         const id = self.next_id;
-        self.next_id += 1;
 
         try self.listeners.append(self.allocator, EventListener{
             .event_type = event_type,
@@ -494,6 +493,7 @@ pub const EventDispatcher = struct {
             .id = id,
         });
 
+        self.next_id += 1;
         return id;
     }
 
@@ -1841,6 +1841,27 @@ test "drag manager end preserves active drag on event allocation failure" {
     try std.testing.expectEqual(@as(u16, 2), mgr.last_y);
     try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
     try std.testing.expectEqual(EventType.drag_start, queue.queue.items[0].type);
+}
+
+test "event dispatcher preserves next listener id on allocation failure" {
+    const alloc = std.testing.allocator;
+    var dispatcher = EventDispatcher.init(alloc);
+    defer dispatcher.deinit();
+
+    const Listener = struct {
+        fn on(_: *Event) bool {
+            return false;
+        }
+    };
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = dispatcher.allocator;
+    dispatcher.allocator = failing.allocator();
+    defer dispatcher.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, dispatcher.addEventListener(.key_press, Listener.on, null));
+    try std.testing.expectEqual(@as(u32, 1), dispatcher.next_id);
+    try std.testing.expectEqual(@as(usize, 0), dispatcher.listeners.items.len);
 }
 
 test "propagation captures target then bubbles with current target set" {
