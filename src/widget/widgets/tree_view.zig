@@ -101,15 +101,21 @@ pub const TreeView = struct {
 
     fn syncVisible(self: *TreeView) !void {
         if (!self.visible_dirty) return;
-        self.visible_dirty = false;
-        self.visible.clearRetainingCapacity();
-        errdefer self.visible_dirty = true;
+
+        var next_visible = std.ArrayList(usize).empty;
+        errdefer next_visible.deinit(self.allocator);
+
         for (self.nodes.items, 0..) |_, idx| {
             const node = self.nodes.items[idx];
             if (node.parent == null) {
-                try self.collectVisible(idx);
+                try self.collectVisibleInto(idx, &next_visible);
             }
         }
+
+        self.visible.deinit(self.allocator);
+        self.visible = next_visible;
+        self.visible_dirty = false;
+
         if (self.scroll_offset >= self.visible.items.len and self.visible.items.len > 0) {
             self.scroll_offset = self.visible.items.len - 1;
         }
@@ -122,12 +128,12 @@ pub const TreeView = struct {
         }
     }
 
-    fn collectVisible(self: *TreeView, index: usize) !void {
-        try self.visible.append(self.allocator, index);
+    fn collectVisibleInto(self: *TreeView, index: usize, visible: *std.ArrayList(usize)) !void {
+        try visible.append(self.allocator, index);
         const node = &self.nodes.items[index];
         if (!node.expanded) return;
         for (node.children.items) |child_idx| {
-            try self.collectVisible(child_idx);
+            try self.collectVisibleInto(child_idx, visible);
         }
     }
 
@@ -297,6 +303,7 @@ pub const TreeView = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *TreeView = @fieldParentPtr("widget", widget_ref);
+        try self.syncVisible();
         const width_guess: usize = @min(self.visible.items.len + 8, @as(usize, 32));
         const height_guess: usize = @min(self.visible.items.len, @as(usize, 10));
         const width: u16 = @intCast(@max(width_guess, 12));
@@ -311,8 +318,8 @@ pub const TreeView = struct {
     }
 
     /// Visible nodes for testing and layout decisions.
-    pub fn visibleCount(self: *TreeView) usize {
-        self.syncVisible() catch {};
+    pub fn visibleCount(self: *TreeView) !usize {
+        try self.syncVisible();
         return self.visible.items.len;
     }
 };
@@ -327,12 +334,12 @@ test "tree view expands and navigates" {
     try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 4));
 
     try tree.syncVisible();
-    try std.testing.expectEqual(@as(usize, 1), tree.visibleCount());
+    try std.testing.expectEqual(@as(usize, 1), try tree.visibleCount());
 
     const toggle = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.SPACE, .modifiers = .{} } };
     _ = try tree.widget.handleEvent(toggle);
     try tree.syncVisible();
-    try std.testing.expectEqual(@as(usize, 2), tree.visibleCount());
+    try std.testing.expectEqual(@as(usize, 2), try tree.visibleCount());
 
     const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
     _ = try tree.widget.handleEvent(down);
@@ -348,17 +355,17 @@ test "tree view lazily rebuilds visible cache" {
     _ = try tree.addRoot("second");
 
     try std.testing.expect(tree.visible_dirty);
-    try std.testing.expectEqual(@as(usize, 2), tree.visibleCount());
+    try std.testing.expectEqual(@as(usize, 2), try tree.visibleCount());
     try std.testing.expect(!tree.visible_dirty);
 
     _ = try tree.addChild(0, "child");
     try std.testing.expect(tree.visible_dirty);
-    try std.testing.expectEqual(@as(usize, 2), tree.visibleCount()); // child hidden until expanded
+    try std.testing.expectEqual(@as(usize, 2), try tree.visibleCount()); // child hidden until expanded
     try std.testing.expect(!tree.visible_dirty);
 
     tree.nodes.items[0].expanded = true;
     tree.visible_dirty = true;
-    try std.testing.expectEqual(@as(usize, 3), tree.visibleCount());
+    try std.testing.expectEqual(@as(usize, 3), try tree.visibleCount());
 }
 
 fn treeViewAddChildAllocationFailureHarness(allocator: std.mem.Allocator) !void {
@@ -389,6 +396,31 @@ test "tree view addChild preserves state on allocation failure" {
     try std.testing.expectEqual(@as(usize, 0), tree.nodes.items[root].children.items.len);
 }
 
+test "tree view visible cache survives allocation failure" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    const root = try tree.addRoot("root");
+    _ = try tree.addChild(root, "first");
+    tree.nodes.items[root].expanded = true;
+    try std.testing.expectEqual(@as(usize, 2), try tree.visibleCount());
+    tree.visible.shrinkAndFree(tree.allocator, tree.visible.items.len);
+
+    _ = try tree.addChild(root, "second");
+    try std.testing.expect(tree.visible_dirty);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = tree.allocator;
+    tree.allocator = failing.allocator();
+    defer tree.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, tree.syncVisible());
+    try std.testing.expect(tree.visible_dirty);
+    try std.testing.expectEqual(@as(usize, 2), tree.visible.items.len);
+    try std.testing.expectEqual(@as(usize, root), tree.visible.items[0]);
+}
+
 test "tree view rejects invalid parent index" {
     const alloc = std.testing.allocator;
     var tree = try TreeView.init(alloc);
@@ -403,7 +435,7 @@ test "tree view preferred size defaults when empty" {
     var tree = try TreeView.init(alloc);
     defer tree.deinit();
 
-    try std.testing.expectEqual(@as(usize, 0), tree.visibleCount());
+    try std.testing.expectEqual(@as(usize, 0), try tree.visibleCount());
     const size = try tree.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 12), size.width);
     try std.testing.expectEqual(@as(u16, 3), size.height);
