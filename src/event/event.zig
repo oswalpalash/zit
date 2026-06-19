@@ -1412,19 +1412,27 @@ pub const ShortcutRegistry = struct {
         if (self.lookup.get(combo) != null) return error.ShortcutConflict;
 
         const id = self.next_id;
-        self.next_id += 1;
         const desc_copy = try self.allocator.dupe(u8, description);
 
         const idx = self.shortcuts.items.len;
-        try self.shortcuts.append(self.allocator, ShortcutEntry{
-            .id = id,
-            .combo = combo,
-            .description = desc_copy,
-            .callback = callback,
-            .user_data = user_data,
-            .scope = scope,
-        });
+        {
+            errdefer self.allocator.free(desc_copy);
+            try self.shortcuts.append(self.allocator, ShortcutEntry{
+                .id = id,
+                .combo = combo,
+                .description = desc_copy,
+                .callback = callback,
+                .user_data = user_data,
+                .scope = scope,
+            });
+        }
+        errdefer {
+            const removed = self.shortcuts.orderedRemove(idx);
+            self.allocator.free(removed.description);
+        }
+
         try self.lookup.put(combo, idx);
+        self.next_id += 1;
         return id;
     }
 
@@ -1443,8 +1451,8 @@ pub const ShortcutRegistry = struct {
         if (!removed) return false;
 
         self.lookup.clearRetainingCapacity();
-        for (self.shortcuts.items, 0..) |entry, idx| {
-            self.lookup.put(entry.combo, idx) catch {};
+        for (self.shortcuts.items, 0..) |entry, entry_idx| {
+            self.lookup.put(entry.combo, entry_idx) catch {};
         }
         return true;
     }
@@ -1477,13 +1485,18 @@ pub const ShortcutRegistry = struct {
 
         for (self.shortcuts.items) |entry| {
             const combo_str = try formatCombo(entry.combo, allocator);
+            errdefer allocator.free(combo_str);
+
             const desc_copy = try allocator.dupe(u8, entry.description);
+            errdefer allocator.free(desc_copy);
+
             try list.append(allocator, .{
                 .combo = combo_str,
                 .description = desc_copy,
                 .scope = entry.scope,
             });
         }
+
         return list.toOwnedSlice(allocator);
     }
 
@@ -1542,6 +1555,54 @@ pub const ShortcutOverlay = struct {
         }
     }
 };
+
+fn shortcutTestCallback(_: ShortcutContext, _: ?*anyopaque) bool {
+    return true;
+}
+
+fn freeShortcutSummaries(allocator: std.mem.Allocator, summaries: []ShortcutSummary) void {
+    for (summaries) |summary| {
+        allocator.free(summary.combo);
+        allocator.free(summary.description);
+    }
+    allocator.free(summaries);
+}
+
+fn shortcutRegisterAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var registry = ShortcutRegistry.init(allocator);
+    defer registry.deinit();
+
+    _ = try registry.register(.{
+        .key = 's',
+        .modifiers = .{ .ctrl = true },
+    }, "Save file", shortcutTestCallback, null, .global);
+}
+
+test "shortcut register cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, shortcutRegisterAllocationFailureHarness, .{});
+}
+
+fn shortcutSummariesAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var registry = ShortcutRegistry.init(allocator);
+    defer registry.deinit();
+
+    _ = try registry.register(.{
+        .key = 's',
+        .modifiers = .{ .ctrl = true },
+    }, "Save file", shortcutTestCallback, null, .global);
+    _ = try registry.register(.{
+        .key = input.KeyCode.F1,
+        .modifiers = .{},
+    }, "Show help", shortcutTestCallback, null, .focused_only);
+
+    const summaries = try registry.summaries(allocator);
+    defer freeShortcutSummaries(allocator, summaries);
+    try std.testing.expectEqual(@as(usize, 2), summaries.len);
+}
+
+test "shortcut summaries clean up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, shortcutSummariesAllocationFailureHarness, .{});
+}
 
 test "event queue deinit destroys queued custom payloads" {
     const alloc = std.testing.allocator;
