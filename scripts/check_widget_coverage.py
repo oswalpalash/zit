@@ -18,12 +18,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXPORT_FILE = ROOT / "src/widget/widget.zig"
 WIDGET_CATALOG = ROOT / "docs/WIDGET_CATALOG.md"
+API_REFERENCE = ROOT / "docs/API.md"
 
 PUBLIC_WIDGET_EXPORT = re.compile(
     r'^pub const (?P<export>[A-Za-z_][A-Za-z0-9_]*) = @import\("widgets/[^"]+"\)\.(?P<source>[A-Za-z_][A-Za-z0-9_]*);',
     re.MULTILINE,
 )
+PUBLIC_WIDGET_HELPER = re.compile(
+    r"^pub fn (?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    re.MULTILINE,
+)
 CATALOG_PATH_REF = re.compile(r"`((?:src|examples|docs|assets)/[^`]+)`")
+BACKTICK_TOKEN = re.compile(r"`([^`]+)`")
 
 SUPPORT_EXPORTS = {
     "BaseWidget",
@@ -111,6 +117,11 @@ def public_widget_exports() -> dict[str, str]:
     return {match.group("export"): match.group("source") for match in PUBLIC_WIDGET_EXPORT.finditer(text)}
 
 
+def public_widget_helpers() -> set[str]:
+    text = EXPORT_FILE.read_text(encoding="utf-8")
+    return {match.group("name") for match in PUBLIC_WIDGET_HELPER.finditer(text)}
+
+
 def file_mentions_widget(path: Path, export: str, source: str) -> bool:
     try:
         text = path.read_text(encoding="utf-8")
@@ -169,12 +180,40 @@ def validate_catalog(widgets: dict[str, str], errors: list[str]) -> None:
             errors.append(f"docs/WIDGET_CATALOG.md: referenced path does not exist: {rel}")
 
 
+def validate_api_reference(helpers: set[str], errors: list[str]) -> None:
+    try:
+        text = API_REFERENCE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        errors.append("docs/API.md: file does not exist")
+        return
+
+    section_marker = "### Widget Factory Helpers"
+    start = text.find(section_marker)
+    if start == -1:
+        errors.append("docs/API.md: missing Widget Factory Helpers section")
+        return
+    next_section = text.find("\n### ", start + len(section_marker))
+    section = text[start:] if next_section == -1 else text[start:next_section]
+
+    documented_helpers = set()
+    for match in BACKTICK_TOKEN.finditer(section):
+        token = match.group(1).strip()
+        helper_name = token.split("(", 1)[0]
+        documented_helpers.add(helper_name)
+
+    for name in sorted(helpers):
+        if name not in documented_helpers:
+            errors.append(f"docs/API.md: missing public widget helper reference: {name}")
+
+
 def validate(verbose: bool) -> int:
     exports = public_widget_exports()
     widgets = {name: source for name, source in exports.items() if name not in SUPPORT_EXPORTS}
+    helpers = public_widget_helpers()
 
     errors: list[str] = []
     validate_catalog(widgets, errors)
+    validate_api_reference(helpers, errors)
 
     for name in sorted(widgets):
         paths = COVERAGE.get(name)
@@ -201,7 +240,7 @@ def validate(verbose: bool) -> int:
 
     if verbose:
         print(json.dumps({name: COVERAGE[name] for name in sorted(widgets)}, indent=2))
-    print(f"checked {len(widgets)} public widget coverage declaration(s) and catalog row(s)")
+    print(f"checked {len(widgets)} public widget coverage declaration(s), catalog row(s), and {len(helpers)} helper doc reference(s)")
     return 0
 
 

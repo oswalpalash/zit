@@ -64,7 +64,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py`
 - `python3 scripts/check_terminal_state_cleanup.py`
 - `python3 scripts/check_unreachable_catches.py`
-- `python3 scripts/check_widget_coverage.py`
+- `python3 scripts/check_widget_coverage.py` to require every public widget export to have a catalog row, coverage reference, valid documented file paths, and every public widget factory/helper to appear in `docs/API.md`.
 - `python3 scripts/check_widget_owner_casts.py`
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.

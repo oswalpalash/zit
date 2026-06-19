@@ -112,6 +112,45 @@ try button.widget.layout(rect);
 try button.widget.draw(&renderer);
 ```
 
+### Widget Factory Helpers
+The `widget` module exposes direct factory helpers for quick construction plus a few fluent-builder shortcuts. Every helper returns an owned widget pointer; call the widget's `deinit()` with the same allocator family when it leaves your UI tree.
+
+| Helper | Creates |
+| --- | --- |
+| `createButton(allocator, text)` | `Button` |
+| `button(allocator, text)` | `Button` through `ButtonBuilder` |
+| `createLabel(allocator, text)` | `Label` |
+| `label(allocator, text)` | `Label` through `LabelBuilder` |
+| `createContainer(allocator)` | `Container` |
+| `createInputField(allocator)` | `InputField` with default capacity |
+| `input(allocator, placeholder)` | `InputField` through `InputBuilder` |
+| `createTextArea(allocator)` | `TextArea` with default capacity |
+| `textArea(allocator, placeholder)` | `TextArea` through `TextAreaBuilder` |
+| `createList(allocator)` | `List` |
+| `createProgressBar(allocator)` | `ProgressBar` |
+| `progress(allocator, value, max_value)` | `ProgressBar` through `ProgressBarBuilder` |
+| `createScrollbar(allocator, orientation)` | `Scrollbar` |
+| `createScrollContainer(allocator)` | `ScrollContainer` |
+| `createTabView(allocator)` | `TabView` |
+| `createModal(allocator)` | `Modal` |
+| `createTable(allocator)` | `Table` |
+| `table(allocator, columns)` | `Table` through `TableBuilder` |
+| `createDropdownMenu(allocator)` | `DropdownMenu` |
+| `createContextMenu(allocator)` | `ContextMenu` |
+| `createTreeView(allocator)` | `TreeView` |
+| `createSparkline(allocator)` | `Sparkline` |
+| `createGauge(allocator)` | `Gauge` |
+| `createSplitPane(allocator)` | `SplitPane` |
+| `createPopup(allocator, message)` | `Popup` |
+| `createToastManager(allocator)` | `ToastManager` |
+| `createMenuBar(allocator)` | `MenuBar` |
+| `createCanvas(allocator, width, height)` | `Canvas` |
+| `createColorPicker(allocator, palette)` | `ColorPicker` |
+| `createParagraph(allocator, text)` | `Paragraph` |
+| `createBlock(allocator)` | `Block` |
+
+State helpers operate on any `BaseWidget` pointer and mark simple lifecycle state directly: `focusWidget(widget)`, `enableWidget(widget)`, `disableWidget(widget)`, `showWidget(widget)`, and `hideWidget(widget)`.
+
 ### Typeahead Lists/Tables
 ```zig
 list.setTypeaheadTimeout(900);

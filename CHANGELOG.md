@@ -37,7 +37,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, drives every public interactive example through rapid tiny-size stress down to 1x1, and requires each example to recover by redrawing a visible `resize: WxH` marker with the final dimensions.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
-- Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows and file references so public widget docs cannot point at missing snapshots or examples.
+- Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - CI now runs the full `zig build release-check` verifier on pull requests and `main` pushes, with contribution-gate checks preventing release verification from becoming tag-only.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.

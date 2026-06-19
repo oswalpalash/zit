@@ -87,6 +87,6 @@ A quick index of the public Zit widget API with roles, related examples, and enf
 
 ## Notes
 - Golden snapshots live under `src/testing/golden/`; broader visual coverage references point to deterministic examples exercised by `zig build release-check`.
-- `scripts/check_widget_coverage.py` validates every public widget export, every catalog row, and every backticked catalog file path.
+- `scripts/check_widget_coverage.py` validates every public widget export, every catalog row, every backticked catalog file path, and every public widget helper reference in `docs/API.md`.
 - `examples/realworld/file_manager.zig` and `examples/widget_examples/file_manager_example.zig` are full applications built from public widgets, not separate public widget exports.
 - For a one-stop tour of the catalog, run `zig build widget-showcase` from a real terminal.
