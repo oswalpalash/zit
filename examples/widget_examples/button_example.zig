@@ -26,8 +26,9 @@ fn setStatus(comptime fmt: []const u8, args: anytype) void {
 const LayoutWidget = struct {
     widget: widget.Widget,
     layout_element: layout.LayoutElement,
+    children: []const *widget.Widget,
 
-    pub fn init(layout_element: layout.LayoutElement) LayoutWidget {
+    pub fn init(layout_element: layout.LayoutElement, children: []const *widget.Widget) LayoutWidget {
         return .{
             .widget = widget.Widget.init(&.{
                 .draw = drawFn,
@@ -37,6 +38,7 @@ const LayoutWidget = struct {
                 .can_focus = canFocusFn,
             }),
             .layout_element = layout_element,
+            .children = children,
         };
     }
 
@@ -51,8 +53,14 @@ const LayoutWidget = struct {
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
-        _ = widget_ptr;
-        _ = event;
+        const self = owner(widget_ptr);
+        var idx = self.children.len;
+        while (idx > 0) {
+            idx -= 1;
+            if (try self.children[idx].handleEvent(event)) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -68,7 +76,10 @@ const LayoutWidget = struct {
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
-        _ = widget_ptr;
+        const self = owner(widget_ptr);
+        for (self.children) |child| {
+            if (child.canFocus()) return true;
+        }
         return false;
     }
 };
@@ -240,8 +251,17 @@ pub fn main() !void {
     button_status_label = status_label;
     try flex_layout.addChild(layout.FlexChild.init(status_label.widget.asLayoutElement(), 0));
 
+    const interactive_widgets = [_]*widget.Widget{
+        &standard_button.widget,
+        &disabled_button.widget,
+        &colored_button.widget,
+        &highlight_button.widget,
+        &counter_button.widget,
+        &toggle_button.widget,
+    };
+
     // Create a layout widget for the flex layout
-    var layout_widget = LayoutWidget.init(flex_layout.asElement());
+    var layout_widget = LayoutWidget.init(flex_layout.asElement(), &interactive_widgets);
 
     // Add layout widget to root
     try root.addChild(&layout_widget.widget);

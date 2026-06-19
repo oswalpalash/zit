@@ -29,6 +29,7 @@ from interactive_example_smoke import (
     terminate,
     wait_for_pid,
 )
+from make_screenshots import TerminalEmulator
 
 
 def sgr_press(col: int, row: int, button: int = 0) -> bytes:
@@ -42,6 +43,80 @@ def sgr_release(col: int, row: int, button: int = 0) -> bytes:
 def send_click(master_fd: int, col: int, row: int) -> None:
     os.write(master_fd, sgr_press(col, row))
     os.write(master_fd, sgr_release(col, row))
+
+
+def screen_from_output(output: bytes, rows: int, cols: int) -> TerminalEmulator:
+    screen = TerminalEmulator(cols, rows)
+    screen.feed(output)
+    return screen
+
+
+def locate_text(screen: TerminalEmulator, needle: str) -> tuple[int, int]:
+    if not needle:
+        raise RuntimeError("empty text locator")
+
+    for y, row in enumerate(screen.cells):
+        line = "".join(cell.ch for cell in row)
+        x = line.find(needle)
+        if x >= 0:
+            return x, y
+
+    raise RuntimeError(f"could not locate rendered text {needle!r}")
+
+
+def wait_for_rendered_text(
+    master_fd: int,
+    pid: int,
+    output: bytearray,
+    label: str,
+    needle: str,
+    rows: int,
+    cols: int,
+    timeout: float,
+) -> tuple[int, int]:
+    deadline = time.monotonic() + timeout
+    last_error: RuntimeError | None = None
+    while time.monotonic() < deadline:
+        output.extend(read_available(master_fd, 0.05))
+        assert_healthy(pid, output, label)
+        screen = screen_from_output(bytes(output), rows, cols)
+        try:
+            return locate_text(screen, needle)
+        except RuntimeError as err:
+            last_error = err
+
+    raise RuntimeError(
+        f"{label} did not render text {needle!r} within {timeout:.1f}s"
+        f"{': ' + str(last_error) if last_error else ''}\n"
+        f"--- terminal tail ---\n{tail_text(bytes(output))}"
+    )
+
+
+def assert_rendered_absent_after(
+    master_fd: int,
+    pid: int,
+    output: bytearray,
+    label: str,
+    forbidden: str,
+    rows: int,
+    cols: int,
+    delay: float,
+) -> None:
+    deadline = time.monotonic() + delay
+    while time.monotonic() < deadline:
+        output.extend(read_available(master_fd, 0.05))
+        assert_healthy(pid, output, label)
+
+    screen = screen_from_output(bytes(output), rows, cols)
+    try:
+        locate_text(screen, forbidden)
+    except RuntimeError:
+        return
+
+    raise RuntimeError(
+        f"{label} rendered forbidden marker {forbidden!r}\n"
+        f"--- terminal tail ---\n{tail_text(bytes(output))}"
+    )
 
 
 def assert_healthy(pid: int, output: bytearray, label: str) -> None:
@@ -189,6 +264,85 @@ def run_demo_click_probe(root: Path, timeout: float, quit_timeout: float) -> byt
             pass
 
 
+def run_button_example_probe(root: Path, timeout: float, quit_timeout: float) -> bytes:
+    rows = 40
+    cols = 120
+    pid, master_fd = spawn(root, "button", rows, cols)
+    output = bytearray()
+    try:
+        text_x, text_y = wait_for_rendered_text(
+            master_fd,
+            pid,
+            output,
+            "button",
+            "Standard Button",
+            rows,
+            cols,
+            timeout,
+        )
+        click_col = text_x + len("Standard Button") // 2 + 1
+        click_row = text_y + 1
+
+        send_click(master_fd, click_col, click_row - 1)
+        assert_absent_after(master_fd, pid, output, "button", "Standard button pressed", 0.25)
+
+        send_click(master_fd, click_col, click_row)
+        wait_for_text(master_fd, pid, output, "button", "Standard button pressed", timeout)
+
+        quit_child(master_fd, pid, output, "button", quit_timeout)
+        return bytes(output)
+    finally:
+        terminate(pid)
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+
+def run_table_example_probe(root: Path, timeout: float, quit_timeout: float) -> bytes:
+    rows = 32
+    cols = 100
+    pid, master_fd = spawn(root, "table_widget", rows, cols)
+    output = bytearray()
+    try:
+        text_x, text_y = wait_for_rendered_text(
+            master_fd,
+            pid,
+            output,
+            "table_widget",
+            "Billing",
+            rows,
+            cols,
+            timeout,
+        )
+        click_col = text_x + 2
+        click_row = text_y + 1
+
+        send_click(master_fd, click_col, click_row - 1)
+        assert_rendered_absent_after(master_fd, pid, output, "table_widget", "Last selection: row 1", rows, cols, 0.25)
+
+        send_click(master_fd, click_col, click_row)
+        _ = wait_for_rendered_text(
+            master_fd,
+            pid,
+            output,
+            "table_widget",
+            "Last selection: row 1",
+            rows,
+            cols,
+            timeout,
+        )
+
+        quit_child(master_fd, pid, output, "table_widget", quit_timeout)
+        return bytes(output)
+    finally:
+        terminate(pid)
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true", help="reuse zig-out/bin instead of running zig build first")
@@ -209,6 +363,12 @@ def main() -> int:
 
     demo_data = run_demo_click_probe(root, args.timeout, args.quit_timeout)
     print(f"ok mouse smoke: demo rejected above/border clicks and accepted content clicks ({len(demo_data)} bytes)")
+
+    button_data = run_button_example_probe(root, args.timeout, args.quit_timeout)
+    print(f"ok mouse smoke: button example clicked the rendered text row only ({len(button_data)} bytes)")
+
+    table_data = run_table_example_probe(root, args.timeout, args.quit_timeout)
+    print(f"ok mouse smoke: table example selected the rendered data row only ({len(table_data)} bytes)")
     return 0
 
 
