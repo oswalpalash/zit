@@ -259,14 +259,18 @@ pub const InputField = struct {
     fn runValidation(self: *InputField) !void {
         if (self.validation_rules) |rules| {
             const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
-            var previous = self.last_validation;
-            self.last_validation = result;
-            if (previous) |*res| {
-                res.deinit();
-            }
-            if (self.on_validation) |callback| {
-                callback(self, &self.last_validation.?);
-            }
+            self.commitValidationResult(result);
+        }
+    }
+
+    fn commitValidationResult(self: *InputField, result: form.ValidationResult) void {
+        var previous = self.last_validation;
+        self.last_validation = result;
+        if (previous) |*res| {
+            res.deinit();
+        }
+        if (self.on_validation) |callback| {
+            callback(self, &self.last_validation.?);
         }
     }
 
@@ -333,8 +337,35 @@ pub const InputField = struct {
 
     /// Set the input field text
     pub fn setText(self: *InputField, text: []const u8) !void {
-        self.writeText(text);
-        try self.finalizeChange(true, self.validate_on_change);
+        const raw_len = utf8PrefixLen(text, self.text.len);
+        const raw_text = text[0..raw_len];
+
+        var masked_text: ?[]u8 = null;
+        defer if (masked_text) |value| self.allocator.free(value);
+
+        const next_text = if (self.mask) |*mask_value| blk: {
+            const masked = try mask_value.format(self.allocator, raw_text);
+            masked_text = masked;
+            const masked_len = utf8PrefixLen(masked, self.text.len);
+            break :blk masked[0..masked_len];
+        } else raw_text;
+
+        var next_validation: ?form.ValidationResult = null;
+        errdefer if (next_validation) |*res| res.deinit();
+        if (self.validate_on_change) {
+            if (self.validation_rules) |rules| {
+                next_validation = try form.validateField(self.allocator, self.validation_field_name, next_text, rules);
+            }
+        }
+
+        try self.undo_redo.capture(next_text);
+
+        self.writeText(next_text);
+        if (next_validation) |result| {
+            self.commitValidationResult(result);
+            next_validation = null;
+        }
+        self.notifyChange();
     }
 
     /// Undo the most recent edit, returning true when the buffer changed.
@@ -951,7 +982,7 @@ test "input field preserves validation result on allocation failure" {
     try std.testing.expectEqualStrings("needed", preserved.*.firstError().?.message);
 }
 
-test "input field setText propagates history allocation failure" {
+test "input field setText preserves text on history allocation failure" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 32);
     defer field.deinit();
@@ -965,12 +996,12 @@ test "input field setText propagates history allocation failure" {
     defer field.undo_redo.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, field.setText("next"));
-    try std.testing.expectEqualStrings("next", field.getText());
+    try std.testing.expectEqualStrings("stable", field.getText());
     try std.testing.expectEqual(@as(usize, 2), field.undo_redo.undo.items.len);
     try std.testing.expectEqualStrings("stable", field.undo_redo.undo.items[1]);
 }
 
-test "input field setText propagates validation allocation failure" {
+test "input field setText preserves text on validation allocation failure" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 32);
     defer field.deinit();
@@ -980,8 +1011,9 @@ test "input field setText propagates validation allocation failure" {
         form.minLength(10, "too short"),
     };
     try field.setValidation("name", &rules, true);
+    try field.setText("long enough");
     const first_state = field.validationState().?;
-    try std.testing.expect(!first_state.*.isValid());
+    try std.testing.expect(first_state.*.isValid());
 
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
     const original_allocator = field.allocator;
@@ -989,10 +1021,9 @@ test "input field setText propagates validation allocation failure" {
     defer field.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, field.setText("tiny"));
-    try std.testing.expectEqualStrings("tiny", field.getText());
+    try std.testing.expectEqualStrings("long enough", field.getText());
     const preserved = field.validationState().?;
-    try std.testing.expect(!preserved.*.isValid());
-    try std.testing.expectEqualStrings("needed", preserved.*.firstError().?.message);
+    try std.testing.expect(preserved.*.isValid());
 }
 
 test "input field expands capacity for longer masks" {

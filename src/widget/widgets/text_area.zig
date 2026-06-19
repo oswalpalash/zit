@@ -102,8 +102,26 @@ pub const TextArea = struct {
     }
 
     pub fn setText(self: *TextArea, text: []const u8) !void {
-        try self.writeText(text);
-        try self.finalizeChange(true, self.validate_on_change);
+        const copy_len = utf8PrefixLen(text, self.max_bytes);
+        const next_text = text[0..copy_len];
+        try self.buffer.ensureTotalCapacity(self.allocator, copy_len);
+
+        var next_validation: ?form.ValidationResult = null;
+        errdefer if (next_validation) |*res| res.deinit();
+        if (self.validate_on_change) {
+            if (self.validation_rules) |rules| {
+                next_validation = try form.validateField(self.allocator, self.validation_field_name, next_text, rules);
+            }
+        }
+
+        try self.undo_redo.capture(next_text);
+
+        self.writeText(next_text);
+        if (next_validation) |result| {
+            self.commitValidationResult(result);
+            next_validation = null;
+        }
+        self.notifyChange();
     }
 
     pub fn getText(self: *TextArea) []const u8 {
@@ -327,11 +345,15 @@ pub const TextArea = struct {
     fn runValidation(self: *TextArea) !void {
         if (self.validation_rules) |rules| {
             const result = try form.validateField(self.allocator, self.validation_field_name, self.getText(), rules);
-            var previous = self.last_validation;
-            self.last_validation = result;
-            if (previous) |*res| res.deinit();
-            if (self.on_validation) |callback| callback(self, &self.last_validation.?);
+            self.commitValidationResult(result);
         }
+    }
+
+    fn commitValidationResult(self: *TextArea, result: form.ValidationResult) void {
+        var previous = self.last_validation;
+        self.last_validation = result;
+        if (previous) |*res| res.deinit();
+        if (self.on_validation) |callback| callback(self, &self.last_validation.?);
     }
 
     fn finalizeChange(self: *TextArea, capture_history: bool, force_validate: bool) !void {
@@ -616,10 +638,10 @@ pub const TextArea = struct {
         return true;
     }
 
-    fn writeText(self: *TextArea, text: []const u8) !void {
+    fn writeText(self: *TextArea, text: []const u8) void {
         self.buffer.clearRetainingCapacity();
         const copy_len = utf8PrefixLen(text, self.max_bytes);
-        try self.buffer.appendSlice(self.allocator, text[0..copy_len]);
+        self.buffer.appendSliceAssumeCapacity(text[0..copy_len]);
         self.cursor = self.buffer.items.len;
         self.preferred_col = self.cursorPosition().col;
         self.scroll_row = 0;
@@ -644,7 +666,7 @@ pub const TextArea = struct {
     }
 
     fn applySnapshot(self: *TextArea, snapshot: []const u8) !void {
-        try self.writeText(snapshot);
+        self.writeText(snapshot);
         try self.finalizeChange(false, self.validate_on_change);
     }
 
@@ -1282,7 +1304,7 @@ test "text area preserves validation result on allocation failure" {
     try std.testing.expectEqualStrings("body required", preserved.*.firstError().?.message);
 }
 
-test "text area setText propagates history allocation failure" {
+test "text area setText preserves text on history allocation failure" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 64);
     defer area.deinit();
@@ -1296,12 +1318,12 @@ test "text area setText propagates history allocation failure" {
     defer area.undo_redo.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, area.setText("next"));
-    try std.testing.expectEqualStrings("next", area.getText());
+    try std.testing.expectEqualStrings("stable", area.getText());
     try std.testing.expectEqual(@as(usize, 2), area.undo_redo.undo.items.len);
     try std.testing.expectEqualStrings("stable", area.undo_redo.undo.items[1]);
 }
 
-test "text area setText propagates validation allocation failure" {
+test "text area setText preserves text on validation allocation failure" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 64);
     defer area.deinit();
@@ -1311,8 +1333,9 @@ test "text area setText propagates validation allocation failure" {
         form.minLength(10, "too short"),
     };
     try area.setValidation("body", &rules, true);
+    try area.setText("long enough");
     const first = area.validationState().?;
-    try std.testing.expect(!first.*.isValid());
+    try std.testing.expect(first.*.isValid());
 
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
     const original_allocator = area.allocator;
@@ -1320,10 +1343,9 @@ test "text area setText propagates validation allocation failure" {
     defer area.allocator = original_allocator;
 
     try std.testing.expectError(error.OutOfMemory, area.setText("tiny"));
-    try std.testing.expectEqualStrings("tiny", area.getText());
+    try std.testing.expectEqualStrings("long enough", area.getText());
     const preserved = area.validationState().?;
-    try std.testing.expect(!preserved.*.isValid());
-    try std.testing.expectEqualStrings("body required", preserved.*.firstError().?.message);
+    try std.testing.expect(preserved.*.isValid());
 }
 
 test "text area setText resets cursor and scroll" {
