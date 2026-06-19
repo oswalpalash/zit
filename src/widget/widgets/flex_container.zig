@@ -47,11 +47,13 @@ pub const FlexContainer = struct {
     }
 
     pub fn addChild(self: *FlexContainer, child: *base.Widget, flex: u16) !void {
+        try self.children.ensureUnusedCapacity(self.allocator, 1);
+
         // Avoid duplicates by removing existing entries first.
         self.removeChild(child);
 
         try self.layout.addChild(layout_module.FlexChild.init(child.asLayoutElement(), flex));
-        try self.children.append(self.allocator, child);
+        self.children.appendAssumeCapacity(child);
         child.parent = &self.widget;
     }
 
@@ -233,4 +235,45 @@ test "flex container lays out children and forwards events" {
     try std.testing.expect(try flex.widget.handleEvent(event));
     try std.testing.expect(!left.handled);
     try std.testing.expect(right.handled);
+}
+
+test "flex container add child preserves state when child list allocation fails" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var flex = try FlexContainer.init(alloc, .row);
+    defer flex.deinit();
+
+    var child = Dummy{};
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = flex.allocator;
+    flex.allocator = failing.allocator();
+    defer flex.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, flex.addChild(&child.widget, 1));
+    try std.testing.expectEqual(@as(usize, 0), flex.children.items.len);
+    try std.testing.expectEqual(@as(usize, 0), flex.layout.children.items.len);
+    try std.testing.expect(child.widget.parent == null);
 }

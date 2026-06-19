@@ -55,9 +55,10 @@ pub const GridContainer = struct {
     }
 
     pub fn addChild(self: *GridContainer, child: *base.Widget, column: u16, row: u16) !void {
+        try self.children.ensureUnusedCapacity(self.allocator, 1);
         self.removeChildAt(column, row);
         try self.layout.addChild(child.asLayoutElement(), column, row);
-        try self.children.append(self.allocator, Child{ .widget = child, .column = column, .row = row });
+        self.children.appendAssumeCapacity(Child{ .widget = child, .column = column, .row = row });
         child.parent = &self.widget;
     }
 
@@ -246,4 +247,45 @@ test "grid container lays out children and forwards events" {
     try std.testing.expect(try grid.widget.handleEvent(event));
     try std.testing.expect(!left.handled);
     try std.testing.expect(right.handled);
+}
+
+test "grid container add child preserves state when child list allocation fails" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 1, 1);
+    defer grid.deinit();
+
+    var child = Dummy{};
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = grid.allocator;
+    grid.allocator = failing.allocator();
+    defer grid.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, grid.addChild(&child.widget, 0, 0));
+    try std.testing.expectEqual(@as(usize, 0), grid.children.items.len);
+    try std.testing.expect(grid.layout.cells.items[0] == null);
+    try std.testing.expect(child.widget.parent == null);
 }
