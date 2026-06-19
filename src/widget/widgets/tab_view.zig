@@ -411,6 +411,7 @@ pub const TabView = struct {
     pub fn removeTab(self: *TabView, index: usize) void {
         if (index >= self.tabs.items.len) return;
         const old_active = self.active_tab;
+        const selection_changed = index == old_active;
         const removed = self.tabs.items[index];
         if (removed.content) |content| {
             if (content.parent == &self.widget) {
@@ -422,13 +423,15 @@ pub const TabView = struct {
 
         if (self.tabs.items.len == 0) {
             self.active_tab = 0;
+        } else if (index < old_active) {
+            self.active_tab = old_active - 1;
         } else if (self.active_tab >= self.tabs.items.len) {
             self.active_tab = self.tabs.items.len - 1;
         }
         self.syncHeader();
         self.syncVisibility();
 
-        if (self.on_tab_select != null and old_active != self.active_tab and self.tabs.items.len > 0) {
+        if (self.on_tab_select != null and selection_changed and self.tabs.items.len > 0) {
             self.on_tab_select.?(self.active_tab);
         }
     }
@@ -936,6 +939,78 @@ test "tab view clears parent when removing tabs" {
 
     try std.testing.expect(a.widget.parent == null);
     try std.testing.expectEqual(&tab_view.widget, b.widget.parent.?);
+}
+
+test "tab view remove before active preserves active tab" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+    var c = try @import("block.zig").Block.init(alloc);
+    defer c.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+    try tab_view.addTab("three", &c.widget);
+    try tab_view.setActiveTab(2);
+
+    const Selection = struct {
+        var calls: usize = 0;
+        fn cb(_: usize) void {
+            calls += 1;
+        }
+    };
+    Selection.calls = 0;
+    tab_view.setOnTabSelect(Selection.cb);
+
+    tab_view.removeTab(0);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
+    try std.testing.expectEqualStrings("three", tab_view.tabs.items[tab_view.active_tab].title);
+    try std.testing.expect(c.widget.visible);
+    try std.testing.expect(!b.widget.visible);
+    try std.testing.expectEqual(@as(usize, 0), Selection.calls);
+}
+
+test "tab view remove active tab notifies when replacement selected" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var a = try @import("block.zig").Block.init(alloc);
+    defer a.deinit();
+    var b = try @import("block.zig").Block.init(alloc);
+    defer b.deinit();
+    var c = try @import("block.zig").Block.init(alloc);
+    defer c.deinit();
+
+    try tab_view.addTab("one", &a.widget);
+    try tab_view.addTab("two", &b.widget);
+    try tab_view.addTab("three", &c.widget);
+    try tab_view.setActiveTab(1);
+
+    const Selection = struct {
+        var calls: usize = 0;
+        var last: usize = std.math.maxInt(usize);
+        fn cb(index: usize) void {
+            calls += 1;
+            last = index;
+        }
+    };
+    Selection.calls = 0;
+    Selection.last = std.math.maxInt(usize);
+    tab_view.setOnTabSelect(Selection.cb);
+
+    tab_view.removeTab(1);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
+    try std.testing.expectEqualStrings("three", tab_view.tabs.items[tab_view.active_tab].title);
+    try std.testing.expectEqual(@as(usize, 1), Selection.calls);
+    try std.testing.expectEqual(@as(usize, 1), Selection.last);
 }
 
 test "tab view tab bar keyboard navigation updates tabs" {
