@@ -273,7 +273,11 @@ pub const MouseEvent = struct {
     /// Scroll delta (positive for down/right, negative for up/left)
     scroll_delta: i16 = 0,
 
-    /// Create a new mouse event
+    /// Create a new mouse event in Zit's zero-based screen coordinate space.
+    ///
+    /// This is the same coordinate system used by `render.Renderer` and
+    /// `layout.Rect`. Terminal protocol mouse coordinates are one-based; use
+    /// `fromTerminalCoordinates` for raw SGR/X10 coordinates.
     pub fn init(action: MouseAction, x: u16, y: u16, button: u8, scroll_delta: i16) MouseEvent {
         return MouseEvent{
             .action = action,
@@ -282,6 +286,21 @@ pub const MouseEvent = struct {
             .button = button,
             .scroll_delta = scroll_delta,
         };
+    }
+
+    /// Create a mouse event from raw terminal protocol coordinates.
+    ///
+    /// SGR and legacy X10/normal tracking report one-based columns and rows.
+    /// Widgets must never receive those raw values because they would place hit
+    /// tests one row/column away from the rendered cells.
+    pub fn fromTerminalCoordinates(action: MouseAction, terminal_x: u16, terminal_y: u16, button: u8, scroll_delta: i16) MouseEvent {
+        return init(
+            action,
+            terminalMouseCoordToScreenCoord(terminal_x),
+            terminalMouseCoordToScreenCoord(terminal_y),
+            button,
+            scroll_delta,
+        );
     }
 };
 
@@ -1669,9 +1688,6 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
     const button_param = legacyMouseByteToParam(bytes[0]) orelse return Event{ .unknown = {} };
     const terminal_x = legacyMouseByteToParam(bytes[1]) orelse return Event{ .unknown = {} };
     const terminal_y = legacyMouseByteToParam(bytes[2]) orelse return Event{ .unknown = {} };
-    const x = terminalMouseCoordToScreenCoord(terminal_x);
-    const y = terminalMouseCoordToScreenCoord(terminal_y);
-
     const is_motion = (button_param & 0x20) != 0;
     const is_scroll = (button_param & 0x40) != 0;
     const is_release = (button_param & 0x3) == 3 and !is_scroll;
@@ -1698,13 +1714,7 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
         MouseAction.press;
 
     return Event{
-        .mouse = MouseEvent{
-            .action = action,
-            .x = x,
-            .y = y,
-            .button = button,
-            .scroll_delta = scroll_delta,
-        },
+        .mouse = MouseEvent.fromTerminalCoordinates(action, terminal_x, terminal_y, button, scroll_delta),
     };
 }
 
@@ -1764,10 +1774,9 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         return Event{ .unknown = {} };
     }
 
-    // Extract and normalize the terminal's 1-based coordinates.
+    // Extract the terminal's 1-based coordinates; the MouseEvent constructor
+    // below normalizes them to the renderer/layout coordinate system.
     const button_param = params[0];
-    const x = terminalMouseCoordToScreenCoord(params[1]);
-    const y = terminalMouseCoordToScreenCoord(params[2]);
 
     // Decode the button parameter
     const button_code = @as(u8, @intCast(button_param & 0x3));
@@ -1795,13 +1804,7 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         button_code + 1;
 
     return Event{
-        .mouse = MouseEvent{
-            .action = action,
-            .x = x,
-            .y = y,
-            .button = button,
-            .scroll_delta = scroll_delta,
-        },
+        .mouse = MouseEvent.fromTerminalCoordinates(action, params[1], params[2], button, scroll_delta),
     };
 }
 
@@ -1871,6 +1874,16 @@ test "parse SGR mouse coordinates are zero based for widgets" {
     try std.testing.expectEqual(MouseAction.press, mouse_event.action);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.y);
+}
+
+test "MouseEvent terminal constructor normalizes protocol coordinates" {
+    const event = MouseEvent.fromTerminalCoordinates(.press, 1, 1, 1, 0);
+    try std.testing.expectEqual(@as(u16, 0), event.x);
+    try std.testing.expectEqual(@as(u16, 0), event.y);
+
+    const shifted = MouseEvent.fromTerminalCoordinates(.press, 18, 11, 1, 0);
+    try std.testing.expectEqual(@as(u16, 17), shifted.x);
+    try std.testing.expectEqual(@as(u16, 10), shifted.y);
 }
 
 test "oversized SGR mouse numeric params are unknown instead of trapping" {

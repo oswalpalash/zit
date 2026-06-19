@@ -61,7 +61,10 @@ if (maybe_event) |event| switch (event) {
 };
 
 // Only use this for raw terminal protocol coordinates read outside InputHandler.
+// For synthetic app/widget events, prefer MouseEvent.init with zero-based coords.
 const point = input_handler.translateTerminalMouseCoordinates(1, 1);
+const synthetic = zit.input.MouseEvent.fromTerminalCoordinates(.press, 1, 1, 1, 0);
+_ = synthetic;
 ```
 
 ### Automatic Resize
