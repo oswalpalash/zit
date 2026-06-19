@@ -92,6 +92,8 @@ pub const ScrollContainer = struct {
 
     /// Clean up scroll container resources
     pub fn deinit(self: *ScrollContainer) void {
+        self.detachContent();
+
         if (self.h_scrollbar) |h_scrollbar_widget| {
             h_scrollbar_widget.deinit();
         }
@@ -105,14 +107,19 @@ pub const ScrollContainer = struct {
 
     /// Set the content widget
     pub fn setContent(self: *ScrollContainer, content: *base.Widget) void {
+        self.detachContent();
+        self.content = content;
+        content.parent = &self.widget;
+        self.updateContentSize();
+    }
+
+    fn detachContent(self: *ScrollContainer) void {
         if (self.content) |current| {
             if (current.parent == &self.widget) {
                 current.parent = null;
             }
         }
-        self.content = content;
-        content.parent = &self.widget;
-        self.updateContentSize();
+        self.content = null;
     }
 
     /// Set whether to show scrollbars
@@ -710,6 +717,19 @@ test "scroll container maintains parent linkage for content" {
     container.setContent(&second.widget);
     try std.testing.expect(first.widget.parent == null);
     try std.testing.expectEqual(&container.widget, second.widget.parent.?);
+}
+
+test "scroll container deinit detaches content parent link" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+
+    var content = try @import("block.zig").Block.init(alloc);
+    defer content.deinit();
+
+    container.setContent(&content.widget);
+    container.deinit();
+
+    try std.testing.expect(content.widget.parent == null);
 }
 
 test "scroll container scrolls content with mouse wheel" {
