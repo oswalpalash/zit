@@ -12,6 +12,8 @@ pub const ArenaAllocator = struct {
 
     pub fn init(parent_alloc: Allocator, size: usize, is_thread_safe: bool) !*ArenaAllocator {
         const self = try parent_alloc.create(ArenaAllocator);
+        errdefer parent_alloc.destroy(self);
+
         self.* = ArenaAllocator{
             .fallback_allocator = parent_alloc,
             .buffer = try parent_alloc.alloc(u8, size),

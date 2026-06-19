@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const MemoryManager = @import("../memory.zig").MemoryManager;
+const ArenaAllocator = @import("../arena.zig").ArenaAllocator;
 const PoolAllocator = @import("../pool.zig").PoolAllocator;
 
 test "MemoryManager initialization and cleanup" {
@@ -179,4 +180,14 @@ test "PoolAllocator tracks pooled ownership and falls back for foreign frees" {
     const before = pool.getStats().allocated_nodes;
     pooled_alloc.free(foreign);
     try testing.expectEqual(before, pool.getStats().allocated_nodes);
+}
+
+test "ArenaAllocator init cleans up object when buffer allocation fails" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    try testing.expectError(error.OutOfMemory, ArenaAllocator.init(failing.allocator(), 4096, true));
+}
+
+test "PoolAllocator init cleans up partial free list when growth fails" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
+    try testing.expectError(error.OutOfMemory, PoolAllocator.init(failing.allocator(), 64, 2));
 }

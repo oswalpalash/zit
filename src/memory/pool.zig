@@ -55,6 +55,7 @@ pub const PoolAllocator = struct {
             },
         };
 
+        errdefer self.deinit();
         try self.growUnlocked(initial_capacity);
         return self;
     }
