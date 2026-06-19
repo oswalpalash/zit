@@ -668,7 +668,7 @@ pub const EventQueue = struct {
         self.head = 0;
     }
 
-    fn destroyCustomPayload(event_item: *const Event) void {
+    pub fn destroyCustomPayload(event_item: *const Event) void {
         if (event_item.type != .custom) return;
         const custom_data = event_item.data.custom;
         if (custom_data.destructor != null and custom_data.data != null) {
@@ -711,6 +711,7 @@ pub const EventQueue = struct {
         while (self.popFront()) |event_val| {
             var event = event_val;
             if (self.preprocess(&event)) {
+                destroyCustomPayload(&event);
                 continue;
             }
             _ = self.dispatcher.dispatchEvent(&event);
@@ -1862,6 +1863,68 @@ test "event dispatcher preserves next listener id on allocation failure" {
     try std.testing.expectError(error.OutOfMemory, dispatcher.addEventListener(.key_press, Listener.on, null));
     try std.testing.expectEqual(@as(u32, 1), dispatcher.next_id);
     try std.testing.expectEqual(@as(usize, 0), dispatcher.listeners.items.len);
+}
+
+test "processEvents destroys custom payloads consumed by preprocessor" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var cleanup_count: usize = 0;
+    var consumed = false;
+
+    const Hooks = struct {
+        fn cleanup(data: *anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(data)));
+            counter.* += 1;
+        }
+
+        fn preprocess(_: *Event, ctx: ?*anyopaque) bool {
+            const flag = @as(*bool, @ptrCast(@alignCast(ctx.?)));
+            flag.* = true;
+            return true;
+        }
+    };
+
+    queue.setPreprocessor(.{ .handler = Hooks.preprocess, .ctx = @ptrCast(&consumed) });
+    try queue.createCustomEvent(1, @ptrCast(&cleanup_count), Hooks.cleanup, null);
+
+    try queue.processEvents();
+
+    try std.testing.expect(consumed);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
+}
+
+test "processEventsWithPropagation destroys custom payloads consumed by preprocessor" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var cleanup_count: usize = 0;
+    var consumed = false;
+
+    const Hooks = struct {
+        fn cleanup(data: *anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(data)));
+            counter.* += 1;
+        }
+
+        fn preprocess(_: *Event, ctx: ?*anyopaque) bool {
+            const flag = @as(*bool, @ptrCast(@alignCast(ctx.?)));
+            flag.* = true;
+            return true;
+        }
+    };
+
+    queue.setPreprocessor(.{ .handler = Hooks.preprocess, .ctx = @ptrCast(&consumed) });
+    try queue.createCustomEvent(1, @ptrCast(&cleanup_count), Hooks.cleanup, null);
+
+    try queue.processEventsWithPropagation(alloc);
+
+    try std.testing.expect(consumed);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
 }
 
 test "propagation captures target then bubbles with current target set" {

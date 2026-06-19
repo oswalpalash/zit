@@ -95,18 +95,14 @@ pub fn processEventsWithPropagation(queue: *event.EventQueue, allocator: std.mem
     while (queue.popFront()) |event_val| {
         var event_item = event_val;
         if (queue.preprocess(&event_item)) {
+            event.EventQueue.destroyCustomPayload(&event_item);
             continue;
         }
 
         _ = try dispatchWithPropagationCached(&queue.dispatcher, &event_item, allocator, scratch, queue.debug_hooks);
 
         // Clean up custom event data if needed
-        if (event_item.type == .custom) {
-            const custom_data = event_item.data.custom;
-            if (custom_data.destructor != null and custom_data.data != null) {
-                custom_data.destructor.?(custom_data.data.?);
-            }
-        }
+        event.EventQueue.destroyCustomPayload(&event_item);
     }
 }
 
