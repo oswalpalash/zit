@@ -70,9 +70,14 @@ pub const Sparkline = struct {
     }
 
     pub fn setValues(self: *Sparkline, data: []const f32) !void {
-        self.values.clearRetainingCapacity();
         const count = @min(data.len, self.max_samples);
-        try self.values.appendSlice(self.allocator, data[0..count]);
+        var next_values = std.ArrayList(f32).empty;
+        errdefer next_values.deinit(self.allocator);
+
+        try next_values.appendSlice(self.allocator, data[0..count]);
+
+        self.values.deinit(self.allocator);
+        self.values = next_values;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -162,4 +167,22 @@ test "sparkline draws samples" {
         }
     }
     try std.testing.expect(non_space > 0);
+}
+
+test "sparkline setValues preserves samples on allocation failure" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    const stable = [_]f32{ 1.0, 2.0, 3.0 };
+    const replacement = [_]f32{ 4.0, 5.0, 6.0, 7.0 };
+    try spark.setValues(&stable);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = spark.allocator;
+    spark.allocator = failing.allocator();
+    defer spark.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, spark.setValues(&replacement));
+    try std.testing.expectEqualSlices(f32, &stable, spark.values.items);
 }

@@ -43,10 +43,15 @@ pub const ColorPicker = struct {
         self.allocator.destroy(self);
     }
 
-    /// Replace the palette. Resets selection to the first entry if available.
+    /// Replace the palette and clamp selection to a valid entry if needed.
     pub fn setPalette(self: *ColorPicker, palette: []const render.Color) !void {
-        self.palette.clearRetainingCapacity();
-        try self.palette.appendSlice(self.allocator, palette);
+        var next_palette = std.ArrayList(render.Color).empty;
+        errdefer next_palette.deinit(self.allocator);
+
+        try next_palette.appendSlice(self.allocator, palette);
+
+        self.palette.deinit(self.allocator);
+        self.palette = next_palette;
         if (self.selected_index >= self.palette.items.len) {
             self.selected_index = if (self.palette.items.len > 0) 0 else 0;
         }
@@ -234,4 +239,32 @@ test "color picker handles mouse and keyboard selection" {
     try std.testing.expect(try picker.widget.handleEvent(down_event));
     try std.testing.expectEqual(@as(usize, 3), picker.selected_index);
     try std.testing.expect(change_called);
+}
+
+test "color picker setPalette preserves palette on allocation failure" {
+    const alloc = std.testing.allocator;
+    const original_palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+    const replacement_palette = [_]render.Color{
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.magenta),
+    };
+
+    var picker = try ColorPicker.init(alloc, &original_palette);
+    defer picker.deinit();
+    picker.selectIndex(1);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = picker.allocator;
+    picker.allocator = failing.allocator();
+    defer picker.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, picker.setPalette(&replacement_palette));
+    try std.testing.expectEqual(@as(usize, 2), picker.palette.items.len);
+    try std.testing.expectEqual(render.NamedColor.red, picker.palette.items[0].named_color);
+    try std.testing.expectEqual(render.NamedColor.green, picker.palette.items[1].named_color);
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
 }
