@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- `MessageCatalog` now owns both keys and values and performs replacements transactionally, preventing dangling caller-key slices and leaks/lost translations on `OutOfMemory`.
 - `ShortcutRegistry.register` and shortcut summary materialization now clean up partially allocated descriptions/combo strings on every `OutOfMemory` path, keeping shortcut state transactional and leak-free.
 - `KeyEvent.getName(allocator)` now consistently returns allocator-owned memory for special keys as well as text keys, fixing invalid frees in `KeyChord.toString` and public callers that correctly free returned names.
 - SGR mouse decoding now rejects empty button/x/y numeric fields as `.unknown` instead of treating malformed fields as coordinate zero.

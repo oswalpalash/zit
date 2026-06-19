@@ -37,18 +37,27 @@ pub const MessageCatalog = struct {
     pub fn deinit(self: *MessageCatalog) void {
         var it = self.strings.iterator();
         while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.*);
         }
         self.strings.deinit(self.allocator);
     }
 
-    /// Insert or replace a localized string (copied into catalog memory).
+    /// Insert or replace a localized string (key and value copied into catalog memory).
     pub fn set(self: *MessageCatalog, key: []const u8, value: []const u8) !void {
-        const duped = try self.allocator.dupe(u8, value);
+        const key_copy = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(key_copy);
+
+        const value_copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(value_copy);
+
+        try self.strings.ensureUnusedCapacity(self.allocator, 1);
+
         if (self.strings.fetchRemove(key)) |removed| {
+            self.allocator.free(removed.key);
             self.allocator.free(removed.value);
         }
-        try self.strings.put(self.allocator, key, duped);
+        self.strings.putAssumeCapacityNoClobber(key_copy, value_copy);
     }
 
     /// Resolve a string from the catalog with a fallback.
@@ -197,6 +206,35 @@ test "message catalog resolves keys" {
     try catalog.set("hello", "Hello");
     try std.testing.expectEqualStrings("Hello", catalog.translate("hello", "fallback"));
     try std.testing.expectEqualStrings("fallback", catalog.translate("missing", "fallback"));
+}
+
+test "message catalog owns keys and values" {
+    var catalog = MessageCatalog.init(std.testing.allocator, .{ .language = "en" });
+    defer catalog.deinit();
+
+    var key_buf = [_]u8{ 'h', 'e', 'l', 'l', 'o' };
+    var value_buf = [_]u8{ 'H', 'e', 'l', 'l', 'o' };
+    try catalog.set(key_buf[0..], value_buf[0..]);
+
+    key_buf = [_]u8{ 'o', 't', 'h', 'e', 'r' };
+    value_buf = [_]u8{ 'B', 'r', 'o', 'k', 'n' };
+
+    try std.testing.expectEqualStrings("Hello", catalog.translate("hello", "fallback"));
+    try catalog.set("hello", "Hi");
+    try std.testing.expectEqualStrings("Hi", catalog.translate("hello", "fallback"));
+}
+
+fn messageCatalogSetAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var catalog = MessageCatalog.init(allocator, .{ .language = "en" });
+    defer catalog.deinit();
+
+    try catalog.set("hello", "Hello");
+    try catalog.set("bye", "Goodbye");
+    try catalog.set("hello", "Hi");
+}
+
+test "message catalog set cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, messageCatalogSetAllocationFailureHarness, .{});
 }
 
 test "plural selection covers common forms" {
