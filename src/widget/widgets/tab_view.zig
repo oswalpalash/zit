@@ -382,8 +382,9 @@ pub const TabView = struct {
 
     /// Create a tab from a specification.
     pub fn addTabSpec(self: *TabView, spec: TabSpec) !void {
+        try self.tabs.ensureUnusedCapacity(self.allocator, 1);
         const title_copy = try self.allocator.dupe(u8, spec.title);
-        try self.tabs.append(self.allocator, TabItem{
+        self.tabs.appendAssumeCapacity(TabItem{
             .title = title_copy,
             .content = spec.content,
             .loader = spec.loader,
@@ -825,6 +826,24 @@ test "tab view lazy content layout failure preserves unloaded state" {
     try std.testing.expect(!tab_view.tabs.items[0].loaded);
     try std.testing.expect(tab_view.tabs.items[0].content == null);
     try std.testing.expect(Lazy.failing.widget.parent == null);
+}
+
+test "tab view add tab preserves state on allocation failure" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var block = try @import("block.zig").Block.init(alloc);
+    defer block.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    const original_allocator = tab_view.allocator;
+    tab_view.allocator = failing.allocator();
+    defer tab_view.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, tab_view.addTab("leaky", &block.widget));
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tabs.items.len);
+    try std.testing.expect(block.widget.parent == null);
 }
 
 test "tab view reorders tabs and keeps active index in sync" {
