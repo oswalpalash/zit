@@ -46,10 +46,12 @@ pub const Button = struct {
     /// Initialize a new button
     pub fn init(allocator: std.mem.Allocator, button_text: []const u8) !*Button {
         const self = try allocator.create(Button);
+        errdefer allocator.destroy(self);
 
+        const text_copy = try allocator.dupe(u8, button_text);
         self.* = Button{
             .widget = base.Widget.init(&vtable),
-            .button_text = try allocator.dupe(u8, button_text),
+            .button_text = text_copy,
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
@@ -251,6 +253,15 @@ test "button init/deinit" {
     defer button.deinit();
 
     try std.testing.expectEqualStrings("OK", button.button_text);
+}
+
+fn buttonInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var button = try Button.init(allocator, "OK");
+    defer button.deinit();
+}
+
+test "button init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, buttonInitAllocationFailureHarness, .{});
 }
 
 test "button setText preserves label on allocation failure" {

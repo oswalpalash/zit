@@ -36,10 +36,13 @@ pub const Paragraph = struct {
 
     pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Paragraph {
         const self = try allocator.create(Paragraph);
+        errdefer allocator.destroy(self);
+
+        const text_copy = try allocator.dupe(u8, text);
         self.* = Paragraph{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
-            .text = try allocator.dupe(u8, text),
+            .text = text_copy,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.status), "Paragraph", "");
         return self;
@@ -246,6 +249,15 @@ test "paragraph wraps and scrolls" {
     // After scrolling one line, the second wrapped line should be visible first.
     const cell0 = renderer.back.getCell(0, 0).*;
     try std.testing.expectEqual(@as(u21, 'b'), cell0.codepoint());
+}
+
+fn paragraphInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var p = try Paragraph.init(allocator, "alpha beta gamma");
+    defer p.deinit();
+}
+
+test "paragraph init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, paragraphInitAllocationFailureHarness, .{});
 }
 
 test "paragraph setText preserves text on allocation failure" {

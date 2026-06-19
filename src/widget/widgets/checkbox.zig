@@ -44,10 +44,12 @@ pub const Checkbox = struct {
     /// Initialize a new checkbox
     pub fn init(allocator: std.mem.Allocator, label: []const u8) !*Checkbox {
         const self = try allocator.create(Checkbox);
+        errdefer allocator.destroy(self);
 
+        const label_copy = try allocator.dupe(u8, label);
         self.* = Checkbox{
             .widget = base.Widget.init(&vtable),
-            .label = try allocator.dupe(u8, label),
+            .label = label_copy,
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
@@ -222,6 +224,15 @@ test "checkbox init/deinit" {
     defer checkbox.deinit();
 
     try std.testing.expectEqualStrings("Accept", checkbox.label);
+}
+
+fn checkboxInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var checkbox = try Checkbox.init(allocator, "Accept");
+    defer checkbox.deinit();
+}
+
+test "checkbox init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkboxInitAllocationFailureHarness, .{});
 }
 
 test "checkbox toggles and fires callback" {

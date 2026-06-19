@@ -27,9 +27,12 @@ pub const Popup = struct {
 
     pub fn init(allocator: std.mem.Allocator, message: []const u8) !*Popup {
         const self = try allocator.create(Popup);
+        errdefer allocator.destroy(self);
+
+        const message_copy = try allocator.dupe(u8, message);
         self.* = Popup{
             .widget = base.Widget.init(&vtable),
-            .message = try allocator.dupe(u8, message),
+            .message = message_copy,
             .allocator = allocator,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.message, "");
@@ -151,6 +154,15 @@ test "popup centers and dismisses" {
     const handled = try popup.widget.handleEvent(event);
     try std.testing.expect(handled);
     try std.testing.expect(!popup.widget.visible);
+}
+
+fn popupInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var popup = try Popup.init(allocator, "Hello");
+    defer popup.deinit();
+}
+
+test "popup init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, popupInitAllocationFailureHarness, .{});
 }
 
 test "popup dismisses on outside mouse press" {

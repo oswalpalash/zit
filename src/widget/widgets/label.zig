@@ -43,10 +43,12 @@ pub const Label = struct {
     /// Initialize a new label
     pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Label {
         const self = try allocator.create(Label);
+        errdefer allocator.destroy(self);
 
+        const text_copy = try allocator.dupe(u8, text);
         self.* = Label{
             .widget = base.Widget.init(&vtable),
-            .text = try allocator.dupe(u8, text),
+            .text = text_copy,
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
@@ -214,6 +216,15 @@ test "label init/deinit" {
     defer label.deinit();
 
     try std.testing.expectEqualStrings("Hello", label.text);
+}
+
+fn labelInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var label = try Label.init(allocator, "Hello");
+    defer label.deinit();
+}
+
+test "label init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, labelInitAllocationFailureHarness, .{});
 }
 
 test "label setText updates preferred size" {

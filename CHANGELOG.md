@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- Button, Checkbox, Label, Paragraph, and Popup constructors now clean up widget allocations on owned-text copy failures, and the owned-allocation checker now rejects this initializer leak pattern.
 - `ToggleSwitch.init` and `Accordion.init` now clean up every partial allocation path, preventing leaked widget/section memory when initialization hits `OutOfMemory`.
 - `MessageCatalog` now owns both keys and values and performs replacements transactionally, preventing dangling caller-key slices and leaks/lost translations on `OutOfMemory`.
 - `ShortcutRegistry.register` and shortcut summary materialization now clean up partially allocated descriptions/combo strings on every `OutOfMemory` path, keeping shortcut state transactional and leak-free.

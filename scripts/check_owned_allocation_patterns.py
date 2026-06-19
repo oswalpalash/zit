@@ -8,6 +8,9 @@ especially error-prone:
   the duplicate if the append allocation fails;
 - freeing an owned field before assigning a replacement from a fallible
   duplicate allocation, which loses the old value on ``OutOfMemory``.
+- allocating a widget/object with ``allocator.create`` and then duplicating
+  owned data before either ``errdefer allocator.destroy(self)`` or
+  ``errdefer self.deinit()`` has been installed.
 
 Use reserve-before-duplicate/append helpers, ``errdefer`` cleanup, or
 duplicate-before-free replacement instead.
@@ -30,6 +33,9 @@ FREE_BEFORE_DUPLICATE = re.compile(
     r"(?:self\.)?allocator\.free\(\s*self\.(?P<free_field>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*;\s*"
     r"self\.(?P<assign_field>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*try\s+(?:self\.)?allocator\.dupe\s*\(",
     re.DOTALL,
+)
+SELF_CREATE = re.compile(
+    r"const\s+self\s*=\s*try\s+allocator\.create\s*\([^;]+;\s*",
 )
 
 
@@ -72,6 +78,25 @@ def main() -> int:
             violations.append(
                 f"{rel}:{line_no(text, match.start())}: duplicate replacement for `self.{field}` before freeing "
                 "the existing value"
+            )
+
+        for match in SELF_CREATE.finditer(text):
+            init_start = match.end()
+            init_end = text.find("self.*", init_start)
+            if init_end == -1:
+                continue
+            init_window = text[init_start:init_end]
+            if "try allocator.dupe" not in init_window:
+                continue
+            has_cleanup = (
+                "errdefer allocator.destroy(self)" in init_window
+                or "errdefer self.deinit()" in init_window
+            )
+            if has_cleanup:
+                continue
+            violations.append(
+                f"{rel}:{line_no(text, match.start())}: install `errdefer allocator.destroy(self)` or "
+                "`errdefer self.deinit()` before fallible owned allocations after `allocator.create`"
             )
 
     if violations:
