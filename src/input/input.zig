@@ -1718,6 +1718,7 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
     var params: [3]u16 = undefined;
     var param_index: usize = 0;
     var param_value: u16 = 0;
+    var param_has_value = false;
     var final_char: u8 = 0;
 
     // Parse parameters
@@ -1734,15 +1735,19 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         if (c >= '0' and c <= '9') {
             // Append digit to parameter value.
             param_value = appendDecimalParamDigit(param_value, c - '0') orelse return Event{ .unknown = {} };
+            param_has_value = true;
         } else if (c == ';') {
             // End of parameter
+            if (!param_has_value) return Event{ .unknown = {} };
             if (param_index < params.len) {
                 params[param_index] = param_value;
             }
             param_index += 1;
             param_value = 0;
+            param_has_value = false;
         } else if (c == 'M' or c == 'm') {
             // End of mouse sequence
+            if (!param_has_value) return Event{ .unknown = {} };
             if (param_index < params.len) {
                 params[param_index] = param_value;
             }
@@ -1871,6 +1876,20 @@ test "oversized SGR mouse numeric params are unknown instead of trapping" {
     const parsed = try decodeEventFromBytes("\x1b[<0;999999999999999999999999999999;1M");
     try std.testing.expect(parsed != null);
     try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
+}
+
+test "empty SGR mouse numeric params are unknown" {
+    const missing_button = try decodeEventFromBytes("\x1b[<;1;1M");
+    try std.testing.expect(missing_button != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(missing_button.?));
+
+    const missing_x = try decodeEventFromBytes("\x1b[<0;;1M");
+    try std.testing.expect(missing_x != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(missing_x.?));
+
+    const missing_y = try decodeEventFromBytes("\x1b[<0;1;M");
+    try std.testing.expect(missing_y != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(missing_y.?));
 }
 
 test "translateMouseCoordinates is idempotent for decoded mouse events" {
