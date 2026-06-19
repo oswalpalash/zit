@@ -9,7 +9,6 @@ from pathlib import Path
 
 REQUIRED_WORKFLOW_GATES = (
     "zig build quality",
-    "python3 scripts/check_build_steps.py --skip quality --skip release-check",
     "python3 scripts/check_build_steps.py --skip quality --skip release-check --skip-interactive",
     "python3 scripts/visual_repeat_check.py --count 4",
     "python3 scripts/interactive_example_smoke.py",

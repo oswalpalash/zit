@@ -72,8 +72,9 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
 
-Windows CI runs the public build-step checker with `--skip-interactive` because
-GitHub's Windows shell does not provide the PTY semantics required by the TUI
-run targets. Those same interactive targets remain covered on POSIX by
-`check_build_steps.py`, `interactive_example_smoke.py`, `resize_smoke.py`, and
-the repeated visual capture suite.
+Hosted CI runs the matrix public build-step checker with `--skip-interactive`
+because GitHub shell runners do not provide consistent PTY semantics for TUI
+run targets across operating systems. Those same interactive targets remain
+covered by dedicated PTY jobs: `interactive_example_smoke.py`,
+`resize_smoke.py`, `mouse_alignment_smoke.py`, and the repeated visual capture
+suite.
