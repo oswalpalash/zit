@@ -93,8 +93,10 @@ pub const FileWatchContext = struct {
     /// ```
     pub fn init(allocator: std.mem.Allocator, path: []const u8, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*FileWatchContext {
         const ctx = try allocator.create(FileWatchContext);
+        errdefer allocator.destroy(ctx);
+        const owned_path = try allocator.dupe(u8, path);
         ctx.* = FileWatchContext{
-            .path = try allocator.dupe(u8, path),
+            .path = owned_path,
             .event_queue = event_queue,
             .event_id = event_id,
             .target = target,
@@ -148,38 +150,40 @@ pub const FileWatchContext = struct {
 
 /// Thread function for file watching
 fn watchThreadFn(ctx: *FileWatchContext) void {
-    var last_modified: i128 = 0;
+    var last_modified: ?std.Io.Timestamp = null;
 
     while (ctx.running) {
         // Check if file exists and get its modification time
         const io = std.Io.Threaded.global_single_threaded.io();
         const cwd = std.Io.Dir.cwd();
-        if (cwd.statFile(io, ctx.path)) |stat| {
+        if (cwd.statFile(io, ctx.path, .{})) |stat| {
             const modified = stat.mtime;
 
             // If file was modified since the last check
-            if (modified > last_modified and last_modified != 0) {
-                // Create an IoEventData
-                const data = ctx.allocator.create(IoEventData) catch continue;
-                data.* = IoEventData{
-                    .type = .file_watch,
-                    .status = .success,
-                    .allocator = ctx.allocator,
-                    .data = null,
-                    .size = 0,
-                    .error_message = null,
-                    .payload_cleanup = null,
-                    .owns_payload = false,
-                    .owns_error_message = false,
-                };
+            if (last_modified) |previous| {
+                if (modified.nanoseconds > previous.nanoseconds) {
+                    // Create an IoEventData
+                    const data = ctx.allocator.create(IoEventData) catch continue;
+                    data.* = IoEventData{
+                        .type = .file_watch,
+                        .status = .success,
+                        .allocator = ctx.allocator,
+                        .data = null,
+                        .size = 0,
+                        .error_message = null,
+                        .payload_cleanup = null,
+                        .owns_payload = false,
+                        .owns_error_message = false,
+                    };
 
-                postIoEventData(ctx.event_queue, ctx.event_id, data, ctx.target);
+                    postIoEventData(ctx.event_queue, ctx.event_id, data, ctx.target);
+                }
             }
 
             last_modified = modified;
         } else |_| {
             // File doesn't exist or can't be accessed
-            last_modified = 0;
+            last_modified = null;
         }
 
         // Sleep for a bit to avoid high CPU usage
@@ -262,14 +266,18 @@ pub const NetworkContext = struct {
     /// ```
     pub fn init(allocator: std.mem.Allocator, address: []const u8, port: u16, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*NetworkContext {
         const ctx = try allocator.create(NetworkContext);
+        errdefer allocator.destroy(ctx);
+        const owned_address = try allocator.dupe(u8, address);
+        errdefer allocator.free(owned_address);
+        const buffer = try allocator.alloc(u8, network_read_buffer_bytes);
         ctx.* = NetworkContext{
-            .address = try allocator.dupe(u8, address),
+            .address = owned_address,
             .port = port,
             .event_queue = event_queue,
             .event_id = event_id,
             .target = target,
             .allocator = allocator,
-            .buffer = try allocator.alloc(u8, network_read_buffer_bytes),
+            .buffer = buffer,
         };
         return ctx;
     }
@@ -427,13 +435,15 @@ pub const IoEventManager = struct {
     /// ```
     pub fn watchFile(self: *IoEventManager, path: []const u8, target: ?*event.widget.Widget) !*FileWatchContext {
         const event_id = self.next_event_id;
-        self.next_event_id += 1;
-
         const watcher = try FileWatchContext.init(self.allocator, path, self.event_queue, event_id, target);
+        errdefer watcher.deinit();
 
         try self.file_watchers.append(self.allocator, watcher);
+        errdefer _ = self.file_watchers.pop();
+
         try watcher.start();
 
+        self.next_event_id += 1;
         return watcher;
     }
 
@@ -458,13 +468,15 @@ pub const IoEventManager = struct {
     /// ```
     pub fn connectToServer(self: *IoEventManager, address: []const u8, port: u16, target: ?*event.widget.Widget) !*NetworkContext {
         const event_id = self.next_event_id;
-        self.next_event_id += 1;
-
         const connection = try NetworkContext.init(self.allocator, address, port, self.event_queue, event_id, target);
+        errdefer connection.deinit();
 
         try self.network_connections.append(self.allocator, connection);
+        errdefer _ = self.network_connections.pop();
+
         try connection.connect();
 
+        self.next_event_id += 1;
         return connection;
     }
 };
@@ -486,6 +498,64 @@ test "ioEventDataCleanup frees owned payloads" {
     };
 
     ioEventDataCleanup(@ptrCast(ptr));
+}
+
+test "file watch context init cleans context when path allocation fails" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+
+    try std.testing.expectError(
+        error.OutOfMemory,
+        FileWatchContext.init(failing.allocator(), "watched.txt", &queue, 1, null),
+    );
+}
+
+test "network context init cleans partial allocations when buffer allocation fails" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 2 });
+
+    try std.testing.expectError(
+        error.OutOfMemory,
+        NetworkContext.init(failing.allocator(), "127.0.0.1", 8080, &queue, 1, null),
+    );
+}
+
+test "watchFile preserves manager state when registration allocation fails" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 2 });
+    var manager = IoEventManager.init(failing.allocator(), &queue);
+    defer manager.deinit();
+
+    const original_next_id = manager.next_event_id;
+
+    try std.testing.expectError(error.OutOfMemory, manager.watchFile("watched.txt", null));
+    try std.testing.expectEqual(original_next_id, manager.next_event_id);
+    try std.testing.expectEqual(@as(usize, 0), manager.file_watchers.items.len);
+}
+
+test "connectToServer preserves manager state when registration allocation fails" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 3 });
+    var manager = IoEventManager.init(failing.allocator(), &queue);
+    defer manager.deinit();
+
+    const original_next_id = manager.next_event_id;
+
+    try std.testing.expectError(error.OutOfMemory, manager.connectToServer("127.0.0.1", 8080, null));
+    try std.testing.expectEqual(original_next_id, manager.next_event_id);
+    try std.testing.expectEqual(@as(usize, 0), manager.network_connections.items.len);
 }
 
 test "postIoEventData cleans payload when enqueue fails" {
