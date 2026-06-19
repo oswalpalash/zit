@@ -15,6 +15,7 @@ pub const Mask = struct {
 
     pub fn init(allocator: std.mem.Allocator, pattern: []const u8) !Mask {
         const copy = try allocator.dupe(u8, pattern);
+        errdefer allocator.free(copy);
 
         const parsed = try allocator.alloc(Token, copy.len);
         var count: usize = 0;
@@ -225,6 +226,15 @@ test "mask formats partial and complete phone numbers" {
     const full = try mask.format(alloc, "1234567890");
     defer alloc.free(full);
     try std.testing.expectEqualStrings("(123) 456-7890", full);
+}
+
+fn maskInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var mask = try Mask.init(allocator, "(###) ###-####");
+    mask.deinit();
+}
+
+test "mask init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, maskInitAllocationFailureHarness, .{});
 }
 
 test "custom currency symbol is preserved" {

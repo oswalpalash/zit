@@ -387,15 +387,26 @@ pub const InputField = struct {
     /// Apply a mask pattern (e.g. "(###) ###-####"). The input field owns the mask.
     pub fn setMaskPattern(self: *InputField, pattern: []const u8) !void {
         const mask = try input_mask.Mask.init(self.allocator, pattern);
-        self.setMask(mask);
+        try self.setMask(mask);
     }
 
-    /// Assign a pre-built mask (ownership is transferred to the input).
-    pub fn setMask(self: *InputField, mask: input_mask.Mask) void {
+    /// Assign a pre-built mask. Ownership transfers to the input on entry.
+    pub fn setMask(self: *InputField, mask: input_mask.Mask) !void {
+        var next_mask = mask;
+        var owns_next_mask = true;
+        errdefer if (owns_next_mask) next_mask.deinit();
+
+        const masked = try next_mask.format(self.allocator, self.currentText());
+        defer self.allocator.free(masked);
+
+        try self.ensureCapacity(next_mask.maxLength());
+
         self.clearMask();
-        self.mask = mask;
-        self.ensureCapacity(self.mask.?.maxLength()) catch {};
-        self.applyMask() catch {};
+        self.mask = next_mask;
+        owns_next_mask = false;
+        self.writeText(masked[0..@min(masked.len, self.text.len)]);
+        self.cursor = self.len;
+        self.widget.markDirty();
     }
 
     /// Remove the active mask and leave the current text untouched.
@@ -952,6 +963,27 @@ test "input field expands capacity for longer masks" {
 
     field.setText("123456789012");
     try std.testing.expectEqualStrings("1234-5678-9012", field.getText());
+}
+
+test "input field mask survives allocation failure" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 8);
+    defer field.deinit();
+
+    field.setText("1234");
+    try field.setMaskPattern("##-##");
+    try std.testing.expectEqualStrings("12-34", field.getText());
+    try std.testing.expect(field.mask != null);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = field.allocator;
+    field.allocator = failing.allocator();
+    defer field.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, field.setMaskPattern("(###) ###"));
+    try std.testing.expectEqualStrings("12-34", field.getText());
+    try std.testing.expect(field.mask != null);
+    try std.testing.expectEqualStrings("##-##", field.mask.?.pattern);
 }
 
 test "input field clamps cursor beyond bounds during edits" {
