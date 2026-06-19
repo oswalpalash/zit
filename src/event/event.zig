@@ -984,8 +984,12 @@ pub const FocusManager = struct {
             }
         }
 
-        // Set new focus
         const previous = self.focused_widget;
+        const focus_event_count: usize = if (previous != null) 2 else 1;
+        try self.focus_history.ensureUnusedCapacity(self.allocator, 1);
+        try self.event_queue.queue.ensureUnusedCapacity(self.event_queue.allocator, focus_event_count);
+
+        // Set new focus
         self.focused_widget = target_widget;
         if (previous) |prev| {
             prev.setFocus(false);
@@ -993,7 +997,7 @@ pub const FocusManager = struct {
         target_widget.setFocus(true);
 
         // Add to focus history
-        try self.focus_history.append(self.allocator, target_widget);
+        self.focus_history.appendAssumeCapacity(target_widget);
         if (self.focus_history.items.len > focus_history_limit) {
             _ = self.focus_history.orderedRemove(0);
         }
@@ -2136,6 +2140,115 @@ test "focus traversal respects registered order and focusability" {
     try std.testing.expectEqual(@as(usize, 2), queue.queue.items.len);
     try std.testing.expect(queue.queue.items[1].data.focus_change.gained);
     try std.testing.expectEqual(&first, queue.queue.items[1].target.?);
+}
+
+test "focus request preserves current focus on history allocation failure" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var manager = FocusManager.init(alloc, &queue);
+    defer manager.deinit();
+
+    const vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    var first = widget.Widget.init(&vtable);
+    var second = widget.Widget.init(&vtable);
+
+    try manager.registerFocusable(&first);
+    try manager.registerFocusable(&second);
+    try std.testing.expect(try manager.requestFocus(&first));
+    manager.focus_history.shrinkAndFree(alloc, manager.focus_history.items.len);
+    try std.testing.expectEqual(manager.focus_history.items.len, manager.focus_history.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = manager.allocator;
+    manager.allocator = failing.allocator();
+    defer manager.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, manager.requestFocus(&second));
+    try std.testing.expectEqual(&first, manager.focused_widget.?);
+    try std.testing.expect(first.focused);
+    try std.testing.expect(!second.focused);
+    try std.testing.expectEqual(@as(usize, 1), manager.focus_history.items.len);
+    try std.testing.expectEqual(&first, manager.focus_history.items[0]);
+}
+
+test "focus request preserves current focus on event queue allocation failure" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var manager = FocusManager.init(alloc, &queue);
+    defer manager.deinit();
+    manager.allow_focus_stealing = true;
+
+    const vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    var first = widget.Widget.init(&vtable);
+    var second = widget.Widget.init(&vtable);
+
+    try manager.registerFocusable(&first);
+    try manager.registerFocusable(&second);
+    try std.testing.expect(try manager.requestFocus(&first));
+    try manager.focus_history.ensureUnusedCapacity(alloc, 1);
+    queue.queue.shrinkAndFree(alloc, queue.queue.items.len);
+    try std.testing.expectEqual(queue.queue.items.len, queue.queue.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = queue.allocator;
+    queue.allocator = failing.allocator();
+    defer queue.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, manager.requestFocus(&second));
+    try std.testing.expectEqual(&first, manager.focused_widget.?);
+    try std.testing.expect(first.focused);
+    try std.testing.expect(!second.focused);
+    try std.testing.expectEqual(@as(usize, 1), manager.focus_history.items.len);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(&first, queue.queue.items[0].target.?);
 }
 
 /// Application class for managing the event loop and UI components
