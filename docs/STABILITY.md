@@ -61,6 +61,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_application_input_binding.py`
 - `python3 scripts/check_example_coverage.py`
 - `python3 scripts/check_interactive_alt_screen.py`
+- `python3 scripts/check_mouse_coordinate_contract.py` to require terminal mouse protocol decoders to route raw one-based positions through `MouseEvent.fromTerminalCoordinates` instead of open-coding normalization.
 - `python3 scripts/check_owned_allocation_patterns.py`
 - `python3 scripts/check_terminal_state_cleanup.py`
 - `python3 scripts/check_unreachable_catches.py`

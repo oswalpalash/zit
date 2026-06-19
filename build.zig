@@ -347,6 +347,10 @@ pub fn build(b: *std.Build) void {
     const mouse_hit_coverage_step = b.step("mouse-hit-coverage", "Check public mouse-capable widgets have hit-test coverage");
     mouse_hit_coverage_step.dependOn(&mouse_hit_coverage_cmd.step);
 
+    const mouse_coordinate_contract_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_mouse_coordinate_contract.py" });
+    const mouse_coordinate_contract_step = b.step("mouse-coordinate-contract", "Check terminal mouse coordinates normalize at the input boundary");
+    mouse_coordinate_contract_step.dependOn(&mouse_coordinate_contract_cmd.step);
+
     const widget_owner_casts_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_owner_casts.py" });
     const widget_owner_casts_step = b.step("widget-owner-casts", "Check widget vtable callbacks use safe owner recovery");
     widget_owner_casts_step.dependOn(&widget_owner_casts_cmd.step);
@@ -401,6 +405,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(accessibility_metadata_step);
     quality_step.dependOn(application_input_binding_step);
     quality_step.dependOn(mouse_hit_coverage_step);
+    quality_step.dependOn(mouse_coordinate_contract_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);
     quality_step.dependOn(unreachable_catches_step);

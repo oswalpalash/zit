@@ -43,6 +43,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
 - Public build-step checker supports `--skip-interactive` for Windows CI shells that cannot provide PTY semantics for TUI run targets.
 - Mouse alignment PTY smoke checker (`scripts/mouse_alignment_smoke.py`, `zig build mouse-smoke`) sends real SGR mouse events and verifies input coordinates and rendered widget hit boxes agree.
+- Mouse coordinate contract checker (`scripts/check_mouse_coordinate_contract.py`, `zig build mouse-coordinate-contract`) fails if terminal mouse decoders bypass `MouseEvent.fromTerminalCoordinates` or open-code one-based to zero-based normalization.
 - DebugAllocator cleanup checker now covers README and Markdown docs so public snippets cannot silently ignore allocator cleanup status.
 - `Application.bindResize` and `Application.handleResize` provide automatic terminal resize handling for renderer buffers, root layout, and optional `ReflowManager` state.
 - `Application.bindInput`, `Application.pollInputOnce`, and `Application.tickOnce` now let the app loop own input polling so resize events automatically reach the renderer/reflow/root path without per-example resize forwarding.
