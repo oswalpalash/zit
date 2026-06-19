@@ -677,19 +677,31 @@ pub const Table = struct {
 
     fn ensureView(self: *Table) void {
         if (!self.view_dirty) return;
-        self.rebuildOrder();
-        self.rebuildViewRows();
+
+        var next_order = self.buildOrder() catch return;
+        const next_rows = self.buildViewRows(next_order.items) catch {
+            next_order.deinit(self.allocator);
+            return;
+        };
+
+        self.visible_order.deinit(self.allocator);
+        self.clearViewRows();
+        self.view_rows.deinit(self.allocator);
+        self.visible_order = next_order;
+        self.view_rows = next_rows;
         self.view_dirty = false;
     }
 
-    fn rebuildOrder(self: *Table) void {
-        self.visible_order.clearRetainingCapacity();
+    fn buildOrder(self: *Table) !std.ArrayList(usize) {
         const count = self.dataRowCount();
-        if (count == 0) return;
-        self.visible_order.ensureTotalCapacityPrecise(self.allocator, count) catch return;
+        var next_order = std.ArrayList(usize).empty;
+        if (count == 0) return next_order;
+
+        errdefer next_order.deinit(self.allocator);
+        try next_order.ensureTotalCapacityPrecise(self.allocator, count);
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            self.visible_order.appendAssumeCapacity(i);
+            next_order.appendAssumeCapacity(i);
         }
 
         const lessThan = struct {
@@ -698,7 +710,8 @@ pub const Table = struct {
             }
         }.less;
 
-        std.sort.pdq(usize, self.visible_order.items, self, lessThan);
+        std.sort.pdq(usize, next_order.items, self, lessThan);
+        return next_order;
     }
 
     fn rowLessThan(self: *Table, lhs: usize, rhs: usize) bool {
@@ -724,32 +737,51 @@ pub const Table = struct {
         return std.mem.order(u8, a_text, b_text);
     }
 
-    fn rebuildViewRows(self: *Table) void {
-        self.clearViewRows();
-        if (self.visible_order.items.len == 0) return;
+    fn freeViewRows(self: *Table, rows: []const ViewRow) void {
+        for (rows) |row| {
+            switch (row) {
+                .group => |label| self.allocator.free(label),
+                else => {},
+            }
+        }
+    }
+
+    fn buildViewRows(self: *Table, order: []const usize) !std.ArrayList(ViewRow) {
+        var next_rows = std.ArrayList(ViewRow).empty;
+        if (order.len == 0) return next_rows;
+
+        errdefer {
+            self.freeViewRows(next_rows.items);
+            next_rows.deinit(self.allocator);
+        }
+
+        const max_view_rows = if (self.grouping_column != null) try std.math.mul(usize, order.len, 2) else order.len;
+        try next_rows.ensureTotalCapacity(self.allocator, max_view_rows);
 
         if (self.grouping_column) |group_col| {
             var last_key: []const u8 = "";
             var has_key = false;
-            for (self.visible_order.items) |row_idx| {
+            for (order) |row_idx| {
                 const key = self.cellView(row_idx, group_col).text;
                 const is_new = !has_key or !std.mem.eql(u8, key, last_key);
                 if (is_new) {
-                    const copy = self.allocator.dupe(u8, key) catch break;
-                    self.view_rows.append(self.allocator, .{ .group = copy }) catch {
+                    const copy = try self.allocator.dupe(u8, key);
+                    next_rows.append(self.allocator, .{ .group = copy }) catch |err| {
                         self.allocator.free(copy);
-                        break;
+                        return err;
                     };
                     last_key = copy;
                     has_key = true;
                 }
-                self.view_rows.append(self.allocator, .{ .data = row_idx }) catch break;
+                try next_rows.append(self.allocator, .{ .data = row_idx });
             }
         } else {
-            for (self.visible_order.items) |row_idx| {
-                self.view_rows.append(self.allocator, .{ .data = row_idx }) catch break;
+            for (order) |row_idx| {
+                next_rows.appendAssumeCapacity(.{ .data = row_idx });
             }
         }
+
+        return next_rows;
     }
 
     fn viewIndexForDataRow(self: *Table, row: usize) ?usize {
@@ -1628,6 +1660,57 @@ test "table sorts and groups rows" {
     const first_data = table.dataIndexForView(1).?;
     const first_cell = table.cellView(first_data, 1).text;
     try std.testing.expectEqualStrings("1", first_cell);
+}
+
+test "table view cache preserves old rows on rebuild allocation failure" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Group", 8, true);
+    try table.addColumn("Value", 8, true);
+
+    try table.addRow(&.{ "B", "2" });
+    try table.addRow(&.{ "A", "3" });
+    try table.addRow(&.{ "A", "1" });
+
+    table.ensureView();
+    try std.testing.expect(!table.view_dirty);
+    try std.testing.expectEqual(@as(usize, 3), table.visible_order.items.len);
+    try std.testing.expectEqual(@as(usize, 3), table.view_rows.items.len);
+    for (table.visible_order.items, 0..) |row_idx, expected| {
+        try std.testing.expectEqual(expected, row_idx);
+    }
+    for (table.view_rows.items) |row| {
+        try std.testing.expect(row == .data);
+    }
+
+    table.groupBy(0);
+    table.toggleSort(1);
+
+    const original_allocator = table.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+    table.allocator = failing.allocator();
+    table.ensureView();
+    table.allocator = original_allocator;
+
+    try std.testing.expect(table.view_dirty);
+    try std.testing.expectEqual(@as(usize, 3), table.visible_order.items.len);
+    try std.testing.expectEqual(@as(usize, 3), table.view_rows.items.len);
+    for (table.visible_order.items, 0..) |row_idx, expected| {
+        try std.testing.expectEqual(expected, row_idx);
+    }
+    for (table.view_rows.items) |row| {
+        try std.testing.expect(row == .data);
+    }
+
+    table.ensureView();
+    try std.testing.expect(!table.view_dirty);
+    var group_count: usize = 0;
+    for (table.view_rows.items) |row| {
+        if (row == .group) group_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), group_count);
 }
 
 test "table inline edit updates cell" {
