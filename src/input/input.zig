@@ -175,7 +175,7 @@ pub const KeyEvent = struct {
             return try allocator.dupe(u8, encoded);
         }
 
-        return switch (self.key) {
+        const name = switch (self.key) {
             KeyCode.BACKSPACE => "Backspace",
             KeyCode.ENTER => "Enter",
             KeyCode.ESCAPE => "Escape",
@@ -205,6 +205,7 @@ pub const KeyEvent = struct {
             KeyCode.F12 => "F12",
             else => "Unknown",
         };
+        return try allocator.dupe(u8, name);
     }
 
     /// Check if two key events are equal
@@ -2000,6 +2001,23 @@ test "key event text input names encode UTF-8" {
     try std.testing.expectEqualStrings("λ", name);
 
     try std.testing.expect(!KeyEvent.init(KeyCode.UP, .{}).isTextInput());
+}
+
+test "key names are allocator-owned for special keys" {
+    const alloc = std.testing.allocator;
+    const event = KeyEvent.init(KeyCode.UP, .{});
+    const name = try event.getName(alloc);
+    defer alloc.free(name);
+
+    try std.testing.expectEqualStrings("Up", name);
+
+    const chord = KeyChord.init(
+        KeyEvent.init(KeyCode.UP, .{ .ctrl = true }),
+        KeyEvent.init(KeyCode.F1, .{}),
+    );
+    const rendered = try chord.toString(alloc);
+    defer alloc.free(rendered);
+    try std.testing.expectEqualStrings("Ctrl+Up → F1", rendered);
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {

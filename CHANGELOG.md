@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- `KeyEvent.getName(allocator)` now consistently returns allocator-owned memory for special keys as well as text keys, fixing invalid frees in `KeyChord.toString` and public callers that correctly free returned names.
 - SGR mouse decoding now rejects empty button/x/y numeric fields as `.unknown` instead of treating malformed fields as coordinate zero.
 - CSI and SGR mouse parsers now validate numeric parameter growth before arithmetic, returning `.unknown` for oversized terminal parameters instead of trapping on integer overflow.
 - Legacy X10 mouse decoding now validates encoded button/coordinate bytes before subtracting the terminal offset, returning `.unknown` for malformed byte streams instead of risking a safety trap.

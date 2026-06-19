@@ -79,6 +79,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
+- Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
 
 Hosted CI runs the matrix public build-step checker with `--skip-interactive`
