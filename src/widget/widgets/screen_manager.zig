@@ -95,7 +95,7 @@ pub const ScreenManager = struct {
 
     pub fn deinit(self: *ScreenManager) void {
         for (self.screens.items) |*entry| {
-            entry.deinit(self.allocator);
+            self.deinitEntry(entry);
         }
         self.screens.deinit(self.allocator);
         self.animator.deinit();
@@ -130,7 +130,7 @@ pub const ScreenManager = struct {
         entry_owned_by_stack = true;
         errdefer {
             var removed = self.screens.orderedRemove(self.screens.items.len - 1);
-            removed.deinit(self.allocator);
+            self.deinitEntry(&removed);
             if (self.topEntry()) |prev| prev.state = .steady;
         }
 
@@ -175,7 +175,7 @@ pub const ScreenManager = struct {
         entry_owned_by_stack = true;
         errdefer {
             var removed = self.screens.orderedRemove(self.screens.items.len - 1);
-            removed.deinit(self.allocator);
+            self.deinitEntry(&removed);
         }
 
         const entering_idx = self.screens.items.len - 1;
@@ -185,7 +185,7 @@ pub const ScreenManager = struct {
 
     /// Clear all screens.
     pub fn reset(self: *ScreenManager) void {
-        for (self.screens.items) |*entry| entry.deinit(self.allocator);
+        for (self.screens.items) |*entry| self.deinitEntry(entry);
         self.screens.clearRetainingCapacity();
         self.active_transition = null;
     }
@@ -248,7 +248,7 @@ pub const ScreenManager = struct {
             .pop => {
                 if (active_trans.exiting) |idx| {
                     var entry = self.screens.orderedRemove(idx);
-                    defer entry.deinit(self.allocator);
+                    defer self.deinitEntry(&entry);
                     try self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit);
                 }
                 if (self.topEntry()) |top| {
@@ -259,7 +259,7 @@ pub const ScreenManager = struct {
             .replace => {
                 if (active_trans.exiting) |idx| {
                     var entry = self.screens.orderedRemove(idx);
-                    defer entry.deinit(self.allocator);
+                    defer self.deinitEntry(&entry);
                     try self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit);
                 }
                 if (active_trans.entering) |idx| {
@@ -283,8 +283,18 @@ pub const ScreenManager = struct {
         try cb(&ctx);
     }
 
+    fn deinitEntry(self: *ScreenManager, entry: *ScreenEntry) void {
+        if (entry.screen.widget.parent == &self.widget) {
+            entry.screen.widget.parent = null;
+        }
+        entry.deinit(self.allocator);
+    }
+
     fn primeEntry(self: *ScreenManager, entry: *ScreenEntry) !void {
         entry.screen.widget.setParent(&self.widget);
+        errdefer if (entry.screen.widget.parent == &self.widget) {
+            entry.screen.widget.parent = null;
+        };
         if (self.last_rect) |rect| {
             try entry.screen.widget.layout(rect);
         }
@@ -537,6 +547,7 @@ test "screen manager push propagates priming layout failure" {
 
     try std.testing.expectError(error.LayoutFailed, manager.push(.{ .widget = &failing.widget, .label = "bad" }));
     try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
+    try std.testing.expect(failing.widget.parent == null);
 }
 
 test "screen manager replace preserves active screen on priming layout failure" {
@@ -554,6 +565,35 @@ test "screen manager replace preserves active screen on priming layout failure" 
 
     try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
     try std.testing.expectEqual(&block.widget, manager.active().?.widget);
+    try std.testing.expect(failing.widget.parent == null);
+}
+
+test "screen manager rejected entering screen is detached" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    const FailingEnter = struct {
+        fn enter(_: *ScreenContext) anyerror!void {
+            return error.EnterFailed;
+        }
+    };
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "good" });
+    try std.testing.expectError(error.EnterFailed, manager.replace(.{
+        .widget = &block_b.widget,
+        .label = "bad",
+        .lifecycle = .{ .on_enter = FailingEnter.enter },
+    }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
+    try std.testing.expect(block_b.widget.parent == null);
 }
 
 test "screen manager layout propagates child layout failure" {
