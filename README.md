@@ -238,7 +238,7 @@ Benchmarks
 - `zig build render-bench` (`examples/benchmarks/render_bench.zig`): micro-benchmark for renderer throughput.
 - `zig build bench` (`examples/benchmarks/bench_suite.zig`): suite covering layout, widgets, input decoding, and memory-retention costs; it fails on conservative performance-budget regressions.
 
-Documentation starts at [docs/README.md](docs/README.md), with focused guides for [docs/API.md](docs/API.md), [docs/WIDGET_CATALOG.md](docs/WIDGET_CATALOG.md), [docs/WIDGET_GUIDE.md](docs/WIDGET_GUIDE.md), [docs/APP_LOOP_TUTORIAL.md](docs/APP_LOOP_TUTORIAL.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/TERMINAL_COMPAT.md](docs/TERMINAL_COMPAT.md), [docs/INTEGRATION.md](docs/INTEGRATION.md), and [docs/STABILITY.md](docs/STABILITY.md).
+Documentation starts at [docs/README.md](docs/README.md). The maintained human-facing docs are Markdown guides, not generated Zig docs: [docs/COOKBOOK.md](docs/COOKBOOK.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [docs/API.md](docs/API.md), [docs/WIDGET_CATALOG.md](docs/WIDGET_CATALOG.md), [docs/WIDGET_GUIDE.md](docs/WIDGET_GUIDE.md), [docs/APP_LOOP_TUTORIAL.md](docs/APP_LOOP_TUTORIAL.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/TERMINAL_COMPAT.md](docs/TERMINAL_COMPAT.md), [docs/INTEGRATION.md](docs/INTEGRATION.md), and [docs/STABILITY.md](docs/STABILITY.md).
 
 ## Development Notes
 - Widgets follow `init`/`deinit` plus `setTheme` for themed variants and surface errors instead of panicking.

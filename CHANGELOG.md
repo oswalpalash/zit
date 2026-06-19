@@ -40,6 +40,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
 - Documentation now has a maintained `docs/README.md` entry point with learning paths for app builders, widget authors, integrators, and maintainers.
 - Documentation link checking (`scripts/check_docs_links.py`, `zig build docs-links`) validates public Markdown relative links and requires every top-level docs guide to be reachable from `docs/README.md`.
+- Added `docs/COOKBOOK.md` and `docs/TROUBLESHOOTING.md` for operational recipes covering app loops, resize, cleanup, mouse alignment, memory ownership, visual QA, widgets, and release readiness.
+- Clarified that Markdown guides under `docs/` are the human-facing documentation surface; generated Zig docs remain a release artifact for exported API inspection.
 - Full release verifier (`scripts/release_verify.py`, `zig build release-check`) runs quality, formatting, docs generation, public build steps, cross-target smoke, PTY smoke, memory cleanup checks, and visual repeat captures.
 - CI now runs the full `zig build release-check` verifier on pull requests and `main` pushes, with contribution-gate checks preventing release verification from becoming tag-only.
 - Public build-step checker (`scripts/check_build_steps.py`) runs every non-destructive `zig build` target with per-step timeouts.
