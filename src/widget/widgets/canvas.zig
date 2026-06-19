@@ -41,6 +41,7 @@ pub const Canvas = struct {
             .allocator = allocator,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.canvas), "Canvas", "");
+        errdefer self.deinit();
 
         try self.resizeInternal(self.width, self.height);
         return self;
@@ -198,4 +199,17 @@ test "canvas draws primitives" {
 
     const rect_cell = renderer.back.getCell(2, 2).*;
     try std.testing.expectEqual(@as(u21, '*'), rect_cell.codepoint());
+}
+
+fn canvasInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var canvas = try Canvas.init(allocator, 8, 4);
+    defer canvas.deinit();
+
+    try std.testing.expectEqual(@as(u16, 8), canvas.width);
+    try std.testing.expectEqual(@as(u16, 4), canvas.height);
+    try std.testing.expectEqual(@as(usize, 32), canvas.cells.items.len);
+}
+
+test "canvas init cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, canvasInitAllocationFailureHarness, .{});
 }
