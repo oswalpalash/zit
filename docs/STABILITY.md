@@ -55,6 +55,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_build_steps.py`
 - `python3 scripts/check_build_steps.py --skip-interactive`
 - `python3 scripts/check_debug_allocator_cleanup.py`
+- `python3 scripts/check_docs_commands.py` to require public Markdown command references to point at existing scripts, build steps, and format paths.
 - `python3 scripts/check_docs_links.py` to require public Markdown relative links to resolve and every top-level docs guide to appear in `docs/README.md`.
 - `python3 scripts/check_ci_script_coverage.py`
 - `python3 scripts/check_contribution_gates.py`

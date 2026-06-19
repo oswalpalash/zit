@@ -11,6 +11,7 @@ Mark all that apply. Use `zig build release-check` before maintainers cut or mer
 - [ ] `python3 scripts/visual_repeat_check.py --count 4` for TUI-facing changes, plus contact-sheet inspection.
 - [ ] `python3 scripts/check_accessibility_metadata.py`
 - [ ] `python3 scripts/check_application_input_binding.py`
+- [ ] `python3 scripts/check_docs_commands.py`
 - [ ] `python3 scripts/check_docs_links.py`
 - [ ] `python3 scripts/check_example_coverage.py`
 - [ ] `python3 scripts/check_interactive_alt_screen.py`

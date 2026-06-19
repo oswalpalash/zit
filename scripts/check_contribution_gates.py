@@ -10,6 +10,7 @@ from pathlib import Path
 REQUIRED_WORKFLOW_GATES = (
     "zig build quality",
     "python3 scripts/check_build_steps.py --skip quality --skip release-check --skip-interactive",
+    "python3 scripts/check_docs_commands.py",
     "python3 scripts/check_docs_links.py",
     "python3 scripts/visual_repeat_check.py --count 4",
     "python3 scripts/interactive_example_smoke.py",
@@ -38,6 +39,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/visual_repeat_check.py --count 4",
     "python3 scripts/check_accessibility_metadata.py",
     "python3 scripts/check_application_input_binding.py",
+    "python3 scripts/check_docs_commands.py",
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_interactive_alt_screen.py",
     "python3 scripts/check_mouse_coordinate_contract.py",
@@ -55,6 +57,7 @@ REQUIRED_STABILITY_GATES = REQUIRED_PR_GATES + (
 
 REQUIRED_RELEASE_VERIFY_GATES = (
     '"contribution gates", ("python3", "scripts/check_contribution_gates.py")',
+    '"docs commands", ("python3", "scripts/check_docs_commands.py")',
     '"docs links", ("python3", "scripts/check_docs_links.py")',
     '"accessibility metadata", ("python3", "scripts/check_accessibility_metadata.py")',
     '"application input binding", ("python3", "scripts/check_application_input_binding.py")',
@@ -78,6 +81,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/visual_repeat_check.py --count 4",
     "python3 scripts/check_accessibility_metadata.py",
     "python3 scripts/check_application_input_binding.py",
+    "python3 scripts/check_docs_commands.py",
     "python3 scripts/check_docs_links.py",
     "python3 scripts/check_example_coverage.py",
     "python3 scripts/check_interactive_alt_screen.py",

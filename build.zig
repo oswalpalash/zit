@@ -339,6 +339,10 @@ pub fn build(b: *std.Build) void {
     const docs_links_step = b.step("docs-links", "Check public Markdown docs links and index coverage");
     docs_links_step.dependOn(&docs_links_cmd.step);
 
+    const docs_commands_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_docs_commands.py" });
+    const docs_commands_step = b.step("docs-commands", "Check public Markdown command references");
+    docs_commands_step.dependOn(&docs_commands_cmd.step);
+
     const accessibility_metadata_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_accessibility_metadata.py" });
     const accessibility_metadata_step = b.step("accessibility-metadata", "Check public widgets expose accessibility metadata");
     accessibility_metadata_step.dependOn(&accessibility_metadata_cmd.step);
@@ -406,6 +410,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(test_step);
     quality_step.dependOn(bench_step);
     quality_step.dependOn(docs_links_step);
+    quality_step.dependOn(docs_commands_step);
     quality_step.dependOn(widget_coverage_step);
     quality_step.dependOn(accessibility_metadata_step);
     quality_step.dependOn(application_input_binding_step);

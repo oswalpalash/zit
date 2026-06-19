@@ -60,6 +60,9 @@ primary docs experience.
 
 - `python3 scripts/check_docs_links.py` validates Markdown relative links and
   requires every top-level `docs/*.md` guide to be linked from this index.
+- `python3 scripts/check_docs_commands.py` validates documented script
+  invocations, build steps, and format paths against files and build steps in
+  this repository.
 - `python3 scripts/check_widget_coverage.py` validates widget docs against
   public widget exports, examples, snapshots, and helper APIs.
 - `zig build release-check` generates API docs under `zig-out/docs-release` and
