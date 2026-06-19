@@ -16,6 +16,11 @@ fn terminalMouseCoordToScreenCoord(value: u16) u16 {
     return if (value > 0) value - 1 else 0;
 }
 
+fn legacyMouseByteToParam(byte: u8) ?u16 {
+    if (byte < 32) return null;
+    return @as(u16, byte) - 32;
+}
+
 fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
     if (interval_ms == 0 or last_poll_ms == 0) return true;
     if (now_ms < last_poll_ms) return true;
@@ -1653,9 +1658,11 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
         bytes[idx] = b;
     }
 
-    const button_param: u16 = @as(u16, bytes[0]) - 32;
-    const x = terminalMouseCoordToScreenCoord(@as(u16, @intCast(bytes[1] - 32)));
-    const y = terminalMouseCoordToScreenCoord(@as(u16, @intCast(bytes[2] - 32)));
+    const button_param = legacyMouseByteToParam(bytes[0]) orelse return Event{ .unknown = {} };
+    const terminal_x = legacyMouseByteToParam(bytes[1]) orelse return Event{ .unknown = {} };
+    const terminal_y = legacyMouseByteToParam(bytes[2]) orelse return Event{ .unknown = {} };
+    const x = terminalMouseCoordToScreenCoord(terminal_x);
+    const y = terminalMouseCoordToScreenCoord(terminal_y);
 
     const is_motion = (button_param & 0x20) != 0;
     const is_scroll = (button_param & 0x40) != 0;
@@ -1877,6 +1884,26 @@ test "parse legacy mouse press" {
     try std.testing.expectEqual(@as(u8, 1), mouse_event.button);
     try std.testing.expectEqual(@as(u16, 4), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 2), mouse_event.y);
+}
+
+test "parse legacy mouse coordinates are zero based at origin" {
+    const seq = [_]u8{ 'M', 32 + 0, 32 + 1, 32 + 1 };
+    var reader = SliceByteReader{ .data = seq[0..] };
+    var sink = NullSink{};
+    const event = try parseCSISequence(&reader, &sink);
+    try std.testing.expectEqual(@as(EventType, .mouse), std.meta.activeTag(event));
+
+    const mouse_event = event.mouse;
+    try std.testing.expectEqual(MouseAction.press, mouse_event.action);
+    try std.testing.expectEqual(@as(u16, 0), mouse_event.x);
+    try std.testing.expectEqual(@as(u16, 0), mouse_event.y);
+}
+
+test "malformed legacy mouse bytes are unknown instead of trapping" {
+    const bad = [_]u8{ 0x1b, '[', 'M', 0, 0, 0 };
+    const parsed = try decodeEventFromBytes(bad[0..]);
+    try std.testing.expect(parsed != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
 }
 
 test "fuzz decodeEventFromBytes handles noisy escape sequences" {
