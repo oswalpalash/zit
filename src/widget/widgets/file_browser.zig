@@ -48,14 +48,18 @@ pub const FileBrowser = struct {
 
     pub fn init(allocator: std.mem.Allocator, start_path: []const u8) !*FileBrowser {
         const normalized = try normalizePath(allocator, start_path);
+        errdefer allocator.free(normalized);
 
         const self = try allocator.create(FileBrowser);
+        errdefer allocator.destroy(self);
+
         self.* = FileBrowser{
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
             .current_path = normalized,
             .entries = std.ArrayList(Entry).empty,
         };
+        errdefer self.entries.deinit(self.allocator);
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.list), "File browser", "");
 
         try self.refresh();
@@ -109,54 +113,34 @@ pub const FileBrowser = struct {
 
     pub fn setPath(self: *FileBrowser, path: []const u8) !void {
         const normalized = try normalizePath(self.allocator, path);
-        self.allocator.free(self.current_path);
+        errdefer self.allocator.free(normalized);
+
+        var next_entries = try self.buildEntries(normalized);
+        errdefer self.deinitEntries(&next_entries);
+
+        const old_path = self.current_path;
+        var old_entries = self.entries;
         self.current_path = normalized;
+        self.entries = next_entries;
         self.selected = 0;
         self.scroll = 0;
         self.resetTypeahead();
-        try self.refresh();
+
+        self.deinitEntries(&old_entries);
+        self.allocator.free(old_path);
+
         if (self.on_directory_change) |cb| {
             cb(self.current_path);
         }
     }
 
     pub fn refresh(self: *FileBrowser) !void {
-        self.clearEntries();
+        var next_entries = try self.buildEntries(self.current_path);
+        errdefer self.deinitEntries(&next_entries);
 
-        // Add parent entry if applicable.
-        if (std.fs.path.dirname(self.current_path) != null) {
-            const parent_name = try self.allocator.dupe(u8, "..");
-            try self.entries.append(self.allocator, .{
-                .name = parent_name,
-                .is_dir = true,
-                .is_parent = true,
-            });
-        }
-
-        const io = std.Io.Threaded.global_single_threaded.io();
-        const cwd = std.Io.Dir.cwd();
-        var dir = try cwd.openDir(io, self.current_path, .{ .iterate = true });
-        defer dir.close(io);
-
-        var it = dir.iterate();
-        while (try it.next(io)) |entry| {
-            if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
-            const name_copy = try self.allocator.dupe(u8, entry.name);
-            try self.entries.append(self.allocator, .{
-                .name = name_copy,
-                .is_dir = entry.kind == .directory,
-            });
-        }
-
-        // Sort directories first, then files alphabetically.
-        const Ctx = struct {};
-        std.sort.pdq(Entry, self.entries.items, Ctx{}, struct {
-            fn lessThan(_: Ctx, a: Entry, b: Entry) bool {
-                if (a.is_parent != b.is_parent) return a.is_parent;
-                if (a.is_dir != b.is_dir) return a.is_dir;
-                return std.ascii.lessThanIgnoreCase(a.name, b.name);
-            }
-        }.lessThan);
+        var old_entries = self.entries;
+        self.entries = next_entries;
+        self.deinitEntries(&old_entries);
 
         if (self.selected >= self.entries.items.len and self.entries.items.len > 0) {
             self.selected = self.entries.items.len - 1;
@@ -166,11 +150,60 @@ pub const FileBrowser = struct {
         self.ensureVisible();
     }
 
+    fn buildEntries(self: *FileBrowser, path: []const u8) !std.ArrayList(Entry) {
+        var entries = std.ArrayList(Entry).empty;
+        errdefer self.deinitEntries(&entries);
+
+        if (std.fs.path.dirname(path) != null) {
+            try self.appendEntry(&entries, "..", true, true);
+        }
+
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const cwd = std.Io.Dir.cwd();
+        var dir = try cwd.openDir(io, path, .{ .iterate = true });
+        defer dir.close(io);
+
+        var it = dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (!self.show_hidden and entry.name.len > 0 and entry.name[0] == '.') continue;
+            try self.appendEntry(&entries, entry.name, entry.kind == .directory, false);
+        }
+
+        // Sort directories first, then files alphabetically.
+        const Ctx = struct {};
+        std.sort.pdq(Entry, entries.items, Ctx{}, struct {
+            fn lessThan(_: Ctx, a: Entry, b: Entry) bool {
+                if (a.is_parent != b.is_parent) return a.is_parent;
+                if (a.is_dir != b.is_dir) return a.is_dir;
+                return std.ascii.lessThanIgnoreCase(a.name, b.name);
+            }
+        }.lessThan);
+
+        return entries;
+    }
+
+    fn appendEntry(self: *FileBrowser, entries: *std.ArrayList(Entry), name: []const u8, is_dir: bool, is_parent: bool) !void {
+        try entries.ensureUnusedCapacity(self.allocator, 1);
+        const name_copy = try self.allocator.dupe(u8, name);
+        entries.appendAssumeCapacity(.{
+            .name = name_copy,
+            .is_dir = is_dir,
+            .is_parent = is_parent,
+        });
+    }
+
     fn clearEntries(self: *FileBrowser) void {
         for (self.entries.items) |entry| {
             self.allocator.free(entry.name);
         }
         self.entries.clearRetainingCapacity();
+    }
+
+    fn deinitEntries(self: *FileBrowser, entries: *std.ArrayList(Entry)) void {
+        for (entries.items) |entry| {
+            self.allocator.free(entry.name);
+        }
+        entries.deinit(self.allocator);
     }
 
     fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -565,6 +598,70 @@ test "file browser typeahead selects entries" {
     TestClock.now = 2_000;
     _ = try browser.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
+}
+
+test "file browser setPath preserves state when target cannot refresh" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    {
+        const file = try tmp.dir.createFile(io, "stable.txt", .{});
+        file.close(io);
+    }
+    {
+        const file = try tmp.dir.createFile(io, "not-a-dir.txt", .{});
+        file.close(io);
+    }
+
+    const root_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(root_path);
+    const file_path = try std.fs.path.join(alloc, &[_][]const u8{ root_path, "not-a-dir.txt" });
+    defer alloc.free(file_path);
+
+    var browser = try FileBrowser.init(alloc, root_path);
+    defer browser.deinit();
+
+    const old_path = try alloc.dupe(u8, browser.current_path);
+    defer alloc.free(old_path);
+    const old_len = browser.entries.items.len;
+    try std.testing.expect(old_len > 0);
+
+    try std.testing.expectError(error.NotDir, browser.setPath(file_path));
+    try std.testing.expectEqualStrings(old_path, browser.current_path);
+    try std.testing.expectEqual(old_len, browser.entries.items.len);
+}
+
+test "file browser refresh preserves entries on allocation failure" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    {
+        const file = try tmp.dir.createFile(io, "alpha.txt", .{});
+        file.close(io);
+    }
+
+    const root_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(root_path);
+
+    var browser = try FileBrowser.init(alloc, root_path);
+    defer browser.deinit();
+
+    const old_len = browser.entries.items.len;
+    const old_first = try alloc.dupe(u8, browser.entries.items[0].name);
+    defer alloc.free(old_first);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = browser.allocator;
+    browser.allocator = failing.allocator();
+    defer browser.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, browser.refresh());
+    try std.testing.expectEqual(old_len, browser.entries.items.len);
+    try std.testing.expectEqualStrings(old_first, browser.entries.items[0].name);
 }
 
 test "file browser clips entry names without splitting wide utf8 glyphs" {
