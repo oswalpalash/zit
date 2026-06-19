@@ -46,6 +46,7 @@ pub const LogView = struct {
     }
 
     pub fn append(self: *LogView, level: Level, message: []const u8) !void {
+        try self.entries.ensureUnusedCapacity(self.allocator, 1);
         const owned = try self.allocator.dupe(u8, message);
         errdefer self.allocator.free(owned);
 
@@ -54,7 +55,7 @@ pub const LogView = struct {
             self.allocator.free(removed.text);
         }
 
-        try self.entries.append(self.allocator, .{ .level = level, .text = owned });
+        self.entries.appendAssumeCapacity(.{ .level = level, .text = owned });
         if (self.auto_scroll) {
             self.scroll_offset = 0;
         } else {
@@ -261,4 +262,57 @@ test "log view mouse wheel scrolls rendered viewport" {
     try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
     try std.testing.expect(try log.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 4, 2, 0, -1) }));
     try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
+}
+
+fn logViewAppendAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var log = try LogView.init(allocator);
+    defer log.deinit();
+
+    try log.appendText("first");
+    try log.append(.warn, "second");
+}
+
+test "log view append cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, logViewAppendAllocationFailureHarness, .{});
+}
+
+test "log view append preserves full log on entry allocation failure" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("stable");
+    log.setMaxEntries(1);
+    log.entries.shrinkAndFree(alloc, log.entries.items.len);
+    try std.testing.expectEqual(log.entries.items.len, log.entries.capacity);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = log.allocator;
+    log.allocator = failing.allocator();
+    defer log.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, log.append(.err, "replacement"));
+    try std.testing.expectEqual(@as(usize, 1), log.entries.items.len);
+    try std.testing.expectEqual(LogView.Level.info, log.entries.items[0].level);
+    try std.testing.expectEqualStrings("stable", log.entries.items[0].text);
+}
+
+test "log view append preserves full log on message allocation failure" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("stable");
+    log.setMaxEntries(1);
+    try log.entries.ensureUnusedCapacity(alloc, 1);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = log.allocator;
+    log.allocator = failing.allocator();
+    defer log.allocator = original_allocator;
+
+    try std.testing.expectError(error.OutOfMemory, log.append(.err, "replacement"));
+    try std.testing.expectEqual(@as(usize, 1), log.entries.items.len);
+    try std.testing.expectEqual(LogView.Level.info, log.entries.items[0].level);
+    try std.testing.expectEqualStrings("stable", log.entries.items[0].text);
 }
