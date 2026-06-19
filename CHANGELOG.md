@@ -55,6 +55,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- CSI and SGR mouse parsers now validate numeric parameter growth before arithmetic, returning `.unknown` for oversized terminal parameters instead of trapping on integer overflow.
 - Legacy X10 mouse decoding now validates encoded button/coordinate bytes before subtracting the terminal offset, returning `.unknown` for malformed byte streams instead of risking a safety trap.
 - `InputHandler.translateMouseCoordinates` is now idempotent for mouse events returned by `pollEvent`, with `translateTerminalMouseCoordinates` available for raw 1-based terminal protocol coordinates, preventing accidental double-normalization that shifts clicks above or left of rendered targets.
 - `button-example` now uses `@fieldParentPtr("widget", ...)` in its custom layout wrapper instead of demonstrating unsafe embedded-widget owner casts.

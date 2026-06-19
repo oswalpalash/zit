@@ -21,6 +21,13 @@ fn legacyMouseByteToParam(byte: u8) ?u16 {
     return @as(u16, byte) - 32;
 }
 
+fn appendDecimalParamDigit(current: u16, digit: u8) ?u16 {
+    if (digit > 9) return null;
+    const next = @as(u32, current) * 10 + digit;
+    if (next > std.math.maxInt(u16)) return null;
+    return @intCast(next);
+}
+
 fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
     if (interval_ms == 0 or last_poll_ms == 0) return true;
     if (now_ms < last_poll_ms) return true;
@@ -1612,7 +1619,7 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
         }
 
         if (next_byte >= '0' and next_byte <= '9') {
-            current = current * 10 + (next_byte - '0');
+            current = appendDecimalParamDigit(current, next_byte - '0') orelse return Event{ .unknown = {} };
             has_value = true;
             continue;
         }
@@ -1725,8 +1732,8 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         sink.put(c);
 
         if (c >= '0' and c <= '9') {
-            // Append digit to parameter value
-            param_value = param_value * 10 + (c - '0');
+            // Append digit to parameter value.
+            param_value = appendDecimalParamDigit(param_value, c - '0') orelse return Event{ .unknown = {} };
         } else if (c == ';') {
             // End of parameter
             if (param_index < params.len) {
@@ -1816,6 +1823,12 @@ test "parse CSI shift tab" {
     try std.testing.expect(key_event.modifiers.shift);
 }
 
+test "oversized CSI numeric params are unknown instead of trapping" {
+    const parsed = try decodeEventFromBytes("\x1b[999999999999999999999999999999999999A");
+    try std.testing.expect(parsed != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
+}
+
 test "parse mouse scroll delta" {
     var reader = SliceByteReader{ .data = "<64;10;5M" };
     var sink = NullSink{};
@@ -1852,6 +1865,12 @@ test "parse SGR mouse coordinates are zero based for widgets" {
     try std.testing.expectEqual(MouseAction.press, mouse_event.action);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.x);
     try std.testing.expectEqual(@as(u16, 0), mouse_event.y);
+}
+
+test "oversized SGR mouse numeric params are unknown instead of trapping" {
+    const parsed = try decodeEventFromBytes("\x1b[<0;999999999999999999999999999999;1M");
+    try std.testing.expect(parsed != null);
+    try std.testing.expectEqual(@as(EventType, .unknown), std.meta.activeTag(parsed.?));
 }
 
 test "translateMouseCoordinates is idempotent for decoded mouse events" {
