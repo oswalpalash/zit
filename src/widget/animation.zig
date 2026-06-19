@@ -56,6 +56,10 @@ pub const Animator = struct {
         self.animations.deinit(self.allocator);
     }
 
+    pub fn ensureUnusedCapacity(self: *Animator, additional_count: usize) !void {
+        try self.animations.ensureUnusedCapacity(self.allocator, additional_count);
+    }
+
     pub fn add(self: *Animator, spec: AnimationSpec) !AnimationHandle {
         const id = self.next_id;
         self.next_id += 1;

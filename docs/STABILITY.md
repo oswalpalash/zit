@@ -81,6 +81,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.
+- Navigation stacks that own copied route/screen metadata must reserve collection and transition capacity before taking ownership, then roll back appended entries if a later hook or transition setup fails.
 - Catalog/map-style APIs that accept caller-provided string keys must either document borrowed lifetimes explicitly or own key copies; stable public catalogs default to owning keys and values transactionally.
 - Widget initializers that allocate after `allocator.create` must use `errdefer` cleanup or a fully initialized `deinit` path before any later fallible operation; `check_owned_allocation_patterns.py` enforces this for owned string copies before `self.*` initialization.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.

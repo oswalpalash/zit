@@ -113,15 +113,27 @@ pub const ScreenManager = struct {
             try self.finishTransition();
         }
 
+        try self.screens.ensureUnusedCapacity(self.allocator, 1);
+        try self.reserveTransitionCapacity(true, self.screens.items.len > 0);
+
+        var entry = try ScreenEntry.init(self.allocator, screen);
+        var entry_owned_by_stack = false;
+        errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
+        self.primeEntry(&entry);
+
         if (self.topEntry()) |prev| {
             try self.runHook(prev, prev.label_copy, prev.screen.lifecycle.on_pause);
             prev.state = .paused;
         }
 
-        var entry = try ScreenEntry.init(self.allocator, screen);
-        self.primeEntry(&entry);
+        self.screens.appendAssumeCapacity(entry);
+        entry_owned_by_stack = true;
+        errdefer {
+            var removed = self.screens.orderedRemove(self.screens.items.len - 1);
+            removed.deinit(self.allocator);
+            if (self.topEntry()) |prev| prev.state = .steady;
+        }
 
-        try self.screens.append(self.allocator, entry);
         const new_idx = self.screens.items.len - 1;
         try self.runHook(&self.screens.items[new_idx], self.screens.items[new_idx].label_copy, self.screens.items[new_idx].screen.lifecycle.on_enter);
         try self.startTransition(.push, new_idx, if (new_idx > 0) new_idx - 1 else null);
@@ -150,11 +162,22 @@ pub const ScreenManager = struct {
         }
 
         const exiting_idx = self.screens.items.len - 1;
+        try self.screens.ensureUnusedCapacity(self.allocator, 1);
+        try self.reserveTransitionCapacity(true, true);
+
         var entry = try ScreenEntry.init(self.allocator, screen);
+        var entry_owned_by_stack = false;
+        errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
         self.primeEntry(&entry);
         try self.runHook(&self.screens.items[exiting_idx], self.screens.items[exiting_idx].label_copy, self.screens.items[exiting_idx].screen.lifecycle.on_pause);
 
-        try self.screens.append(self.allocator, entry);
+        self.screens.appendAssumeCapacity(entry);
+        entry_owned_by_stack = true;
+        errdefer {
+            var removed = self.screens.orderedRemove(self.screens.items.len - 1);
+            removed.deinit(self.allocator);
+        }
+
         const entering_idx = self.screens.items.len - 1;
         try self.runHook(&self.screens.items[entering_idx], self.screens.items[entering_idx].label_copy, self.screens.items[entering_idx].screen.lifecycle.on_enter);
         try self.startTransition(.replace, entering_idx, exiting_idx);
@@ -178,6 +201,13 @@ pub const ScreenManager = struct {
         if (self.screens.items.len == 0) return null;
         const top = self.screens.items[self.screens.items.len - 1];
         return top.screen;
+    }
+
+    fn reserveTransitionCapacity(self: *ScreenManager, has_entering: bool, has_exiting: bool) !void {
+        var count: usize = 0;
+        if (has_entering) count += 1;
+        if (has_exiting) count += 1;
+        try self.animator.ensureUnusedCapacity(count);
     }
 
     fn startTransition(self: *ScreenManager, kind: TransitionKind, entering_idx: ?usize, exiting_idx: ?usize) !void {
@@ -430,4 +460,35 @@ test "screen manager replace updates active screen" {
 
     const active_after = manager.active().?;
     try std.testing.expectEqual(&block_b.widget, active_after.widget);
+}
+
+fn screenManagerPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var manager = try ScreenManager.init(allocator);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(allocator);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(allocator);
+    defer block_b.deinit();
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    try manager.push(.{ .widget = &block_b.widget, .label = "b" });
+}
+
+fn screenManagerReplaceAllocationFailureHarness(allocator: std.mem.Allocator) !void {
+    var manager = try ScreenManager.init(allocator);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(allocator);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(allocator);
+    defer block_b.deinit();
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    try manager.replace(.{ .widget = &block_b.widget, .label = "b" });
+}
+
+test "screen manager navigation cleans up every allocation failure path" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, screenManagerPushAllocationFailureHarness, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, screenManagerReplaceAllocationFailureHarness, .{});
 }
