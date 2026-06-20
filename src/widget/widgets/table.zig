@@ -860,6 +860,47 @@ pub const Table = struct {
         return rows;
     }
 
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
+    }
+
+    fn clippedSpanWidth(start: u32, desired: u16, right: u32) u16 {
+        if (start >= right) return 0;
+        const available = @min(@as(u32, desired), right - start);
+        return @intCast(@min(available, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn fillTableSpan(
+        renderer: *render.Renderer,
+        x: u32,
+        y: u32,
+        width: u16,
+        fill_char: u21,
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    ) void {
+        if (width == 0) return;
+        const draw_x = u16Coord(x) orelse return;
+        const draw_y = u16Coord(y) orelse return;
+        renderer.fillRect(draw_x, draw_y, width, 1, fill_char, fg, bg, style);
+    }
+
+    fn drawTableChar(
+        renderer: *render.Renderer,
+        x: u32,
+        y: u32,
+        char: u21,
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    ) void {
+        const draw_x = u16Coord(x) orelse return;
+        const draw_y = u16Coord(y) orelse return;
+        renderer.drawChar(draw_x, draw_y, char, fg, bg, style);
+    }
+
     fn columnIndexAtX(self: *Table, x: u16) ?usize {
         const content_rect = self.contentRect();
         if (!content_rect.contains(x, content_rect.y)) return null;
@@ -989,22 +1030,23 @@ pub const Table = struct {
         const content_width = content_rect.width;
         const content_height = content_rect.height;
         if (content_width == 0 or content_height == 0) return;
-        const content_right = content_x + content_width;
+        const content_right = @as(u32, content_x) + @as(u32, content_width);
+        const content_bottom = @as(u32, content_y) + @as(u32, content_height);
 
-        var y = content_y;
-        var x = content_x;
+        var y: u32 = content_y;
+        var x: u32 = content_x;
 
         // Draw headers if enabled
         if (self.show_headers) {
             x = content_x;
 
             for (self.columns.items, 0..) |column, col_idx| {
-                if (@as(u16, @intCast(x)) + column.width > content_right) {
-                    break;
-                }
+                if (x >= content_right) break;
+                const column_width = clippedSpanWidth(x, column.width, content_right);
+                if (column_width == 0) break;
 
                 // Draw header background
-                renderer.fillRect(x, y, column.width, 1, ' ', self.header_fg, self.header_bg, render.Style{});
+                fillTableSpan(renderer, x, y, column_width, ' ', self.header_fg, self.header_bg, render.Style{});
 
                 const indicator: ?u21 = if (self.sort_column != null and self.sort_column.? == col_idx)
                     (if (self.sort_descending) '▼' else '▲')
@@ -1012,48 +1054,51 @@ pub const Table = struct {
                     null;
 
                 // Draw header text
-                var cursor: u16 = x + 1;
+                var cursor = x + 1;
                 for (column.header, 0..) |char, i| {
-                    if (i >= @as(usize, @intCast(column.width - 1))) {
+                    if (i >= @as(usize, @intCast(column_width - 1))) {
                         break;
                     }
 
-                    renderer.drawChar(cursor, y, char, self.header_fg, self.header_bg, render.Style{});
+                    drawTableChar(renderer, cursor, y, char, self.header_fg, self.header_bg, render.Style{});
                     cursor += 1;
-                    if (cursor >= x + column.width) break;
+                    if (cursor >= x + column_width) break;
                 }
 
-                if (indicator != null and cursor < x + column.width) {
-                    renderer.drawChar(cursor, y, indicator.?, self.header_fg, self.header_bg, render.Style{ .bold = true });
+                if (indicator != null and cursor < x + column_width) {
+                    drawTableChar(renderer, cursor, y, indicator.?, self.header_fg, self.header_bg, render.Style{ .bold = true });
                 }
 
                 // Draw grid if enabled
                 if (self.show_grid and x > content_x) {
-                    renderer.drawChar(x, y, '│', self.grid_fg, self.header_bg, render.Style{});
+                    drawTableChar(renderer, x, y, '│', self.grid_fg, self.header_bg, render.Style{});
                 }
 
                 x += column.width;
+                if (x > std.math.maxInt(u16)) break;
             }
 
             y += 1;
 
             // Draw horizontal grid line under headers if enabled
-            if (self.show_grid and y < content_y + content_height) {
+            if (self.show_grid and y < content_bottom) {
                 x = content_x;
                 for (self.columns.items) |column| {
-                    if (@as(u16, @intCast(x)) + column.width > content_right) {
-                        break;
-                    }
+                    if (x >= content_right) break;
+                    const column_width = clippedSpanWidth(x, column.width, content_right);
+                    if (column_width == 0) break;
 
-                    for (0..@as(usize, @intCast(column.width))) |i| {
+                    for (0..@as(usize, @intCast(column_width))) |i| {
                         const char: u21 = if (x > content_x and i == 0) '┼' else '─';
-                        renderer.drawChar(x + @as(u16, @intCast(i)), y, char, self.grid_fg, bg, render.Style{});
+                        drawTableChar(renderer, x + @as(u32, @intCast(i)), y, char, self.grid_fg, bg, render.Style{});
                     }
 
                     x += column.width;
+                    if (x > std.math.maxInt(u16)) break;
                 }
                 while (x < content_right) : (x += 1) {
-                    renderer.drawChar(x, y, '─', self.grid_fg, bg, render.Style{});
+                    if (x > std.math.maxInt(u16)) break;
+                    drawTableChar(renderer, x, y, '─', self.grid_fg, bg, render.Style{});
                 }
                 y += 1;
             }
@@ -1068,10 +1113,14 @@ pub const Table = struct {
             const view_row = self.view_rows.items[view_idx];
             if (view_row == .group) {
                 x = content_x;
-                renderer.fillRect(x, y, content_width, 1, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
+                fillTableSpan(renderer, x, y, content_width, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
                 const group_text = view_row.group;
                 if (group_text.len > 0 and content_width > 2) {
-                    renderer.drawStr(x + 1, y, group_text[0..@min(group_text.len, @as(usize, @intCast(content_width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
+                    if (u16Coord(x + 1)) |draw_x| {
+                        if (u16Coord(y)) |draw_y| {
+                            renderer.drawStr(draw_x, draw_y, group_text[0..@min(group_text.len, @as(usize, @intCast(content_width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
+                        }
+                    }
                 }
                 y += 1;
                 continue;
@@ -1095,9 +1144,9 @@ pub const Table = struct {
 
             // Draw each cell in the row
             for (self.columns.items, 0..) |column, col_idx| {
-                if (@as(u16, @intCast(x)) + column.width > content_right) {
-                    break;
-                }
+                if (x >= content_right) break;
+                const column_width = clippedSpanWidth(x, column.width, content_right);
+                if (column_width == 0) break;
 
                 var cell_view = TableCellView{
                     .text = "",
@@ -1116,35 +1165,37 @@ pub const Table = struct {
                     const cell_style = if (editing) render.Style{ .underline = true } else render.Style{};
 
                     // Draw cell background
-                    renderer.fillRect(x, y, column.width, 1, ' ', cell_fg, cell_bg, render.Style{});
+                    fillTableSpan(renderer, x, y, column_width, ' ', cell_fg, cell_bg, render.Style{});
 
                     // Draw cell text
                     for (text_slice, 0..) |char, i| {
-                        if (i >= @as(usize, @intCast(column.width - 1))) {
+                        if (i >= @as(usize, @intCast(column_width - 1))) {
                             break;
                         }
 
-                        renderer.drawChar(x + 1 + @as(u16, @intCast(i)), y, char, cell_fg, cell_bg, cell_style);
+                        drawTableChar(renderer, x + 1 + @as(u32, @intCast(i)), y, char, cell_fg, cell_bg, cell_style);
                     }
 
                     // Draw grid if enabled
                     if (self.show_grid and x > content_x) {
-                        renderer.drawChar(x, y, '│', self.grid_fg, cell_bg, render.Style{});
+                        drawTableChar(renderer, x, y, '│', self.grid_fg, cell_bg, render.Style{});
                     }
                 } else {
                     // Draw empty cell
-                    renderer.fillRect(x, y, column.width, 1, ' ', row_fg, row_bg, render.Style{});
+                    fillTableSpan(renderer, x, y, column_width, ' ', row_fg, row_bg, render.Style{});
 
                     // Draw grid if enabled
                     if (self.show_grid and x > content_x) {
-                        renderer.drawChar(x, y, '│', self.grid_fg, row_bg, render.Style{});
+                        drawTableChar(renderer, x, y, '│', self.grid_fg, row_bg, render.Style{});
                     }
                 }
 
                 x += column.width;
+                if (x > std.math.maxInt(u16)) break;
             }
 
             y += 1;
+            if (y > std.math.maxInt(u16)) break;
         }
     }
 
@@ -1589,6 +1640,39 @@ test "table border preserves header and row content" {
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 1).codepoint());
     try std.testing.expectEqual(@as(u21, '─'), renderer.back.getCell(2, 2).codepoint());
     try std.testing.expectEqual(@as(u21, 'x'), renderer.back.getCell(2, 3).codepoint());
+}
+
+test "table draws clipped oversized columns" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 20, true);
+    try table.addRow(&.{"abcdef"});
+    try table.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, 'N'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(1, 2).codepoint());
+    try std.testing.expectEqual(@as(u21, 'd'), renderer.back.getCell(4, 2).codepoint());
+}
+
+test "table clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 4, true);
+    try table.addColumn("B", 4, true);
+    try table.addRow(&.{ "x", "y" });
+    try table.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, 0, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
 }
 
 test "bordered table mouse header uses rendered content row" {
