@@ -263,9 +263,13 @@ pub const Table = struct {
     /// Resize a resizable column by the provided delta.
     pub fn resizeColumn(self: *Table, column: usize, delta: i16) void {
         if (column >= self.columns.items.len) return;
+        self.resizeColumnFromWidth(column, self.columns.items[column].width, @as(i32, delta));
+    }
+
+    fn resizeColumnFromWidth(self: *Table, column: usize, base_width: u16, delta: i32) void {
+        if (column >= self.columns.items.len) return;
         if (!self.columns.items[column].resizable) return;
-        const base_width = self.columns.items[column].width;
-        const updated = std.math.clamp(@as(i32, base_width) + @as(i32, delta), 3, @as(i32, std.math.maxInt(u16)));
+        const updated = std.math.clamp(@as(i32, @intCast(base_width)) + delta, 3, @as(i32, std.math.maxInt(u16)));
         self.columns.items[column].width = @intCast(updated);
     }
 
@@ -940,6 +944,16 @@ pub const Table = struct {
         return false;
     }
 
+    fn resizeDeltaFromAnchor(x: u16, anchor_x: u16) i32 {
+        return @as(i32, @intCast(x)) - @as(i32, @intCast(anchor_x));
+    }
+
+    fn dragResizeColumn(self: *Table, x: u16) void {
+        if (self.resizing_column) |column| {
+            self.resizeColumnFromWidth(column, self.resize_original_width, resizeDeltaFromAnchor(x, self.resize_anchor_x));
+        }
+    }
+
     fn clampScroll(self: *Table) void {
         self.ensureView();
         const visible_rows = self.getVisibleRowCount();
@@ -1226,16 +1240,14 @@ pub const Table = struct {
                         return true;
                     }
                 } else if (mouse_event.action == .move and self.resizing_column != null) {
-                    const delta = @as(i16, @intCast(mouse_event.x)) - @as(i16, @intCast(self.resize_anchor_x));
-                    self.resizeColumn(self.resizing_column.?, delta);
+                    self.dragResizeColumn(mouse_event.x);
                     return true;
                 } else if (mouse_event.action == .release and self.resizing_column != null) {
                     self.resizing_column = null;
                     return true;
                 }
             } else if (mouse_event.action == .move and self.resizing_column != null) {
-                const delta = @as(i16, @intCast(mouse_event.x)) - @as(i16, @intCast(self.resize_anchor_x));
-                self.resizeColumn(self.resizing_column.?, delta);
+                self.dragResizeColumn(mouse_event.x);
                 return true;
             } else if (mouse_event.action == .release and self.resizing_column != null) {
                 self.resizing_column = null;
@@ -1980,10 +1992,31 @@ test "table resizes columns from header drag handles" {
     _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 7, 0, 1, 0) });
     try std.testing.expectEqual(@as(u16, 7), table.columns.items[0].width);
 
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 7, 0, 1, 0) });
+    try std.testing.expectEqual(@as(u16, 7), table.columns.items[0].width);
+
     _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 1, 0, 1, 0) });
     try std.testing.expectEqual(@as(u16, 3), table.columns.items[0].width);
 
     _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 1, 0, 1, 0) });
+    try std.testing.expectEqual(@as(?usize, null), table.resizing_column);
+}
+
+test "table resize drag accepts edge coordinates above i16 max" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 5, true);
+    try table.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 5, 0, 6, 3));
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), 0, 1, 0) });
+    try std.testing.expectEqual(@as(?usize, 0), table.resizing_column);
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, std.math.maxInt(u16), 0, 1, 0) });
+    try std.testing.expectEqual(@as(u16, 5), table.columns.items[0].width);
+
+    _ = try table.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, std.math.maxInt(u16), 0, 1, 0) });
     try std.testing.expectEqual(@as(?usize, null), table.resizing_column);
 }
 
