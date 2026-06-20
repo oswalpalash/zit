@@ -581,27 +581,37 @@ pub const InputField = struct {
 
         // Calculate content area
         const border_adjust: u16 = if (self.show_border) 1 else 0;
-        const inner_x = rect.x + border_adjust;
-        const inner_y = rect.y + rect.height / 2;
+        const inner_x_u32 = @as(u32, rect.x) + @as(u32, border_adjust);
+        const inner_y_u32 = @as(u32, rect.y) + @as(u32, rect.height / 2);
         const inner_width = if (rect.width > 2 * border_adjust) rect.width - 2 * border_adjust else 0;
 
         // Draw placeholder if no text
         if (content.len == 0 and self.placeholder.len > 0 and inner_width > 0) {
             var truncated: [256]u8 = undefined;
             const draw_text = text_metrics.truncateToWidth(self.placeholder, inner_width, &truncated, true);
-            renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
+            if (u16Coord(inner_x_u32)) |inner_x| {
+                if (u16Coord(inner_y_u32)) |inner_y| {
+                    renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
+                }
+            }
         }
         // Otherwise draw text
         else if (content.len > 0 and inner_width > 0) {
             var truncated: [256]u8 = undefined;
             const draw_text = text_metrics.truncateToWidth(content, inner_width, &truncated, true);
-            renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
+            if (u16Coord(inner_x_u32)) |inner_x| {
+                if (u16Coord(inner_y_u32)) |inner_y| {
+                    renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
 
-            // Draw cursor if focused
-            if (self.widget.focused and self.cursor <= draw_text.len) {
-                const prefix_width = text_metrics.measureWidth(draw_text[0..self.cursor]).width;
-                const cursor_x = inner_x + @as(u16, @intCast(@min(prefix_width, inner_width - 1)));
-                renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
+                    // Draw cursor if focused
+                    if (self.widget.focused and self.cursor <= draw_text.len) {
+                        const prefix_width = text_metrics.measureWidth(draw_text[0..self.cursor]).width;
+                        const cursor_x_u32 = inner_x_u32 + @as(u32, @intCast(@min(prefix_width, inner_width - 1)));
+                        if (u16Coord(cursor_x_u32)) |cursor_x| {
+                            renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
+                        }
+                    }
+                }
             }
         }
 
@@ -819,6 +829,11 @@ pub const InputField = struct {
         return self.widget.enabled;
     }
 };
+
+fn u16Coord(value: u32) ?u16 {
+    if (value > std.math.maxInt(u16)) return null;
+    return @intCast(value);
+}
 
 test "input field placeholder can be replaced safely" {
     const alloc = std.testing.allocator;
@@ -1092,6 +1107,20 @@ test "input field setText clamps to max length" {
     try field.setText("abcdef");
     try std.testing.expectEqualStrings("abcd", field.getText());
     try std.testing.expectEqual(@as(usize, 4), field.cursor);
+}
+
+test "input field clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+
+    try field.setText("edge");
+    field.widget.focused = true;
+    try field.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 4, 3));
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+    try field.widget.draw(&renderer);
 }
 
 test "input field inserts and deletes UTF-8 text input atomically" {

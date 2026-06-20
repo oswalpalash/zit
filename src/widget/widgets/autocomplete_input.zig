@@ -135,7 +135,8 @@ pub const AutocompleteInput = struct {
 
         var row: usize = 0;
         while (row < visible_rows) : (row += 1) {
-            const y = rect.y + 1 + @as(u16, @intCast(row));
+            const y_u32 = @as(u32, rect.y) + 1 + @as(u32, @intCast(row));
+            const y = u16Coord(y_u32) orelse break;
             const is_selected = row == self.selected;
             const color_bg = if (is_selected) highlight_bg else bg;
             const color_fg = if (is_selected) self.theme_value.color(.background) else fg;
@@ -143,8 +144,15 @@ pub const AutocompleteInput = struct {
             renderer.fillRect(rect.x, y, rect.width, 1, ' ', color_fg, color_bg, render.Style{});
             const idx = self.filtered.items[row];
             const label = self.suggestions.items[idx];
-            renderer.drawSmartStr(rect.x + 1, y, label, color_fg, color_bg, render.Style{});
-            renderer.drawSmartStr(rect.x + rect.width - 2, y, "↵", muted, color_bg, render.Style{ .bold = is_selected });
+            if (u16Coord(@as(u32, rect.x) + 1)) |label_x| {
+                renderer.drawSmartStr(label_x, y, label, color_fg, color_bg, render.Style{});
+            }
+            if (rect.width >= 2) {
+                const hint_x_u32 = @as(u32, rect.x) + @as(u32, rect.width) - 2;
+                if (u16Coord(hint_x_u32)) |hint_x| {
+                    renderer.drawSmartStr(hint_x, y, "↵", muted, color_bg, render.Style{ .bold = is_selected });
+                }
+            }
         }
     }
 
@@ -286,6 +294,11 @@ pub const AutocompleteInput = struct {
     }
 };
 
+fn u16Coord(value: u32) ?u16 {
+    if (value > std.math.maxInt(u16)) return null;
+    return @intCast(value);
+}
+
 test "autocomplete filters suggestions" {
     const alloc = std.testing.allocator;
     var ac = try AutocompleteInput.init(alloc, 32);
@@ -307,6 +320,21 @@ test "autocomplete selection commits suggestion" {
     const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(enter_event));
     try std.testing.expectEqualStrings("two", ac.input_field.getText());
+}
+
+test "autocomplete clips popup edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    try ac.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 4, 3));
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+    try ac.widget.draw(&renderer);
 }
 
 fn autocompleteInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
