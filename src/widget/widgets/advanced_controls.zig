@@ -91,6 +91,14 @@ fn clampUsizeToU16(value: usize) u16 {
     return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
 }
 
+fn cappedPaddedWidth(content_len: usize, padding: usize, cap: u16) u16 {
+    return @intCast(@min(addUsizeClamped(content_len, padding), @as(usize, cap)));
+}
+
+fn addPaddedLenClamped(width: usize, content_len: usize, padding: usize) usize {
+    return addUsizeClamped(width, addUsizeClamped(content_len, padding));
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -207,7 +215,7 @@ pub const ToggleSwitch = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *ToggleSwitch = @fieldParentPtr("widget", widget_ref);
-        const width = @as(u16, @intCast(@min(self.label.len + 8, 60)));
+        const width = cappedPaddedWidth(self.label.len, 8, 60);
         return layout_module.Size.init(width, 1);
     }
 
@@ -272,7 +280,7 @@ pub const RadioGroup = struct {
         const fg = render.Color.named(render.NamedColor.default);
         const bg = render.Color.named(render.NamedColor.default);
 
-        const max_visible = @min(@as(u16, @intCast(self.options.items.len)), rect.height);
+        const max_visible = @min(clampUsizeToU16(self.options.items.len), rect.height);
         var y: u16 = 0;
         while (y < max_visible) : (y += 1) {
             const idx = @as(usize, @intCast(y));
@@ -343,8 +351,8 @@ pub const RadioGroup = struct {
         for (self.options.items) |opt| {
             max_len = @max(max_len, opt.len);
         }
-        const width = @as(u16, @intCast(@min(max_len + 5, 80)));
-        const height = @as(u16, @intCast(self.options.items.len));
+        const width = cappedPaddedWidth(max_len, 5, 80);
+        const height = clampUsizeToU16(self.options.items.len);
         return layout_module.Size.init(width, height);
     }
 
@@ -832,8 +840,8 @@ pub const Toolbar = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Toolbar = @fieldParentPtr("widget", widget_ref);
         var width: usize = 1;
-        for (self.items.items) |item| width += item.len + 3;
-        return layout_module.Size.init(@as(u16, @intCast(@min(width, 120))), 1);
+        for (self.items.items) |item| width = addPaddedLenClamped(width, item.len, 3);
+        return layout_module.Size.init(@min(clampUsizeToU16(width), 120), 1);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -1668,8 +1676,8 @@ pub const WizardStepper = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *WizardStepper = @fieldParentPtr("widget", widget_ref);
         var width: usize = 0;
-        for (self.steps.items) |step| width += step.len + 4;
-        return layout_module.Size.init(@as(u16, @intCast(@min(width, 200))), 2);
+        for (self.steps.items) |step| width = addPaddedLenClamped(width, step.len, 4);
+        return layout_module.Size.init(@min(clampUsizeToU16(width), 200), 2);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -1678,6 +1686,17 @@ pub const WizardStepper = struct {
         return self.widget.enabled;
     }
 };
+
+test "advanced control preferred sizing saturates before capping" {
+    try std.testing.expectEqual(@as(u16, 60), cappedPaddedWidth(std.math.maxInt(usize), 8, 60));
+    try std.testing.expectEqual(@as(u16, 80), cappedPaddedWidth(std.math.maxInt(usize) - 1, 5, 80));
+
+    var width = addPaddedLenClamped(std.math.maxInt(usize) - 1, std.math.maxInt(usize) - 2, 4);
+    try std.testing.expectEqual(std.math.maxInt(usize), width);
+
+    width = addPaddedLenClamped(1, 116, 3);
+    try std.testing.expectEqual(@as(usize, 120), width);
+}
 
 test "toggle switch renders state" {
     const alloc = std.testing.allocator;
