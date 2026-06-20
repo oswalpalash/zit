@@ -308,12 +308,14 @@ pub const Widget = struct {
         if (!self.focused) return;
         const ring = self.focus_ring orelse return;
 
-        if (self.rect.width <= ring.inset * 2 or self.rect.height <= ring.inset * 2) return;
+        const inset: u32 = ring.inset;
+        const inset_twice = inset * 2;
+        if (@as(u32, self.rect.width) <= inset_twice or @as(u32, self.rect.height) <= inset_twice) return;
 
-        const ring_x = self.rect.x + ring.inset;
-        const ring_y = self.rect.y + ring.inset;
-        const ring_width = self.rect.width - ring.inset * 2;
-        const ring_height = self.rect.height - ring.inset * 2;
+        const ring_x = u16SaturatingAdd(self.rect.x, inset);
+        const ring_y = u16SaturatingAdd(self.rect.y, inset);
+        const ring_width: u16 = @intCast(@as(u32, self.rect.width) - inset_twice);
+        const ring_height: u16 = @intCast(@as(u32, self.rect.height) - inset_twice);
 
         if (ring_width < 2 or ring_height < 2) return;
 
@@ -803,6 +805,10 @@ fn clippedEndExclusive(start: u16, size: u16, limit: u16) u16 {
     return @intCast(@min(end, @as(u32, limit)));
 }
 
+fn u16SaturatingAdd(origin: u16, offset: u32) u16 {
+    return @intCast(@min(@as(u32, origin) + offset, @as(u32, std.math.maxInt(u16))));
+}
+
 fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {
     const builtin = @import("builtin");
     if (builtin.is_test) {
@@ -886,6 +892,50 @@ test "layout adapter returns safe defaults on failure" {
 
     // Buffer remains untouched because draw failed gracefully.
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+}
+
+test "focus ring clamps edge coordinates and oversized insets" {
+    const noop_vtable = Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn preferred(_: *anyopaque) anyerror!layout_module.Size {
+                return layout_module.Size.zero();
+            }
+        }.preferred,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    var widget = Widget.init(&noop_vtable);
+    widget.focused = true;
+    widget.focus_ring = render.FocusRingStyle{
+        .color = render.Color.named(.cyan),
+        .inset = 1,
+        .fill = render.Color.named(.black),
+    };
+
+    var renderer = try render.Renderer.init(std.testing.allocator, 4, 4);
+    defer renderer.deinit();
+
+    widget.rect = layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4);
+    widget.drawFocusRing(&renderer);
+
+    widget.focus_ring.?.inset = std.math.maxInt(u16);
+    widget.rect = layout_module.Rect.init(0, 0, 1, 1);
+    widget.drawFocusRing(&renderer);
 }
 
 test "layout adapter fade clips edge rect without u16 overflow" {
