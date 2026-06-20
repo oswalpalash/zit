@@ -128,6 +128,18 @@ pub const List = struct {
         return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
     }
 
+    fn normalizedScrollValue(value: f32, max_offset: usize) f32 {
+        const max_value = @as(f32, @floatFromInt(max_offset));
+        if (std.math.isPositiveInf(value)) return max_value;
+        if (!std.math.isFinite(value)) return 0;
+        return std.math.clamp(value, 0, max_value);
+    }
+
+    fn scrollIndexFromValue(value: f32, max_offset: usize) usize {
+        const clamped = normalizedScrollValue(value, max_offset);
+        return @as(usize, @intFromFloat(std.math.floor(clamped)));
+    }
+
     /// Initialize a new list
     pub fn init(allocator: std.mem.Allocator) !*List {
         const self = try allocator.create(List);
@@ -367,26 +379,30 @@ pub const List = struct {
         return self.items.items[index];
     }
 
-    fn clampScroll(self: *List) void {
-        const max_offset = if (self.visible_items_count > 0 and self.itemCount() > self.visible_items_count)
-            self.itemCount() - self.visible_items_count
+    fn maxScrollOffset(self: *List) usize {
+        const count = self.itemCount();
+        return if (self.visible_items_count > 0 and count > self.visible_items_count)
+            count - self.visible_items_count
         else
             0;
-        const clamped = std.math.clamp(self.scroll_driver.current, 0, @as(f32, @floatFromInt(max_offset)));
+    }
+
+    fn clampScroll(self: *List) void {
+        const max_offset = self.maxScrollOffset();
+        const clamped = normalizedScrollValue(self.scroll_driver.current, max_offset);
         self.scroll_driver.current = clamped;
-        self.first_visible_index = @as(usize, @intFromFloat(std.math.floor(clamped)));
+        self.first_visible_index = scrollIndexFromValue(clamped, max_offset);
     }
 
     fn syncScrollFromDriver(self: *List) void {
-        self.first_visible_index = @as(usize, @intFromFloat(std.math.floor(self.scroll_driver.current)));
+        self.clampScroll();
     }
 
     fn scrollTo(self: *List, target: f32) void {
-        const max_offset = if (self.visible_items_count > 0 and self.itemCount() > self.visible_items_count)
-            self.itemCount() - self.visible_items_count
-        else
-            0;
-        const clamped = std.math.clamp(target, 0, @as(f32, @floatFromInt(max_offset)));
+        const max_offset = self.maxScrollOffset();
+        const clamped = normalizedScrollValue(target, max_offset);
+        const start = normalizedScrollValue(self.scroll_driver.current, max_offset);
+        self.scroll_driver.current = start;
         if (self.animator) |anim| {
             const onChange = struct {
                 fn apply(value: f32, ctx: ?*anyopaque) void {
@@ -398,7 +414,7 @@ pub const List = struct {
 
             _ = self.scroll_driver.animate(
                 anim,
-                self.scroll_driver.current,
+                start,
                 clamped,
                 self.scroll_duration_ms,
                 animation.Easing.easeInOutQuad,
@@ -1277,4 +1293,53 @@ test "list keeps selected item visible after layout" {
 
     try std.testing.expectEqual(@as(usize, 4), list.selected_index);
     try std.testing.expectEqual(@as(usize, 3), list.first_visible_index);
+}
+
+test "list normalizes non-finite scroll targets" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("one");
+    try list.addItem("two");
+    try list.addItem("three");
+    try list.addItem("four");
+    try list.addItem("five");
+
+    list.visible_items_count = 2;
+    list.scrollTo(std.math.inf(f32));
+    try std.testing.expectEqual(@as(usize, 3), list.first_visible_index);
+    try std.testing.expectEqual(@as(f32, 3), list.scroll_driver.current);
+
+    list.scrollTo(std.math.nan(f32));
+    try std.testing.expectEqual(@as(usize, 0), list.first_visible_index);
+    try std.testing.expectEqual(@as(f32, 0), list.scroll_driver.current);
+}
+
+test "list draws after non-finite scroll driver state" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("one");
+    try list.addItem("two");
+    try list.addItem("three");
+    try list.addItem("four");
+    try list.addItem("five");
+
+    try list.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+    var renderer = try render.Renderer.init(alloc, 8, 2);
+    defer renderer.deinit();
+
+    list.first_visible_index = std.math.maxInt(usize);
+    list.scroll_driver.current = std.math.nan(f32);
+    try list.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 0), list.first_visible_index);
+    try std.testing.expectEqual(@as(f32, 0), list.scroll_driver.current);
+
+    list.scroll_driver.current = std.math.inf(f32);
+    list.widget.markDirty();
+    try list.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 3), list.first_visible_index);
+    try std.testing.expectEqual(@as(f32, 3), list.scroll_driver.current);
 }

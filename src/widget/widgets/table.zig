@@ -954,34 +954,53 @@ pub const Table = struct {
         }
     }
 
-    fn clampScroll(self: *Table) void {
+    fn normalizedScrollValue(value: f32, max_offset: usize) f32 {
+        const max_value = @as(f32, @floatFromInt(max_offset));
+        if (std.math.isPositiveInf(value)) return max_value;
+        if (!std.math.isFinite(value)) return 0;
+        return std.math.clamp(value, 0, max_value);
+    }
+
+    fn scrollIndexFromValue(value: f32, max_offset: usize) usize {
+        const clamped = normalizedScrollValue(value, max_offset);
+        return @as(usize, @intFromFloat(std.math.floor(clamped)));
+    }
+
+    fn maxScrollOffset(self: *Table) usize {
         self.ensureView();
         const visible_rows = self.getVisibleRowCount();
         const total_rows = self.view_rows.items.len;
-        const max_offset = if (visible_rows == 0 or total_rows <= visible_rows) 0 else total_rows - visible_rows;
-        const clamped = std.math.clamp(self.scroll_driver.current, 0, @as(f32, @floatFromInt(max_offset)));
+        return if (visible_rows == 0 or total_rows <= visible_rows) 0 else total_rows - visible_rows;
+    }
+
+    fn clampScroll(self: *Table) void {
+        const max_offset = self.maxScrollOffset();
+        const clamped = normalizedScrollValue(self.scroll_driver.current, max_offset);
         self.scroll_driver.current = clamped;
-        self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+        self.first_visible_row = scrollIndexFromValue(clamped, max_offset);
+    }
+
+    fn syncScrollFromDriver(self: *Table) void {
+        self.clampScroll();
     }
 
     fn scrollTo(self: *Table, target: f32) void {
-        const visible_rows = self.getVisibleRowCount();
-        self.ensureView();
-        const total_rows = self.view_rows.items.len;
-        const max_offset = if (visible_rows == 0 or total_rows <= visible_rows) 0 else total_rows - visible_rows;
-        const clamped = std.math.clamp(target, 0, @as(f32, @floatFromInt(max_offset)));
+        const max_offset = self.maxScrollOffset();
+        const clamped = normalizedScrollValue(target, max_offset);
+        const start = normalizedScrollValue(self.scroll_driver.current, max_offset);
+        self.scroll_driver.current = start;
         if (self.animator) |anim| {
             const onChange = struct {
                 fn apply(value: f32, ctx: ?*anyopaque) void {
                     const table = @as(*Table, @ptrCast(@alignCast(ctx.?)));
                     table.scroll_driver.current = value;
-                    table.first_visible_row = @as(usize, @intFromFloat(std.math.floor(value)));
+                    table.syncScrollFromDriver();
                 }
             }.apply;
 
             _ = self.scroll_driver.animate(
                 anim,
-                self.scroll_driver.current,
+                start,
                 clamped,
                 self.scroll_duration_ms,
                 animation.Easing.easeInOutQuad,
@@ -989,11 +1008,11 @@ pub const Table = struct {
                 @ptrCast(self),
             ) catch {
                 self.scroll_driver.snap(clamped);
-                self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+                self.first_visible_row = scrollIndexFromValue(clamped, max_offset);
             };
         } else {
             self.scroll_driver.snap(clamped);
-            self.first_visible_row = @as(usize, @intFromFloat(std.math.floor(clamped)));
+            self.first_visible_row = scrollIndexFromValue(clamped, max_offset);
         }
     }
 
@@ -2185,4 +2204,58 @@ test "table remove edited row cancels edit" {
     try std.testing.expectEqual(@as(?usize, null), table.editing_col);
     try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
     try std.testing.expectEqualStrings("three", table.cellView(table.selected_row.?, 0).text);
+}
+
+test "table normalizes non-finite scroll targets" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+    try table.addRow(&.{"one"});
+    try table.addRow(&.{"two"});
+    try table.addRow(&.{"three"});
+    try table.addRow(&.{"four"});
+    try table.addRow(&.{"five"});
+
+    table.setShowHeaders(false);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+
+    table.scrollTo(std.math.inf(f32));
+    try std.testing.expectEqual(@as(usize, 3), table.first_visible_row);
+    try std.testing.expectEqual(@as(f32, 3), table.scroll_driver.current);
+
+    table.scrollTo(std.math.nan(f32));
+    try std.testing.expectEqual(@as(usize, 0), table.first_visible_row);
+    try std.testing.expectEqual(@as(f32, 0), table.scroll_driver.current);
+}
+
+test "table draws after non-finite scroll driver state" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("A", 8, true);
+    try table.addRow(&.{"one"});
+    try table.addRow(&.{"two"});
+    try table.addRow(&.{"three"});
+    try table.addRow(&.{"four"});
+    try table.addRow(&.{"five"});
+
+    table.setShowHeaders(false);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+    var renderer = try render.Renderer.init(alloc, 8, 2);
+    defer renderer.deinit();
+
+    table.first_visible_row = std.math.maxInt(usize);
+    table.scroll_driver.current = std.math.nan(f32);
+    try table.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 0), table.first_visible_row);
+    try std.testing.expectEqual(@as(f32, 0), table.scroll_driver.current);
+
+    table.scroll_driver.current = std.math.inf(f32);
+    table.widget.markDirty();
+    try table.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 3), table.first_visible_row);
+    try std.testing.expectEqual(@as(f32, 3), table.scroll_driver.current);
 }
