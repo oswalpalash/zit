@@ -779,8 +779,8 @@ fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout
     const alpha = widget.visibility_transition.alpha();
     if (widget.visibility_transition.options.mode == .fade and alpha < 0.999 and draw_rect.width > 0 and draw_rect.height > 0) {
         const fade_to = widget.visibility_transition.options.fade_to;
-        const max_x = @min(draw_rect.x + draw_rect.width, renderer.back.width);
-        const max_y = @min(draw_rect.y + draw_rect.height, renderer.back.height);
+        const max_x = clippedEndExclusive(draw_rect.x, draw_rect.width, renderer.back.width);
+        const max_y = clippedEndExclusive(draw_rect.y, draw_rect.height, renderer.back.height);
         var y: u16 = draw_rect.y;
         while (y < max_y) : (y += 1) {
             var x: u16 = draw_rect.x;
@@ -796,6 +796,11 @@ fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout
     if (!widget.visibility_transition.target_visible and alpha <= 0.001) {
         widget.visible = false;
     }
+}
+
+fn clippedEndExclusive(start: u16, size: u16, limit: u16) u16 {
+    const end = @as(u32, start) + @as(u32, size);
+    return @intCast(@min(end, @as(u32, limit)));
 }
 
 fn logWidgetError(widget: *Widget, action: []const u8, err: anyerror) void {
@@ -881,4 +886,50 @@ test "layout adapter returns safe defaults on failure" {
 
     // Buffer remains untouched because draw failed gracefully.
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+}
+
+test "layout adapter fade clips edge rect without u16 overflow" {
+    const fade_vtable = Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn preferred(_: *anyopaque) anyerror!layout_module.Size {
+                return layout_module.Size.zero();
+            }
+        }.preferred,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return false;
+            }
+        }.can,
+    };
+
+    const TestWidget = struct {
+        widget: Widget = Widget.init(&fade_vtable),
+    };
+
+    var instance = TestWidget{};
+    instance.widget.visibility_transition.progress = 0.5;
+    instance.widget.visibility_transition.handle = animation.AnimationHandle{ .id = 1 };
+    instance.widget.visibility_transition.options = .{ .mode = .fade };
+
+    var renderer = try render.Renderer.init(std.testing.allocator, 4, 4);
+    defer renderer.deinit();
+
+    const element = instance.widget.asLayoutElement();
+    element.render(&renderer, layout_module.Rect.init(
+        std.math.maxInt(u16) - 1,
+        std.math.maxInt(u16) - 1,
+        4,
+        4,
+    ));
 }
