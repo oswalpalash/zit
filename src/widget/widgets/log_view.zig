@@ -92,6 +92,26 @@ pub const LogView = struct {
         return @intCast(self.widget.rect.height);
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addUsizeSaturating(a: usize, b: usize) usize {
+        return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+    }
+
+    fn applyScrollDelta(current: usize, delta: isize, max_offset: usize) usize {
+        const clamped_current = @min(current, max_offset);
+        if (delta >= 0) {
+            const positive_delta: usize = @intCast(delta);
+            return @min(addUsizeSaturating(clamped_current, positive_delta), max_offset);
+        }
+
+        const magnitude: usize = @intCast(-(delta + 1));
+        return clamped_current -| (magnitude + 1);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *LogView = @fieldParentPtr("widget", widget_ref);
@@ -114,7 +134,7 @@ pub const LogView = struct {
         var idx: usize = start;
         while (idx < end) : (idx += 1) {
             const entry = self.entries.items[idx];
-            const y = rect.y + row;
+            const y = addOffsetClamped(rect.y, row);
             const level_label = levelText(entry.level);
             const level_color = levelColor(entry.level);
             const label_len: u16 = @intCast(level_label.len);
@@ -125,7 +145,8 @@ pub const LogView = struct {
 
             if (available > label_len + 1) {
                 const max_text = available - label_len - 1;
-                renderer.drawStr(rect.x + label_len + 1, y, entry.text[0..@min(entry.text.len, max_text)], self.fg, self.bg, render.Style{});
+                const text_x = addOffsetClamped(rect.x, label_len + 1);
+                renderer.drawStr(text_x, y, entry.text[0..@min(entry.text.len, max_text)], self.fg, self.bg, render.Style{});
             }
             row += 1;
         }
@@ -220,9 +241,8 @@ pub const LogView = struct {
 
     fn scrollLines(self: *LogView, delta: isize) void {
         const visible = self.visibleLines();
-        const max_offset: isize = if (self.entries.items.len > visible) @intCast(self.entries.items.len - visible) else 0;
-        const next = std.math.clamp(@as(isize, @intCast(self.scroll_offset)) + delta, 0, max_offset);
-        self.scroll_offset = @intCast(next);
+        const max_offset: usize = if (self.entries.items.len > visible) self.entries.items.len - visible else 0;
+        self.scroll_offset = applyScrollDelta(self.scroll_offset, delta, max_offset);
         self.auto_scroll = self.scroll_offset == 0;
     }
 };
@@ -261,6 +281,44 @@ test "log view mouse wheel scrolls rendered viewport" {
 
     try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
     try std.testing.expect(try log.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 4, 2, 0, -1) }));
+    try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
+}
+
+test "log view clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.append(.info, "edge");
+    try log.append(.warn, "coordinates");
+    try log.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 12, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try log.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "log view saturates oversized scroll offsets" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("one");
+    try log.appendText("two");
+    try log.appendText("three");
+    try log.appendText("four");
+    try log.widget.layout(layout_module.Rect.init(0, 0, 10, 2));
+
+    log.scroll_offset = std.math.maxInt(usize);
+    log.scrollLines(1);
+    try std.testing.expectEqual(@as(usize, 2), log.scroll_offset);
+    try std.testing.expect(!log.auto_scroll);
+
+    log.scroll_offset = std.math.maxInt(usize);
+    log.scrollLines(-1);
     try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
 }
 
