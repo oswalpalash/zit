@@ -15,6 +15,12 @@ fn clampUsizeToU16(value: usize) u16 {
     return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
 }
 
+fn normalizedUnit(value: f32) f32 {
+    if (std.math.isPositiveInf(value)) return 1;
+    if (!std.math.isFinite(value)) return 0;
+    return std.math.clamp(value, 0, 1);
+}
+
 /// Battery indicator with charge/alert visuals.
 pub const BatteryIndicator = struct {
     widget: base.Widget,
@@ -50,7 +56,7 @@ pub const BatteryIndicator = struct {
     }
 
     pub fn setLevel(self: *BatteryIndicator, level: f32) void {
-        self.level = std.math.clamp(level, 0, 1);
+        self.level = normalizedUnit(level);
     }
 
     pub fn setCharging(self: *BatteryIndicator, charging: bool) void {
@@ -85,8 +91,9 @@ pub const BatteryIndicator = struct {
         const inset_h = if (rect.height > 2) rect.height - 2 else 0;
         if (inset_w == 0 or inset_h == 0) return;
 
-        const charge_color = if (self.level < 0.15) warning else accent;
-        const fill_w = @as(u16, @intFromFloat(@round(self.level * @as(f32, @floatFromInt(inset_w)))));
+        const level = normalizedUnit(self.level);
+        const charge_color = if (level < 0.15) warning else accent;
+        const fill_w = @as(u16, @intFromFloat(@round(level * @as(f32, @floatFromInt(inset_w)))));
         if (fill_w > 0) {
             renderer.fillRect(inset_x, inset_y, fill_w, inset_h, ' ', fg, charge_color, render.Style{});
         }
@@ -154,7 +161,7 @@ pub const SignalStrength = struct {
     }
 
     pub fn setStrength(self: *SignalStrength, value: f32) void {
-        self.strength = std.math.clamp(value, 0, 1);
+        self.strength = normalizedUnit(value);
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -176,7 +183,7 @@ pub const SignalStrength = struct {
         const bar_width: u16 = @max(1, rect.width / clampUsizeToU16(usable_bars));
         for (0..usable_bars) |i| {
             const threshold = @as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(usable_bars));
-            const active = self.strength >= threshold - 0.0001;
+            const active = normalizedUnit(self.strength) >= threshold - 0.0001;
             const height = @max(@as(u16, 1), @as(u16, @intFromFloat(@floor(@as(f32, @floatFromInt(max_height)) * threshold))));
             const x_offset = clampUsizeToU16(i * @as(usize, bar_width));
             const x = addOffsetClamped(rect.x, x_offset);
@@ -254,7 +261,7 @@ pub const ResourceMeter = struct {
     }
 
     pub fn setValue(self: *ResourceMeter, value: f32) void {
-        self.value = std.math.clamp(value, 0, 1);
+        self.value = normalizedUnit(value);
     }
 
     pub fn setTheme(self: *ResourceMeter, t: theme.Theme) void {
@@ -271,13 +278,14 @@ pub const ResourceMeter = struct {
         if (rect.width < 4 or rect.height == 0) return;
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
-        const fill_width = @as(u16, @intFromFloat(@round(self.value * @as(f32, @floatFromInt(rect.width)))));
+        const value = normalizedUnit(self.value);
+        const fill_width = @as(u16, @intFromFloat(@round(value * @as(f32, @floatFromInt(rect.width)))));
         if (fill_width > 0) {
             renderer.fillRect(rect.x, rect.y, fill_width, rect.height, ' ', self.fg, self.fill, render.Style{});
         }
 
         var buf: [32]u8 = undefined;
-        const percent = @as(u8, @intFromFloat(self.value * 100));
+        const percent = @as(u8, @intFromFloat(value * 100));
         const text = std.fmt.bufPrint(&buf, "{s}: {d}%", .{ self.label, percent }) catch "meter";
         if (text.len > 0 and rect.height > 0) {
             renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(rect.y, rect.height / 2), text[0..@min(text.len, @as(usize, @intCast(rect.width - 2)))], self.fg, self.bg, render.Style{ .bold = true });
@@ -465,6 +473,64 @@ test "signal strength paints multiple bars" {
         }
     }
     try std.testing.expect(bars > 0);
+}
+
+test "indicator value setters normalize non-finite input" {
+    const alloc = std.testing.allocator;
+
+    var battery = try BatteryIndicator.init(alloc);
+    defer battery.deinit();
+    battery.setLevel(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), battery.level);
+    battery.setLevel(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 1), battery.level);
+    battery.setLevel(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), battery.level);
+
+    var signal = try SignalStrength.init(alloc);
+    defer signal.deinit();
+    signal.setStrength(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), signal.strength);
+    signal.setStrength(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 1), signal.strength);
+    signal.setStrength(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), signal.strength);
+
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+    meter.setValue(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), meter.value);
+    meter.setValue(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 1), meter.value);
+    meter.setValue(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), meter.value);
+}
+
+test "indicator widgets draw with non-finite internal state" {
+    const alloc = std.testing.allocator;
+
+    var renderer = try render.Renderer.init(alloc, 18, 4);
+    defer renderer.deinit();
+
+    var battery = try BatteryIndicator.init(alloc);
+    defer battery.deinit();
+    battery.level = std.math.nan(f32);
+    battery.setCharging(true);
+    try battery.widget.layout(layout_module.Rect.init(0, 0, 14, 4));
+    try battery.widget.draw(&renderer);
+
+    var signal = try SignalStrength.init(alloc);
+    defer signal.deinit();
+    signal.strength = std.math.inf(f32);
+    try signal.widget.layout(layout_module.Rect.init(0, 0, 12, 4));
+    try signal.widget.draw(&renderer);
+
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+    meter.value = std.math.nan(f32);
+    try meter.setLabel("CPU");
+    try meter.widget.layout(layout_module.Rect.init(0, 0, 18, 3));
+    try meter.widget.draw(&renderer);
 }
 
 test "resource meter writes label text" {
