@@ -101,6 +101,11 @@ pub const Container = struct {
         self.bg = colors.bg;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Draw implementation for Container
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
@@ -168,7 +173,12 @@ pub const Container = struct {
         // Simple layout: just give each child the full container area
         // (can be overridden by more sophisticated container implementations)
         const border_adjust: u16 = if (self.show_border) 1 else 0;
-        const inner_rect = layout_module.Rect.init(rect.x + border_adjust, rect.y + border_adjust, if (rect.width > 2 * border_adjust) rect.width - 2 * border_adjust else 0, if (rect.height > 2 * border_adjust) rect.height - 2 * border_adjust else 0);
+        const inner_rect = layout_module.Rect.init(
+            addOffsetClamped(rect.x, border_adjust),
+            addOffsetClamped(rect.y, border_adjust),
+            if (rect.width > 2 * border_adjust) rect.width - 2 * border_adjust else 0,
+            if (rect.height > 2 * border_adjust) rect.height - 2 * border_adjust else 0,
+        );
 
         for (self.children.items) |child| {
             try child.*.layout(inner_rect);
@@ -193,8 +203,8 @@ pub const Container = struct {
 
         // Add border if needed
         const border_adjust: u16 = if (self.show_border) 2 else 0;
-        width += border_adjust;
-        height += border_adjust;
+        width = addOffsetClamped(width, border_adjust);
+        height = addOffsetClamped(height, border_adjust);
 
         return layout_module.Size.init(width, height);
     }
@@ -292,6 +302,92 @@ test "container preferred size is zero without children" {
     const size = try container.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, 0), size.width);
     try std.testing.expectEqual(@as(u16, 0), size.height);
+}
+
+test "container clamps edge child layout coordinates" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        last_rect: ?layout_module.Rect = null,
+        const Self = @This();
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
+            self.last_rect = rect;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+    container.setBorder(.single);
+
+    var child = Dummy{};
+    try container.addChild(&child.widget);
+    try container.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 4));
+
+    try std.testing.expect(child.last_rect != null);
+    const inner = child.last_rect.?;
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), inner.x);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), inner.y);
+    try std.testing.expectEqual(@as(u16, 2), inner.width);
+    try std.testing.expectEqual(@as(u16, 2), inner.height);
+}
+
+test "container preferred size saturates border inflation" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(std.math.maxInt(u16), std.math.maxInt(u16));
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+    container.setBorder(.single);
+
+    var child = Dummy{};
+    try container.addChild(&child.widget);
+
+    const size = try container.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.height);
 }
 
 test "container re-adds existing child without duplicate ownership" {
