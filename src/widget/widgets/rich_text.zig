@@ -81,6 +81,20 @@ pub const RichText = struct {
         self.box_style = style;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn endCoordClamped(start: u16, len: u16) u16 {
+        if (len == 0) return start;
+        return addOffsetClamped(start, len - 1);
+    }
+
+    fn clampUsizeToU16(value: usize) u16 {
+        return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *RichText = @fieldParentPtr("widget", widget_ref);
@@ -110,35 +124,40 @@ pub const RichText = struct {
         const content_height = if (rect.height > inset * 2) rect.height - inset * 2 else 0;
         if (content_width == 0 or content_height == 0) return;
 
-        const start_x = rect.x + inset;
-        const start_y = rect.y + inset;
-        const max_x = start_x + content_width - 1;
-        const max_y = start_y + content_height - 1;
+        const start_x = addOffsetClamped(rect.x, inset);
+        const start_y = addOffsetClamped(rect.y, inset);
+        const max_x = endCoordClamped(start_x, content_width);
+        const max_y = endCoordClamped(start_y, content_height);
 
-        var x = start_x;
-        var y = start_y;
+        const start_x_u32: u32 = start_x;
+        const start_y_u32: u32 = start_y;
+        const max_x_u32: u32 = max_x;
+        const max_y_u32: u32 = max_y;
+
+        var x = start_x_u32;
+        var y = start_y_u32;
 
         span_loop: for (self.spans.items) |span| {
             var it = std.unicode.Utf8Iterator{ .bytes = span.text, .i = 0 };
             while (it.nextCodepoint()) |cp| {
                 if (cp == '\n') {
-                    x = start_x;
+                    x = start_x_u32;
                     y += 1;
-                    if (y > max_y) break :span_loop;
+                    if (y > max_y_u32) break :span_loop;
                     continue;
                 }
 
-                if (x > max_x) {
+                if (x > max_x_u32) {
                     if (self.wrap) {
-                        x = start_x;
+                        x = start_x_u32;
                         y += 1;
-                        if (y > max_y) break :span_loop;
+                        if (y > max_y_u32) break :span_loop;
                     } else {
                         break;
                     }
                 }
 
-                renderer.drawChar(x, y, cp, span.fg, span.bg, span.style);
+                renderer.drawChar(@intCast(x), @intCast(y), cp, span.fg, span.bg, span.style);
                 x += 1;
             }
         }
@@ -177,7 +196,7 @@ pub const RichText = struct {
         }
 
         max_width = @max(max_width, current_width);
-        return layout_module.Size.init(@as(u16, @intCast(@max(max_width, 12))), @as(u16, @intCast(@max(lines, 2))));
+        return layout_module.Size.init(clampUsizeToU16(@max(max_width, 12)), clampUsizeToU16(@max(lines, 2)));
     }
 
     fn canFocusFn(_: *anyopaque) bool {
@@ -207,6 +226,43 @@ test "rich text applies span styles" {
     const world_cell = renderer.back.getCell(6, 0).*;
     try std.testing.expect(world_cell.style.italic);
     try std.testing.expect(std.meta.eql(world_cell.fg, render.Color{ .named_color = render.NamedColor.blue }));
+}
+
+test "rich text clamps far-edge render coordinates" {
+    const alloc = std.testing.allocator;
+    var text = try RichText.init(alloc);
+    defer text.deinit();
+
+    try text.addSpan("ab", render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    try text.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 2, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try text.widget.draw(&renderer);
+}
+
+test "rich text preferred size saturates long content" {
+    const alloc = std.testing.allocator;
+    var text = try RichText.init(alloc);
+    defer text.deinit();
+
+    const long_line = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 128);
+    defer alloc.free(long_line);
+    @memset(long_line, 'x');
+
+    try text.addSpan(long_line, render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    var size = try text.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, 2), size.height);
+
+    text.clear();
+    @memset(long_line, '\n');
+
+    try text.addSpan(long_line, render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    size = try text.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 12), size.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.height);
 }
 
 fn richTextAddSpanAllocationFailureHarness(allocator: std.mem.Allocator) !void {
