@@ -112,6 +112,16 @@ pub const Modal = struct {
         return if (self.title.len > 0) self.title else "Modal";
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addU16Clamped(a: u16, b: u16) u16 {
+        const value = @as(u32, a) + @as(u32, b);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Set the modal colors
     pub fn setColors(self: *Modal, fg: render.Color, bg: render.Color, border_fg: render.Color) void {
         self.fg = fg;
@@ -203,11 +213,11 @@ pub const Modal = struct {
             const title_inset: u16 = if (draw_border) 1 else 0;
             if (rect.width > title_inset * 2) {
                 const title_y = rect.y;
-                const title_x = rect.x + title_inset;
+                const title_x = addOffsetClamped(rect.x, title_inset);
                 const title_width = rect.width - title_inset * 2;
                 var title_buf: [256]u8 = undefined;
                 const clipped = text_metrics.clipWithEllipsis(self.title, title_width, &title_buf);
-                const text_x = title_x + (title_width - clipped.width) / 2;
+                const text_x = addOffsetClamped(title_x, (title_width - clipped.width) / 2);
 
                 renderer.fillRect(title_x, title_y, title_width, 1, ' ', self.title_fg, self.title_bg, style);
                 renderer.drawStr(text_x, title_y, clipped.text, self.title_fg, self.title_bg, style);
@@ -260,8 +270,8 @@ pub const Modal = struct {
         const pref_size = try self.getPreferredSize();
         modal_rect.width = @min(pref_size.width, rect.width);
         modal_rect.height = @min(pref_size.height, rect.height);
-        modal_rect.x = rect.x + @divTrunc(rect.width - modal_rect.width, 2);
-        modal_rect.y = rect.y + @divTrunc(rect.height - modal_rect.height, 2);
+        modal_rect.x = addOffsetClamped(rect.x, @divTrunc(rect.width - modal_rect.width, 2));
+        modal_rect.y = addOffsetClamped(rect.y, @divTrunc(rect.height - modal_rect.height, 2));
 
         self.widget.rect = modal_rect;
 
@@ -277,8 +287,8 @@ pub const Modal = struct {
 
         const border_inset: u16 = if (self.show_border and rect.width > 2 and rect.height > 2) 1 else 0;
         const title_rows: u16 = if (self.show_title and self.title.len > 0 and rect.height > border_inset) 1 else 0;
-        const x = rect.x + border_inset;
-        const y = rect.y + border_inset + title_rows;
+        const x = addOffsetClamped(rect.x, border_inset);
+        const y = addOffsetClamped(addOffsetClamped(rect.y, border_inset), title_rows);
         const width = if (rect.width > border_inset * 2) rect.width - border_inset * 2 else 0;
         const consumed_height = border_inset * 2 + title_rows;
         const height = if (rect.height > consumed_height) rect.height - consumed_height else 0;
@@ -293,8 +303,8 @@ pub const Modal = struct {
         // Account for content size
         if (self.content) |content| {
             const content_size = try content.getPreferredSize();
-            width = @max(width, content_size.width + 2);
-            height = @max(height, content_size.height + 3);
+            width = @max(width, addU16Clamped(content_size.width, 2));
+            height = @max(height, addU16Clamped(content_size.height, 3));
         }
 
         return layout_module.Size.init(width, height);
@@ -436,6 +446,49 @@ test "modal tolerates tiny layouts" {
     var renderer = try render.Renderer.init(alloc, 1, 1);
     defer renderer.deinit();
     try modal.widget.draw(&renderer);
+}
+
+test "modal clamps edge title and content coordinates" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    var content = try @import("block.zig").Block.init(alloc);
+    defer content.deinit();
+    defer modal.deinit();
+
+    modal.width = 2;
+    modal.height = 2;
+    try modal.setTitle("Edge");
+    modal.setContent(&content.widget);
+
+    try modal.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 4));
+    try std.testing.expectEqual(std.math.maxInt(u16), modal.widget.rect.x);
+    try std.testing.expectEqual(std.math.maxInt(u16), modal.widget.rect.y);
+    try std.testing.expectEqual(std.math.maxInt(u16), content.widget.rect.x);
+    try std.testing.expectEqual(std.math.maxInt(u16), content.widget.rect.y);
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try modal.widget.draw(&renderer);
+}
+
+test "modal preferred size saturates large content" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    var content = try @import("block.zig").Block.init(alloc);
+    defer content.deinit();
+    defer modal.deinit();
+
+    content.setPadding(.{
+        .left = std.math.maxInt(u16),
+        .right = 1,
+        .top = std.math.maxInt(u16),
+        .bottom = 1,
+    });
+    modal.setContent(&content.widget);
+
+    const preferred = try modal.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), preferred.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), preferred.height);
 }
 
 test "modal maintains parent linkage for content" {
