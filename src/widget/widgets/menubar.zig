@@ -68,14 +68,17 @@ pub const MenuBar = struct {
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
 
-        var x = rect.x;
+        const right = rectRight(rect);
+        var x: u32 = rect.x;
         for (self.items.items, 0..) |item, idx| {
-            if (x >= rect.x + rect.width) break;
-            const label_len = @as(u16, @intCast(@min(item.label.len, rect.width)));
+            if (x >= right) break;
+            const draw_x = u16Coord(x) orelse break;
+            const available: usize = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
+            const label_len = @min(item.label.len, available);
             const fg = if (idx == self.active_index) self.active_fg else self.fg;
             const bg = if (idx == self.active_index) self.active_bg else self.bg;
-            renderer.drawStr(x, rect.y, item.label[0..label_len], fg, bg, render.Style{ .bold = idx == self.active_index });
-            x += label_len + 2; // add spacing
+            renderer.drawStr(draw_x, rect.y, item.label[0..label_len], fg, bg, render.Style{ .bold = idx == self.active_index });
+            x += @as(u32, @intCast(label_len)) + 2; // add spacing
         }
     }
 
@@ -102,12 +105,16 @@ pub const MenuBar = struct {
             },
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.y == self.widget.rect.y) {
-                    var x = self.widget.rect.x;
+                    const right = rectRight(self.widget.rect);
+                    const mouse_x: u32 = mouse.x;
+                    var x: u32 = self.widget.rect.x;
                     for (self.items.items, 0..) |item, idx| {
-                        const label_len = @as(u16, @intCast(@min(item.label.len, self.widget.rect.width)));
+                        if (x >= right) break;
+                        const available: usize = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
+                        const label_len = @min(item.label.len, available);
                         const start = x;
-                        const end = start + label_len;
-                        if (mouse.x >= start and mouse.x < end) {
+                        const end = start + @as(u32, @intCast(label_len));
+                        if (mouse_x >= start and mouse_x < end) {
                             self.active_index = idx;
                             if (item.on_select) |cb| cb();
                             return true;
@@ -143,6 +150,15 @@ pub const MenuBar = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.widget.visible and self.items.items.len > 0;
+    }
+
+    fn rectRight(rect: layout_module.Rect) u32 {
+        return @as(u32, rect.x) + @as(u32, rect.width);
+    }
+
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
     }
 };
 
@@ -196,6 +212,32 @@ test "menubar mouse selects rendered item row" {
 
     try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 4, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+test "menubar clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    test_menu_bar_calls = 0;
+
+    try bar.addItem("File", struct {
+        fn thunk() void {
+            test_menu_bar_calls += 1;
+        }
+    }.thunk);
+    try bar.addItem("Edit", null);
+
+    try bar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, 0, 4, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+    try bar.widget.draw(&renderer);
+
+    const click = input.Event{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), 0, 1, 0) };
+    try std.testing.expect(try bar.widget.handleEvent(click));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
 }
 
