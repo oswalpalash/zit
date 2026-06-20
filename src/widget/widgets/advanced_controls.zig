@@ -582,6 +582,24 @@ pub const StatusBar = struct {
         self.right = right;
     }
 
+    fn xOffset(rect_x: u16, offset: usize) u16 {
+        return @intCast(@min(@as(usize, rect_x) + offset, std.math.maxInt(u16)));
+    }
+
+    fn drawBoundedText(
+        renderer: *render.Renderer,
+        x: u16,
+        y: u16,
+        text: []const u8,
+        max_width: usize,
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    ) void {
+        if (max_width == 0 or text.len == 0) return;
+        renderer.drawStr(x, y, text[0..@min(text.len, max_width)], fg, bg, style);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *StatusBar = @fieldParentPtr("widget", widget_ref);
@@ -590,19 +608,48 @@ pub const StatusBar = struct {
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{ .bold = true });
         if (rect.width == 0) return;
 
-        renderer.drawStr(rect.x + 1, rect.y, self.left[0..@min(self.left.len, rect.width)], self.fg, self.bg, render.Style{});
+        const width: usize = rect.width;
+        const left_padding: usize = if (width > 1) 1 else 0;
+        drawBoundedText(
+            renderer,
+            xOffset(rect.x, left_padding),
+            rect.y,
+            self.left,
+            width - left_padding,
+            self.fg,
+            self.bg,
+            render.Style{},
+        );
 
         if (self.center.len > 0) {
-            const center_x = rect.x + (rect.width / 2) - @as(u16, @intCast(self.center.len / 2));
-            if (center_x >= rect.x and center_x < rect.x + rect.width) {
-                const clipped = self.center[0..@min(self.center.len, rect.width)];
-                renderer.drawStr(center_x, rect.y, clipped, self.fg, self.bg, render.Style{ .bold = true });
-            }
+            const display_len = @min(self.center.len, width);
+            const center_offset = (width - display_len) / 2;
+            drawBoundedText(
+                renderer,
+                xOffset(rect.x, center_offset),
+                rect.y,
+                self.center,
+                display_len,
+                self.fg,
+                self.bg,
+                render.Style{ .bold = true },
+            );
         }
 
-        if (self.right.len > 0 and rect.width > self.right.len) {
-            const right_x = rect.x + rect.width - @as(u16, @intCast(self.right.len)) - 1;
-            renderer.drawStr(right_x, rect.y, self.right[0..@min(self.right.len, rect.width)], self.fg, self.bg, render.Style{});
+        if (self.right.len > 0) {
+            const display_len = @min(self.right.len, width);
+            const right_padding: usize = if (width > display_len) 1 else 0;
+            const right_offset = width - display_len - right_padding;
+            drawBoundedText(
+                renderer,
+                xOffset(rect.x, right_offset),
+                rect.y,
+                self.right,
+                display_len,
+                self.fg,
+                self.bg,
+                render.Style{},
+            );
         }
     }
 
@@ -1634,6 +1681,33 @@ test "rating stars mouse maps rendered columns to values" {
 
     try std.testing.expect(try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) }));
     try std.testing.expectEqual(@as(f32, 3), stars.value);
+}
+
+test "status bar renders long segments in narrow rects" {
+    const alloc = std.testing.allocator;
+    var status = try StatusBar.init(alloc);
+    defer status.deinit();
+
+    status.setSegments("left", "center text wider than the bar", "right");
+    var snap = try testing.renderWidget(alloc, &status.widget, layout_module.Size.init(4, 1));
+    defer snap.deinit(alloc);
+
+    try snap.expectWellFormed();
+    try std.testing.expectEqual(@as(u16, 4), snap.width);
+    try std.testing.expectEqual(@as(u16, 1), snap.height);
+}
+
+test "status bar clamps far right draw offsets" {
+    const alloc = std.testing.allocator;
+    var status = try StatusBar.init(alloc);
+    defer status.deinit();
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    status.setSegments("left", "center", "right");
+    try status.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, 0, 4, 1));
+    try status.widget.draw(&renderer);
 }
 
 test "pagination advances pages" {
