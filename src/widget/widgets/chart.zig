@@ -137,6 +137,19 @@ pub const Chart = struct {
         self.series.appendAssumeCapacity(s);
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addU16Saturating(a: u16, b: u16) u16 {
+        return addOffsetClamped(a, b);
+    }
+
+    fn clampUsizeToU16(value: usize) u16 {
+        return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Chart = @fieldParentPtr("widget", widget_ref);
@@ -175,25 +188,27 @@ pub const Chart = struct {
     fn drawAxes(self: *Chart, renderer: *render.Renderer, inner: layout_module.Rect, fg: render.Color, bg: render.Color) void {
         if (inner.height <= 1 or inner.width <= 1) return;
         const axis_style = render.Style{ .bold = true };
-        renderer.drawHLine(inner.x, inner.y + inner.height - 1, inner.width, '─', fg, bg, axis_style);
+        const bottom_y = addOffsetClamped(inner.y, inner.height - 1);
+        renderer.drawHLine(inner.x, bottom_y, inner.width, '─', fg, bg, axis_style);
         renderer.drawVLine(inner.x, inner.y, inner.height, '│', fg, bg, axis_style);
-        renderer.drawChar(inner.x, inner.y + inner.height - 1, '└', fg, bg, axis_style);
+        renderer.drawChar(inner.x, bottom_y, '└', fg, bg, axis_style);
 
         if (self.x_axis_label) |label| {
-            const label_y = inner.y + inner.height;
-            const max_width = (inner.width + self.padding * 2);
-            if (label_y < self.widget.rect.y + self.widget.rect.height and max_width > 0) {
-                const start_x = inner.x + (inner.width - @as(u16, @intCast(@min(label.len, max_width)))) / 2;
+            const label_y = addOffsetClamped(inner.y, inner.height);
+            const max_width = addU16Saturating(inner.width, addU16Saturating(self.padding, self.padding));
+            const widget_bottom = addOffsetClamped(self.widget.rect.y, self.widget.rect.height);
+            if (label_y < widget_bottom and max_width > 0) {
+                const label_width = @min(clampUsizeToU16(label.len), max_width);
+                const start_x = addOffsetClamped(inner.x, (inner.width - @min(label_width, inner.width)) / 2);
                 renderer.drawStr(start_x, label_y, label, fg, bg, render.Style{ .bold = true });
             }
         }
 
         if (self.y_axis_label) |label| {
             if (inner.x > 0 and inner.height > 0) {
-                const start_y = inner.y;
                 for (label, 0..) |char, i| {
-                    if (start_y + @as(u16, @intCast(i)) >= inner.y + inner.height) break;
-                    renderer.drawChar(inner.x - 1, start_y + @as(u16, @intCast(i)), char, fg, bg, render.Style{ .bold = true });
+                    if (i >= inner.height) break;
+                    renderer.drawChar(inner.x - 1, addOffsetClamped(inner.y, @intCast(i)), char, fg, bg, render.Style{ .bold = true });
                 }
             }
         }
@@ -202,15 +217,17 @@ pub const Chart = struct {
     fn drawBars(self: *Chart, renderer: *render.Renderer, inner: layout_module.Rect, stacked: bool) void {
         const sample_count = self.maxSampleCount();
         if (sample_count == 0) return;
-        const bar_width: u16 = @max(1, inner.width / @as(u16, @intCast(sample_count)));
+        const visible_samples = @min(sample_count, @as(usize, inner.width));
+        if (visible_samples == 0) return;
+        const bar_width: u16 = @max(1, inner.width / @as(u16, @intCast(visible_samples)));
         if (bar_width == 0 or inner.height == 0) return;
 
         const value_range = self.valueRange(stacked);
         if (value_range.max == 0 and value_range.min == 0) return;
 
-        for (0..sample_count) |sample_idx| {
-            const x_start = inner.x + @as(u16, @intCast(sample_idx)) * bar_width;
-            const x_end = @min(x_start + bar_width, inner.x + inner.width);
+        for (0..visible_samples) |sample_idx| {
+            const x_start_offset = @as(u32, @intCast(sample_idx)) * @as(u32, bar_width);
+            const x_end_offset = @min(x_start_offset + @as(u32, bar_width), @as(u32, inner.width));
             if (stacked) {
                 const stacked_max = self.sumAt(sample_idx);
                 if (stacked_max <= 0) continue;
@@ -224,22 +241,22 @@ pub const Chart = struct {
                     const desired_height = @as(u16, @intFromFloat(@round(proportional * @as(f32, @floatFromInt(inner.height)))));
                     const h: u16 = @max(1, @min(desired_height, inner.height));
 
-                    var remaining: u16 = h;
-                    var y = inner.y + inner.height - 1 - filled_height;
-                    while (remaining > 0 and y >= inner.y) : (y -= 1) {
-                        for (x_start..x_end) |x| {
-                            renderer.drawChar(@intCast(x), y, '█', s.color, self.theme_value.color(.surface), render.Style{});
+                    const rows = @min(h, inner.height - filled_height);
+                    for (0..rows) |row| {
+                        const y_offset = inner.height - 1 - filled_height - @as(u16, @intCast(row));
+                        const y = addOffsetClamped(inner.y, y_offset);
+                        for (x_start_offset..x_end_offset) |x_offset| {
+                            renderer.drawChar(addOffsetClamped(inner.x, @intCast(x_offset)), y, '█', s.color, self.theme_value.color(.surface), render.Style{});
                         }
-                        remaining -= 1;
-                        if (y == inner.y) break;
                     }
 
-                    filled_height = @min(inner.height - 1, filled_height + h);
+                    filled_height = @min(inner.height, filled_height + rows);
                     if (filled_height >= inner.height) break;
                 }
             } else {
                 const series_count = @max(self.series.items.len, 1);
-                const segment_width = @max(@as(u16, 1), bar_width / @as(u16, @intCast(series_count)));
+                const visible_series = @min(series_count, @as(usize, bar_width));
+                const segment_width = @max(@as(u16, 1), bar_width / @as(u16, @intCast(visible_series)));
                 var series_idx: usize = 0;
                 for (self.series.items) |s| {
                     const value = if (sample_idx < s.values.items.len) s.values.items[sample_idx] else 0;
@@ -252,17 +269,15 @@ pub const Chart = struct {
                     const desired_height = @as(u16, @intFromFloat(@round(proportional * @as(f32, @floatFromInt(inner.height)))));
                     const h: u16 = @max(1, @min(desired_height, inner.height));
 
-                    const series_start = x_start + @as(u16, @intCast(series_idx)) * segment_width;
-                    const series_end = @min(series_start + segment_width, x_end);
+                    const series_start_offset = x_start_offset + @as(u32, @intCast(series_idx)) * @as(u32, segment_width);
+                    if (series_start_offset >= x_end_offset) break;
+                    const series_end_offset = @min(series_start_offset + @as(u32, segment_width), x_end_offset);
 
-                    var remaining: u16 = h;
-                    var y = inner.y + inner.height - 1;
-                    while (remaining > 0 and y >= inner.y) : (y -= 1) {
-                        for (series_start..series_end) |x| {
-                            renderer.drawChar(@intCast(x), y, '█', s.color, self.theme_value.color(.surface), render.Style{});
+                    for (0..h) |row| {
+                        const y = addOffsetClamped(inner.y, inner.height - 1 - @as(u16, @intCast(row)));
+                        for (series_start_offset..series_end_offset) |x_offset| {
+                            renderer.drawChar(addOffsetClamped(inner.x, @intCast(x_offset)), y, '█', s.color, self.theme_value.color(.surface), render.Style{});
                         }
-                        remaining -= 1;
-                        if (y == inner.y) break;
                     }
                     series_idx += 1;
                 }
@@ -283,41 +298,40 @@ pub const Chart = struct {
             var prev_y: ?u16 = null;
             var prev_x: ?u16 = null;
 
-            var x: u16 = 0;
-            while (x < inner.width) : (x += 1) {
+            for (0..inner.width) |x_raw| {
+                const x: u16 = @intCast(x_raw);
                 const sample_idx = self.sampleIndexForColumn(x, inner.width, s.values.items.len);
                 const v = s.values.items[sample_idx];
                 const normalized = (v - value_range.min) / denom;
-                const y = inner.y + inner.height - 1 - @as(u16, @intFromFloat(@round(normalized * axis_height)));
-                const draw_x = inner.x + x;
+                const y_offset = inner.height - 1 - @as(u16, @intFromFloat(@round(normalized * axis_height)));
+                const y = addOffsetClamped(inner.y, y_offset);
+                const draw_x = addOffsetClamped(inner.x, x);
 
                 if (fill) {
-                    var row: u16 = y;
-                    while (row < inner.y + inner.height) : (row += 1) {
-                        renderer.drawChar(draw_x, row, ' ', render.Color.named(render.NamedColor.default), s.fill, render.Style{});
+                    for (y_offset..inner.height) |row_offset| {
+                        renderer.drawChar(draw_x, addOffsetClamped(inner.y, @intCast(row_offset)), ' ', render.Color.named(render.NamedColor.default), s.fill, render.Style{});
                     }
                 }
 
                 renderer.drawChar(draw_x, y, '•', s.color, self.theme_value.color(.surface), render.Style{ .bold = true });
 
                 if (prev_y) |py| {
-                    const start = @min(py, y);
-                    const end = @max(py, y);
-                    var row = start;
-                    while (row <= end) : (row += 1) {
-                        renderer.drawChar(draw_x, row, '│', s.color, self.theme_value.color(.surface), render.Style{});
+                    const start = @min(py, y_offset);
+                    const end = @max(py, y_offset);
+                    for (start..end + 1) |row_offset| {
+                        renderer.drawChar(draw_x, addOffsetClamped(inner.y, @intCast(row_offset)), '│', s.color, self.theme_value.color(.surface), render.Style{});
                     }
                     if (prev_x) |px| {
-                        const span_start = @min(px, draw_x);
-                        const span_end = @max(px, draw_x);
+                        const span_start = @min(px, x);
+                        const span_end = @max(px, x);
                         if (span_end > span_start + 1) {
-                            renderer.drawHLine(span_start + 1, y, span_end - span_start - 1, '─', s.color, self.theme_value.color(.surface), render.Style{});
+                            renderer.drawHLine(addOffsetClamped(inner.x, span_start + 1), y, span_end - span_start - 1, '─', s.color, self.theme_value.color(.surface), render.Style{});
                         }
                     }
                 }
 
-                prev_y = y;
-                prev_x = draw_x;
+                prev_y = y_offset;
+                prev_x = x;
             }
         }
     }
@@ -335,8 +349,8 @@ pub const Chart = struct {
                 const sample_idx = self.sampleIndexForColumn(@intCast(col), inner.width, s.values.items.len);
                 const v = s.values.items[sample_idx];
                 const normalized = (v - value_range.min) / denom;
-                const y = inner.y + inner.height - 1 - @as(u16, @intFromFloat(@round(normalized * axis_height)));
-                const draw_x = inner.x + @as(u16, @intCast(col));
+                const y = addOffsetClamped(inner.y, inner.height - 1 - @as(u16, @intFromFloat(@round(normalized * axis_height))));
+                const draw_x = addOffsetClamped(inner.x, @intCast(col));
                 renderer.drawChar(draw_x, y, '◆', s.color, self.theme_value.color(.surface), render.Style{ .bold = true });
             }
         }
@@ -364,8 +378,8 @@ pub const Chart = struct {
         }
         if (total_sum == 0) return;
 
-        const center_x: f32 = @as(f32, @floatFromInt(inner.x)) + @as(f32, @floatFromInt(inner.width)) / 2.0;
-        const center_y: f32 = @as(f32, @floatFromInt(inner.y)) + @as(f32, @floatFromInt(inner.height)) / 2.0;
+        const center_x: f32 = @as(f32, @floatFromInt(inner.width)) / 2.0;
+        const center_y: f32 = @as(f32, @floatFromInt(inner.height)) / 2.0;
         const radius: f32 = @as(f32, @floatFromInt(@min(inner.width, inner.height))) / 2.2;
 
         // Precompute slice thresholds
@@ -375,12 +389,10 @@ pub const Chart = struct {
             self.pie_thresholds_scratch.appendAssumeCapacity(cumulative);
         }
 
-        var y: u16 = inner.y;
-        while (y < inner.y + inner.height) : (y += 1) {
-            var x: u16 = inner.x;
-            while (x < inner.x + inner.width) : (x += 1) {
-                const dx = @as(f64, @floatFromInt(x)) - @as(f64, center_x);
-                const dy = @as(f64, @floatFromInt(y)) - @as(f64, center_y);
+        for (0..inner.height) |y_offset| {
+            for (0..inner.width) |x_offset| {
+                const dx = @as(f64, @floatFromInt(x_offset)) - @as(f64, center_x);
+                const dy = @as(f64, @floatFromInt(y_offset)) - @as(f64, center_y);
                 const distance = std.math.sqrt(dx * dx + dy * dy);
                 if (distance > radius) continue;
 
@@ -396,7 +408,7 @@ pub const Chart = struct {
                 }
 
                 const color = self.series.items[slice_index].color;
-                renderer.drawChar(x, y, ' ', render.Color.named(render.NamedColor.default), color, render.Style{ .bold = true });
+                renderer.drawChar(addOffsetClamped(inner.x, @intCast(x_offset)), addOffsetClamped(inner.y, @intCast(y_offset)), ' ', render.Color.named(render.NamedColor.default), color, render.Style{ .bold = true });
             }
         }
     }
@@ -408,16 +420,14 @@ pub const Chart = struct {
         }
         if (total_sum == 0) return;
 
-        const center_x: f32 = @as(f32, @floatFromInt(inner.x)) + @as(f32, @floatFromInt(inner.width)) / 2.0;
-        const center_y: f32 = @as(f32, @floatFromInt(inner.y)) + @as(f32, @floatFromInt(inner.height)) / 2.0;
+        const center_x: f32 = @as(f32, @floatFromInt(inner.width)) / 2.0;
+        const center_y: f32 = @as(f32, @floatFromInt(inner.height)) / 2.0;
         const radius: f32 = @as(f32, @floatFromInt(@min(inner.width, inner.height))) / 2.2;
 
-        var y: u16 = inner.y;
-        while (y < inner.y + inner.height) : (y += 1) {
-            var x: u16 = inner.x;
-            while (x < inner.x + inner.width) : (x += 1) {
-                const dx = @as(f64, @floatFromInt(x)) - @as(f64, center_x);
-                const dy = @as(f64, @floatFromInt(y)) - @as(f64, center_y);
+        for (0..inner.height) |y_offset| {
+            for (0..inner.width) |x_offset| {
+                const dx = @as(f64, @floatFromInt(x_offset)) - @as(f64, center_x);
+                const dy = @as(f64, @floatFromInt(y_offset)) - @as(f64, center_y);
                 const distance = std.math.sqrt(dx * dx + dy * dy);
                 if (distance > radius) continue;
 
@@ -437,7 +447,7 @@ pub const Chart = struct {
                 }
 
                 const color = self.series.items[slice_index].color;
-                renderer.drawChar(x, y, ' ', render.Color.named(render.NamedColor.default), color, render.Style{ .bold = true });
+                renderer.drawChar(addOffsetClamped(inner.x, @intCast(x_offset)), addOffsetClamped(inner.y, @intCast(y_offset)), ' ', render.Color.named(render.NamedColor.default), color, render.Style{ .bold = true });
             }
         }
     }
@@ -448,9 +458,9 @@ pub const Chart = struct {
         for (self.series.items) |s| {
             longest = @max(longest, s.label.len);
         }
-        const legend_width: u16 = @min(inner.width, @as(u16, @intCast(longest + 6)));
-        const legend_height: u16 = @min(@as(u16, @intCast(self.series.items.len)), inner.height);
-        const start_x = inner.x + inner.width - legend_width;
+        const legend_width: u16 = @min(inner.width, addU16Saturating(clampUsizeToU16(longest), 6));
+        const legend_height: u16 = @min(clampUsizeToU16(self.series.items.len), inner.height);
+        const start_x = addOffsetClamped(inner.x, inner.width - legend_width);
         const start_y = inner.y;
         const bg = self.theme_value.color(.surface);
 
@@ -458,11 +468,11 @@ pub const Chart = struct {
 
         for (self.series.items, 0..) |s, idx| {
             if (idx >= legend_height) break;
-            const row_y = start_y + @as(u16, @intCast(idx));
-            renderer.drawChar(start_x + 1, row_y, '■', s.color, bg, render.Style{ .bold = true });
+            const row_y = addOffsetClamped(start_y, @intCast(idx));
+            renderer.drawChar(addOffsetClamped(start_x, 1), row_y, '■', s.color, bg, render.Style{ .bold = true });
             const available = legend_width - 3;
             const label_slice = s.label[0..@min(s.label.len, @as(usize, @intCast(available)))];
-            renderer.drawStr(start_x + 3, row_y, label_slice, fg, bg, render.Style{});
+            renderer.drawStr(addOffsetClamped(start_x, 3), row_y, label_slice, fg, bg, render.Style{});
         }
     }
 
@@ -487,15 +497,17 @@ pub const Chart = struct {
     }
 
     fn innerRect(self: *Chart, rect: layout_module.Rect) layout_module.Rect {
-        const axis_pad_left: u16 = self.padding + @as(u16, if (self.y_axis_label != null) 2 else 0);
-        const axis_pad_bottom: u16 = self.padding + @as(u16, if (self.x_axis_label != null) 1 else 0);
+        const axis_pad_left: u16 = addU16Saturating(self.padding, @as(u16, if (self.y_axis_label != null) 2 else 0));
+        const axis_pad_bottom: u16 = addU16Saturating(self.padding, @as(u16, if (self.x_axis_label != null) 1 else 0));
         const pad_right = self.padding;
         const pad_top = self.padding;
+        const horizontal_padding = addU16Saturating(axis_pad_left, pad_right);
+        const vertical_padding = addU16Saturating(pad_top, axis_pad_bottom);
 
-        const padded_width = if (rect.width > axis_pad_left + pad_right) rect.width - axis_pad_left - pad_right else 0;
-        const padded_height = if (rect.height > pad_top + axis_pad_bottom) rect.height - pad_top - axis_pad_bottom else 0;
+        const padded_width = if (rect.width > horizontal_padding) rect.width - horizontal_padding else 0;
+        const padded_height = if (rect.height > vertical_padding) rect.height - vertical_padding else 0;
 
-        return layout_module.Rect.init(rect.x + axis_pad_left, rect.y + pad_top, padded_width, padded_height);
+        return layout_module.Rect.init(addOffsetClamped(rect.x, axis_pad_left), addOffsetClamped(rect.y, pad_top), padded_width, padded_height);
     }
 
     fn maxSampleCount(self: *const Chart) usize {
@@ -695,6 +707,56 @@ test "chart draws scatter points with legend and labels" {
     }
     try std.testing.expect(markers > 0);
     try std.testing.expect(found_label);
+}
+
+test "chart clamps edge draw coordinates across chart types" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+
+    inline for (.{ ChartType.bar, .stacked_bar, .line, .area, .pie, .scatter }) |chart_type| {
+        var chart = try Chart.init(alloc);
+        defer chart.deinit();
+        chart.setType(chart_type);
+        try chart.setAxisLabels("x", "y");
+        try chart.addSeries("alpha", &[_]f32{ 1, 2, 3, 2 }, null, null);
+        try chart.addSeries("beta", &[_]f32{ 2, 1, 1, 3 }, null, null);
+        try chart.widget.layout(layout_module.Rect.init(max - 1, max - 1, 16, 8));
+
+        var renderer = try render.Renderer.init(alloc, 2, 2);
+        defer renderer.deinit();
+        try chart.widget.draw(&renderer);
+
+        try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+        try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+    }
+}
+
+test "chart clamps oversized bar sample counts" {
+    const alloc = std.testing.allocator;
+    const values = try alloc.alloc(f32, @as(usize, std.math.maxInt(u16)) + 1);
+    defer alloc.free(values);
+    @memset(values, 1);
+
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+    chart.setType(.bar);
+    chart.setShowLegend(false);
+    chart.setShowAxes(false);
+    try chart.addSeries("dense", values, null, null);
+    try chart.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
+
+    var renderer = try render.Renderer.init(alloc, 8, 4);
+    defer renderer.deinit();
+    try chart.widget.draw(&renderer);
+
+    var painted: usize = 0;
+    for (0..8) |x| {
+        for (0..4) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            if (!std.meta.eql(cell.fg, render.Color.named(render.NamedColor.default))) painted += 1;
+        }
+    }
+    try std.testing.expect(painted > 0);
 }
 
 test "chart fills background when empty" {
