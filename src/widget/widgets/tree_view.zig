@@ -151,6 +151,11 @@ pub const TreeView = struct {
         }
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *TreeView = @fieldParentPtr("widget", widget_ref);
@@ -183,7 +188,7 @@ pub const TreeView = struct {
         for (start..end) |visible_index| {
             const node_index = self.visible.items[visible_index];
             const node = self.nodes.items[node_index];
-            const y_pos: u16 = rect.y + @as(u16, @intCast(row));
+            const y_pos = addOffsetClamped(rect.y, @intCast(row));
             const is_selected = visible_index == self.selected;
             const row_bg = if (is_selected) accent else surface;
             const row_fg = if (is_selected) self.palette.color(.background) else text;
@@ -197,14 +202,14 @@ pub const TreeView = struct {
                 '•';
 
             if (indent < rect.width) {
-                renderer.drawChar(rect.x + indent, y_pos, marker, if (node.children.items.len > 0) accent else muted, row_bg, self.palette.style);
+                renderer.drawChar(addOffsetClamped(rect.x, indent), y_pos, marker, if (node.children.items.len > 0) accent else muted, row_bg, self.palette.style);
             }
 
             const label_start = indent + 2;
             if (label_start < rect.width) {
                 var label_buf: [256]u8 = undefined;
                 const clipped = text_metrics.clipWithEllipsis(node.label, rect.width - label_start, &label_buf);
-                renderer.drawStr(rect.x + label_start, y_pos, clipped.text, row_fg, row_bg, self.palette.style);
+                renderer.drawStr(addOffsetClamped(rect.x, label_start), y_pos, clipped.text, row_fg, row_bg, self.palette.style);
             }
 
             row += 1;
@@ -458,4 +463,22 @@ test "tree view clips labels without splitting wide utf8 glyphs" {
     try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(2, 0).*.codepoint());
     try std.testing.expect(renderer.back.getCell(3, 0).*.continuation);
     try std.testing.expectEqual(@as(u21, '.'), renderer.back.getCell(6, 0).*.codepoint());
+}
+
+test "tree view clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    const root = try tree.addRoot("root");
+    _ = try tree.addChild(root, "child");
+    tree.nodes.items[root].expanded = true;
+    try tree.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try tree.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).*.codepoint());
 }
