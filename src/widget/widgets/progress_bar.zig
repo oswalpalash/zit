@@ -75,6 +75,16 @@ pub const ProgressBar = struct {
         return self;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addUsizeOffsetClamped(origin: u16, offset: usize) u16 {
+        const capped = @min(offset, @as(usize, std.math.maxInt(u16)));
+        return addOffsetClamped(origin, @intCast(capped));
+    }
+
     /// Clean up progress bar resources
     pub fn deinit(self: *ProgressBar) void {
         self.allocator.destroy(self);
@@ -226,15 +236,16 @@ pub const ProgressBar = struct {
                 const half_width = @divTrunc(rect.width, 2);
                 const text_len = @as(u16, @intCast(text.len));
                 const half_text_len = @divTrunc(text_len, 2);
-                const text_x = rect.x + @as(u16, @intCast(@max(0, half_width - half_text_len)));
-                const text_y = rect.y + @divTrunc(rect.height, 2);
+                const text_x = addOffsetClamped(rect.x, @as(u16, @intCast(@max(0, half_width - half_text_len))));
+                const text_y = addOffsetClamped(rect.y, @divTrunc(rect.height, 2));
+                const progress_right = @as(u32, rect.x) + @as(u32, progress_width);
 
                 for (text, 0..) |char, i| {
-                    const x = text_x + @as(u16, @intCast(i));
+                    const x = addUsizeOffsetClamped(text_x, i);
                     const y = text_y;
 
                     // Choose text color based on position (in progress area or not)
-                    const is_in_progress_area = x < rect.x + progress_width;
+                    const is_in_progress_area = @as(u32, x) < progress_right;
                     const text_fg = if (is_in_progress_area) self.bg else self.fg;
                     const text_bg = if (is_in_progress_area) fill_fg else self.bg;
 
@@ -243,7 +254,7 @@ pub const ProgressBar = struct {
             }
         } else {
             const progress_height = @as(u16, @intFromFloat(@as(f32, @floatFromInt(rect.height)) * (clamped / 100.0)));
-            const start_y = rect.y + @as(u16, @intCast(@max(0, @as(i16, @intCast(rect.height)) - @as(i16, @intCast(progress_height)))));
+            const start_y = addOffsetClamped(rect.y, rect.height - progress_height);
 
             if (progress_height > 0) {
                 renderer.fillRect(rect.x, start_y, rect.width, progress_height, self.fill_char, fill_fg, fill_bg, style);
@@ -254,11 +265,12 @@ pub const ProgressBar = struct {
                 var buffer: [5]u8 = undefined;
                 const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{@as(u8, @intFromFloat(clamped))}) catch "";
 
-                const text_x = rect.x + @as(u16, @intCast(@divTrunc(@as(i16, @intCast(rect.width)), 2) - @divTrunc(@as(i16, @intCast(text.len)), 2)));
-                const text_y = rect.y + @divTrunc(rect.height, 2);
+                const text_offset = @divTrunc(rect.width, 2) - @as(u16, @intCast(@divTrunc(@as(i16, @intCast(text.len)), 2)));
+                const text_x = addOffsetClamped(rect.x, text_offset);
+                const text_y = addOffsetClamped(rect.y, @divTrunc(rect.height, 2));
 
                 for (text, 0..) |char, i| {
-                    const x = text_x + @as(u16, @intCast(i));
+                    const x = addUsizeOffsetClamped(text_x, i);
                     const y = text_y;
 
                     // Choose text color based on position (in progress area or not)
@@ -337,4 +349,38 @@ test "progress bar tolerates zero size" {
     var snap = try testing.renderWidget(alloc, &bar.widget, layout_module.Size.init(0, 0));
     defer snap.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 0), snap.text().len);
+}
+
+test "progress bar clamps horizontal edge label coordinates" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    bar.setProgress(100);
+    bar.setDirection(.horizontal);
+    try bar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "progress bar clamps vertical edge label and fill coordinates" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    bar.setProgress(50);
+    bar.setDirection(.vertical);
+    try bar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 10));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
 }
