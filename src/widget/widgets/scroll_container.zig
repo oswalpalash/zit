@@ -65,6 +65,10 @@ pub const ScrollContainer = struct {
         .can_focus = canFocusFn,
     };
 
+    fn addI16Saturating(value: i16, delta: i16) i16 {
+        return std.math.add(i16, value, delta) catch if (delta > 0) std.math.maxInt(i16) else std.math.minInt(i16);
+    }
+
     /// Initialize a new scroll container
     pub fn init(allocator: std.mem.Allocator) !*ScrollContainer {
         const self = try allocator.create(ScrollContainer);
@@ -663,17 +667,17 @@ pub const ScrollContainer = struct {
 
         // Add border space
         if (self.show_border) {
-            width += 2;
-            height += 2;
+            width = addI16Saturating(width, 2);
+            height = addI16Saturating(height, 2);
         }
 
         // Add scrollbar space
         if (self.show_h_scrollbar) {
-            height += 1;
+            height = addI16Saturating(height, 1);
         }
 
         if (self.show_v_scrollbar) {
-            width += 1;
+            width = addI16Saturating(width, 1);
         }
 
         return layout_module.Size.init(width, height);
@@ -879,6 +883,41 @@ test "scroll container clips border edge coordinates before u16 overflow" {
     defer renderer.deinit();
 
     try container.widget.draw(&renderer);
+}
+
+test "scroll container preferred size saturates chrome inflation" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(std.math.maxInt(i16), std.math.maxInt(i16));
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+
+    const size = try container.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.width);
+    try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.height);
 }
 
 test "scroll container saturates relative offset arithmetic" {
