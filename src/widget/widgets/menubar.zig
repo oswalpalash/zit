@@ -10,6 +10,16 @@ pub const MenuItem = struct {
     on_select: ?*const fn () void = null,
 };
 
+fn addUsizeSaturating(a: usize, b: usize) usize {
+    return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+}
+
+fn preferredWidthAfterItem(current: usize, label_len: usize) usize {
+    const capped_label_width = @min(label_len, 58);
+    const item_width = addUsizeSaturating(capped_label_width, 2);
+    return @min(addUsizeSaturating(current, item_width), @as(usize, std.math.maxInt(u16)));
+}
+
 /// Horizontal menu bar with focusable items and keyboard navigation.
 pub const MenuBar = struct {
     widget: base.Widget,
@@ -140,8 +150,7 @@ pub const MenuBar = struct {
         const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         var width: usize = 0;
         for (self.items.items) |item| {
-            const add = @min(item.label.len, 58) + 2;
-            width = @min(width + add, std.math.maxInt(u16));
+            width = preferredWidthAfterItem(width, item.label.len);
         }
         return layout_module.Size.init(@as(u16, @intCast(@max(width, 6))), 1);
     }
@@ -266,6 +275,11 @@ test "menubar preferred width saturates for many items" {
 
     const size = try MenuBar.getPreferredSizeFn(@ptrCast(@alignCast(&bar.widget)));
     try std.testing.expectEqual(std.math.maxInt(u16), size.width);
+}
+
+test "menubar preferred width accumulation saturates before clamping" {
+    const width = preferredWidthAfterItem(std.math.maxInt(usize) - 1, std.math.maxInt(usize));
+    try std.testing.expectEqual(@as(usize, std.math.maxInt(u16)), width);
 }
 
 test "menubar addItem preserves items on allocation failure" {
