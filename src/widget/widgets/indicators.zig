@@ -6,6 +6,15 @@ const theme = @import("../theme.zig");
 const input = @import("../../input/input.zig");
 const accessibility = @import("../accessibility.zig");
 
+fn addOffsetClamped(origin: u16, offset: u16) u16 {
+    const value = @as(u32, origin) + @as(u32, offset);
+    return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+}
+
+fn clampUsizeToU16(value: usize) u16 {
+    return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+}
+
 /// Battery indicator with charge/alert visuals.
 pub const BatteryIndicator = struct {
     widget: base.Widget,
@@ -66,12 +75,12 @@ pub const BatteryIndicator = struct {
         // Main body with a small positive terminal.
         const body_width = rect.width - 2;
         renderer.drawBox(rect.x, rect.y, body_width, rect.height, .single, fg, bg, render.Style{});
-        const nub_x = rect.x + body_width;
-        const nub_y = rect.y + rect.height / 3;
+        const nub_x = addOffsetClamped(rect.x, body_width);
+        const nub_y = addOffsetClamped(rect.y, rect.height / 3);
         renderer.drawVLine(nub_x, nub_y, @max(@as(u16, 1), rect.height / 3), '│', fg, bg, render.Style{ .bold = true });
 
-        const inset_x = rect.x + 1;
-        const inset_y = rect.y + 1;
+        const inset_x = addOffsetClamped(rect.x, 1);
+        const inset_y = addOffsetClamped(rect.y, 1);
         const inset_w = if (body_width > 2) body_width - 2 else 0;
         const inset_h = if (rect.height > 2) rect.height - 2 else 0;
         if (inset_w == 0 or inset_h == 0) return;
@@ -83,8 +92,8 @@ pub const BatteryIndicator = struct {
         }
 
         if (self.charging and inset_w > 2 and inset_h > 1) {
-            const bolt_x = inset_x + inset_w / 2;
-            const bolt_y = inset_y + inset_h / 2;
+            const bolt_x = addOffsetClamped(inset_x, inset_w / 2);
+            const bolt_y = addOffsetClamped(inset_y, inset_h / 2);
             renderer.drawChar(bolt_x, bolt_y, '+', fg, charge_color, render.Style{ .bold = true });
         }
     }
@@ -161,15 +170,17 @@ pub const SignalStrength = struct {
         const accent = self.theme_value.color(.accent);
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, render.Style{});
 
-        const usable_bars = @max(self.bars, @as(usize, 1));
+        const requested_bars = @max(self.bars, @as(usize, 1));
+        const usable_bars = @min(requested_bars, @as(usize, rect.width));
         const max_height = rect.height;
-        const bar_width: u16 = @max(1, rect.width / @as(u16, @intCast(usable_bars)));
+        const bar_width: u16 = @max(1, rect.width / clampUsizeToU16(usable_bars));
         for (0..usable_bars) |i| {
             const threshold = @as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(usable_bars));
             const active = self.strength >= threshold - 0.0001;
             const height = @max(@as(u16, 1), @as(u16, @intFromFloat(@floor(@as(f32, @floatFromInt(max_height)) * threshold))));
-            const x = rect.x + @as(u16, @intCast(i)) * bar_width;
-            const y = rect.y + rect.height - height;
+            const x_offset = clampUsizeToU16(i * @as(usize, bar_width));
+            const x = addOffsetClamped(rect.x, x_offset);
+            const y = addOffsetClamped(rect.y, rect.height - height);
             const color = if (active) accent else fg;
             renderer.fillRect(x, y, bar_width, height, ' ', fg, color, render.Style{});
         }
@@ -269,7 +280,7 @@ pub const ResourceMeter = struct {
         const percent = @as(u8, @intFromFloat(self.value * 100));
         const text = std.fmt.bufPrint(&buf, "{s}: {d}%", .{ self.label, percent }) catch "meter";
         if (text.len > 0 and rect.height > 0) {
-            renderer.drawStr(rect.x + 1, rect.y + rect.height / 2, text[0..@min(text.len, @as(usize, @intCast(rect.width - 2)))], self.fg, self.bg, render.Style{ .bold = true });
+            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(rect.y, rect.height / 2), text[0..@min(text.len, @as(usize, @intCast(rect.width - 2)))], self.fg, self.bg, render.Style{ .bold = true });
         }
     }
 
@@ -359,8 +370,9 @@ pub const TrafficLight = struct {
         const spacing = rect.width / 3;
         var i: usize = 0;
         while (i < 3) : (i += 1) {
-            const center_x = rect.x + spacing * @as(u16, @intCast(i)) + spacing / 2;
-            const center_y = rect.y + rect.height / 2;
+            const center_offset = spacing * @as(u16, @intCast(i)) + spacing / 2;
+            const center_x = addOffsetClamped(rect.x, center_offset);
+            const center_y = addOffsetClamped(rect.y, rect.height / 2);
             const color = if (i == active_idx) colors[i] else self.theme_value.color(.muted);
             renderer.drawChar(center_x, center_y, '●', color, bg, render.Style{ .bold = i == active_idx });
         }
@@ -513,4 +525,70 @@ test "traffic light highlights active color" {
         }
     }
     try std.testing.expect(highlighted > 0);
+}
+
+test "indicator widgets clamp edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    var battery = try BatteryIndicator.init(alloc);
+    defer battery.deinit();
+    battery.setLevel(0.8);
+    battery.setCharging(true);
+    try battery.widget.layout(layout_module.Rect.init(max - 1, max - 1, 14, 4));
+    try battery.widget.draw(&renderer);
+
+    var signal = try SignalStrength.init(alloc);
+    defer signal.deinit();
+    signal.bars = std.math.maxInt(usize);
+    signal.setStrength(1.0);
+    try signal.widget.layout(layout_module.Rect.init(max - 1, max - 1, 12, 4));
+    try signal.widget.draw(&renderer);
+
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+    try meter.setLabel("CPU");
+    meter.setValue(0.42);
+    try meter.widget.layout(layout_module.Rect.init(max, max, 18, 3));
+    try meter.widget.draw(&renderer);
+
+    var light = try TrafficLight.init(alloc);
+    defer light.deinit();
+    light.setState(.yellow);
+    try light.widget.layout(layout_module.Rect.init(max - 1, max - 1, 12, 3));
+    try light.widget.draw(&renderer);
+
+    for (0..2) |x| {
+        for (0..2) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            try std.testing.expectEqual(@as(u21, ' '), cell.codepoint());
+            try std.testing.expect(std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default)));
+        }
+    }
+}
+
+test "signal strength caps oversized bar counts" {
+    const alloc = std.testing.allocator;
+    var signal = try SignalStrength.init(alloc);
+    defer signal.deinit();
+
+    signal.bars = std.math.maxInt(usize);
+    signal.setStrength(0.75);
+    try signal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
+
+    var renderer = try render.Renderer.init(alloc, 8, 4);
+    defer renderer.deinit();
+    try signal.widget.draw(&renderer);
+
+    var painted: usize = 0;
+    for (0..8) |x| {
+        for (0..4) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            if (!std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) painted += 1;
+        }
+    }
+    try std.testing.expect(painted > 0);
 }
