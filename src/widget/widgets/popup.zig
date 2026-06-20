@@ -68,6 +68,11 @@ pub const Popup = struct {
         self.dismiss_on_any_key = enabled;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Popup = @fieldParentPtr("widget", widget_ref);
@@ -83,8 +88,8 @@ pub const Popup = struct {
 
         const inner_width = rect.width - 2;
         const text_len = @as(u16, @intCast(@min(self.message.len, inner_width)));
-        const text_x = rect.x + 1 + (inner_width - text_len) / 2;
-        const text_y = rect.y + rect.height / 2;
+        const text_x = addOffsetClamped(rect.x, 1 + (inner_width - text_len) / 2);
+        const text_y = addOffsetClamped(rect.y, rect.height / 2);
         renderer.drawStr(text_x, text_y, self.message[0..text_len], self.fg, self.bg, render.Style{ .bold = true });
     }
 
@@ -120,8 +125,8 @@ pub const Popup = struct {
         const actual_height = @min(rect.height, preferred.height);
 
         self.widget.rect = layout_module.Rect{
-            .x = rect.x + @divTrunc(rect.width - actual_width, 2),
-            .y = rect.y + @divTrunc(rect.height - actual_height, 2),
+            .x = addOffsetClamped(rect.x, @divTrunc(rect.width - actual_width, 2)),
+            .y = addOffsetClamped(rect.y, @divTrunc(rect.height - actual_height, 2)),
             .width = actual_width,
             .height = actual_height,
         };
@@ -131,7 +136,7 @@ pub const Popup = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Popup = @fieldParentPtr("widget", widget_ref);
         const min_width: u16 = 10;
-        const text_width = @as(u16, @intCast(self.message.len + 4));
+        const text_width = @as(u16, @intCast(@min(self.message.len, @as(usize, self.width -| 4)) + 4));
         return layout_module.Size.init(@max(min_width, @min(text_width, self.width)), self.height);
     }
 
@@ -189,4 +194,39 @@ test "popup setMessage preserves message on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, popup.setMessage("Replacement"));
     try std.testing.expectEqualStrings("Stable", popup.message);
+}
+
+test "popup clamps edge layout and draw coordinates" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+    var popup = try Popup.init(alloc, "Edge");
+    defer popup.deinit();
+
+    popup.width = 4;
+    popup.height = 3;
+    try popup.widget.layout(layout_module.Rect.init(max - 1, max - 1, 12, 12));
+
+    try std.testing.expectEqual(max, popup.widget.rect.x);
+    try std.testing.expectEqual(max, popup.widget.rect.y);
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try popup.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "popup preferred size clamps long messages before u16 cast" {
+    const alloc = std.testing.allocator;
+    const message = try alloc.alloc(u8, std.math.maxInt(u16) + 1);
+    defer alloc.free(message);
+    @memset(message, 'x');
+
+    var popup = try Popup.init(alloc, message);
+    defer popup.deinit();
+
+    const size = try popup.widget.getPreferredSize();
+    try std.testing.expectEqual(popup.width, size.width);
+    try std.testing.expectEqual(popup.height, size.height);
 }
