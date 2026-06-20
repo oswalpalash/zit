@@ -131,12 +131,12 @@ pub const MenuBar = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
-        var width: u16 = 0;
+        var width: usize = 0;
         for (self.items.items) |item| {
-            const add: u16 = @intCast(@min(item.label.len + 2, 60));
-            width = width + add;
+            const add = @min(item.label.len, 58) + 2;
+            width = @min(width + add, std.math.maxInt(u16));
         }
-        return layout_module.Size.init(@max(width, 6), 1);
+        return layout_module.Size.init(@as(u16, @intCast(@max(width, 6))), 1);
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -209,6 +209,21 @@ fn menuBarAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
 
 test "menubar addItem cleans up every allocation failure path" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, menuBarAddItemAllocationFailureHarness, .{});
+}
+
+test "menubar preferred width saturates for many items" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    const label = "012345678901234567890123456789012345678901234567890123456789";
+    var i: usize = 0;
+    while (i < 1200) : (i += 1) {
+        try bar.addItem(label, null);
+    }
+
+    const size = try MenuBar.getPreferredSizeFn(@ptrCast(@alignCast(&bar.widget)));
+    try std.testing.expectEqual(std.math.maxInt(u16), size.width);
 }
 
 test "menubar addItem preserves items on allocation failure" {
