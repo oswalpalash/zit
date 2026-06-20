@@ -80,6 +80,11 @@ pub const Sparkline = struct {
         self.values = next_values;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Sparkline = @fieldParentPtr("widget", widget_ref);
@@ -109,8 +114,8 @@ pub const Sparkline = struct {
             const step_count: f32 = @floatFromInt(steps.len);
             const level = @min(steps.len - 1, @as(usize, @intFromFloat(@floor(normalized * step_count))));
             const char = steps[level];
-            const draw_y = rect.y + rect.height / 2;
-            renderer.drawChar(rect.x + @as(u16, @intCast(x)), draw_y, char, self.fg, self.bg, render.Style{});
+            const draw_y = addOffsetClamped(rect.y, rect.height / 2);
+            renderer.drawChar(addOffsetClamped(rect.x, @intCast(x)), draw_y, char, self.fg, self.bg, render.Style{});
         }
     }
 
@@ -167,6 +172,24 @@ test "sparkline draws samples" {
         }
     }
     try std.testing.expect(non_space > 0);
+}
+
+test "sparkline clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    const samples = [_]f32{ 0.0, 1.0 };
+    try spark.setValues(&samples);
+    try spark.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 2, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try spark.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
 }
 
 test "sparkline setValues preserves samples on allocation failure" {
