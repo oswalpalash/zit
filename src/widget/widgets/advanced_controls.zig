@@ -79,6 +79,10 @@ fn normalizedRatingValue(value: f32, max_stars: u8) f32 {
     return std.math.clamp(value, 0, max);
 }
 
+fn offsetCoord(origin: u16, offset: usize) u16 {
+    return @intCast(@min(@as(usize, origin) + offset, std.math.maxInt(u16)));
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -1308,6 +1312,8 @@ pub const NotificationCenter = struct {
         const self: *NotificationCenter = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
+        if (rect.width == 0 or rect.height == 0) return;
+
         const max_rows = rect.height;
         var y: u16 = 0;
         const start = if (self.notifications.items.len > max_rows)
@@ -1322,13 +1328,19 @@ pub const NotificationCenter = struct {
                 .danger => .{ render.Color.named(.white), render.Color.named(.red) },
                 .success => .{ render.Color.named(.black), render.Color.named(.green) },
             };
-            renderer.fillRect(rect.x, rect.y + y, rect.width, 1, ' ', colors[0], colors[1], render.Style{});
-            const title = note.title[0..@min(note.title.len, rect.width)];
-            renderer.drawStr(rect.x + 1, rect.y + y, title, colors[0], colors[1], render.Style{ .bold = true });
-            const space_left = rect.width - 2 - @as(u16, @intCast(title.len));
-            if (space_left > 0) {
+            const row_y = offsetCoord(rect.y, y);
+            renderer.fillRect(rect.x, row_y, rect.width, 1, ' ', colors[0], colors[1], render.Style{});
+
+            const text_x = if (rect.width > 1) offsetCoord(rect.x, 1) else rect.x;
+            const title_width: usize = if (rect.width > 1) rect.width - 1 else rect.width;
+            const title = note.title[0..@min(note.title.len, title_width)];
+            renderer.drawStr(text_x, row_y, title, colors[0], colors[1], render.Style{ .bold = true });
+
+            const body_offset = title.len + 1;
+            if (rect.width > 2 and body_offset < rect.width - 1) {
+                const space_left = rect.width - 1 - body_offset;
                 const body = note.body[0..@min(note.body.len, space_left)];
-                renderer.drawStr(rect.x + 1 + @as(u16, @intCast(title.len)) + 1, rect.y + y, body, colors[0], colors[1], render.Style{});
+                renderer.drawStr(offsetCoord(text_x, body_offset), row_y, body, colors[0], colors[1], render.Style{});
             }
             _ = idx;
             y += 1;
@@ -1420,17 +1432,26 @@ pub const Accordion = struct {
         const self: *Accordion = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        var y = rect.y;
+        if (rect.width == 0 or rect.height == 0) return;
+
+        var row: u16 = 0;
         for (self.sections.items, 0..) |section, idx| {
-            if (y >= rect.y + rect.height) break;
+            if (row >= rect.height) break;
+            const y = offsetCoord(rect.y, row);
             const prefix = if (section.expanded) "▼" else "►";
             renderer.drawStr(rect.x, y, prefix, render.Color.named(.yellow), render.Color.named(.default), render.Style{ .bold = true });
-            renderer.drawStr(rect.x + 2, y, section.title[0..@min(section.title.len, rect.width - 2)], render.Color.named(.white), render.Color.named(.default), render.Style{});
-            y += 1;
-            if (section.expanded and y < rect.y + rect.height) {
-                const body = section.body[0..@min(section.body.len, rect.width)];
-                renderer.drawStr(rect.x + 2, y, body, render.Color.named(.bright_white), render.Color.named(.default), render.Style{});
-                y += 1;
+            if (rect.width > 2) {
+                const title = section.title[0..@min(section.title.len, rect.width - 2)];
+                renderer.drawStr(offsetCoord(rect.x, 2), y, title, render.Color.named(.white), render.Color.named(.default), render.Style{});
+            }
+            row += 1;
+            if (section.expanded and row < rect.height) {
+                const body_y = offsetCoord(rect.y, row);
+                if (rect.width > 2) {
+                    const body = section.body[0..@min(section.body.len, rect.width - 2)];
+                    renderer.drawStr(offsetCoord(rect.x, 2), body_y, body, render.Color.named(.bright_white), render.Color.named(.default), render.Style{});
+                }
+                row += 1;
             }
             _ = idx;
         }
@@ -1804,6 +1825,27 @@ test "status bar clamps far right draw offsets" {
     try status.widget.draw(&renderer);
 }
 
+test "notification center draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var center = try NotificationCenter.init(alloc);
+    defer center.deinit();
+
+    try center.push("Build", "Started", .info);
+    try center.push("Deploy", "Finished", .success);
+
+    {
+        var snap = try testing.renderWidget(alloc, &center.widget, layout_module.Size.init(1, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try center.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 1, 2));
+    try center.widget.draw(&renderer);
+}
+
 test "pagination advances pages" {
     const alloc = std.testing.allocator;
     var pager = try Pagination.init(alloc, 5);
@@ -1898,6 +1940,27 @@ test "accordion mouse toggles rendered section rows" {
 
     try std.testing.expect(!try accordion.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 8, 1, 0) }));
     try std.testing.expect(accordion.sections.items[0].expanded);
+}
+
+test "accordion draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var accordion = try Accordion.init(alloc, &[_]Accordion.Section{
+        .{ .title = "Build", .body = "Run tests", .expanded = true },
+        .{ .title = "Ship", .body = "Push main" },
+    });
+    defer accordion.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &accordion.widget, layout_module.Size.init(1, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try accordion.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 1, 2));
+    try accordion.widget.draw(&renderer);
 }
 
 fn radioGroupInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
