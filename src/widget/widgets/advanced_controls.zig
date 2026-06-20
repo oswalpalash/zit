@@ -759,16 +759,17 @@ pub const Toolbar = struct {
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color.named(.default), render.Color.named(.bright_black), render.Style{});
 
-        var cursor = rect.x + 1;
+        const limit = offsetCoord(rect.x, rect.width);
+        var cursor = offsetCoord(rect.x, 1);
         for (self.items.items, 0..) |item, idx| {
-            if (cursor >= rect.x + rect.width) break;
+            if (cursor >= limit) break;
             const display = try std.fmt.allocPrint(self.allocator, "[{s}]", .{item});
             defer self.allocator.free(display);
-            const draw_len = @min(display.len, rect.width - (cursor - rect.x));
+            const draw_len = @min(display.len, @as(usize, @intCast(limit - cursor)));
             const fg = if (idx == self.active) render.Color.named(.black) else render.Color.named(.white);
             const bg = if (idx == self.active) render.Color.named(.cyan) else render.Color.named(.bright_black);
             renderer.drawStr(cursor, rect.y, display[0..draw_len], fg, bg, render.Style{ .bold = idx == self.active });
-            cursor += @intCast(draw_len + 1);
+            cursor = offsetCoord(cursor, draw_len + 1);
         }
     }
 
@@ -794,14 +795,17 @@ pub const Toolbar = struct {
             },
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1 and self.widget.rect.contains(mouse.x, mouse.y)) {
-                    var cursor = self.widget.rect.x + 1;
+                    const limit = offsetCoord(self.widget.rect.x, self.widget.rect.width);
+                    var cursor = offsetCoord(self.widget.rect.x, 1);
                     for (self.items.items, 0..) |item, idx| {
-                        const width = @as(u16, @intCast(item.len + 2));
-                        if (mouse.x >= cursor and mouse.x < cursor + width) {
+                        if (cursor >= limit) break;
+                        const width: u16 = @intCast(@min(item.len +| 2, @as(usize, std.math.maxInt(u16))));
+                        const end = offsetCoord(cursor, width);
+                        if (mouse.x >= cursor and mouse.x < end) {
                             self.active = idx;
                             return true;
                         }
-                        cursor += width + 1;
+                        cursor = offsetCoord(cursor, @as(usize, width) + 1);
                     }
                 }
             },
@@ -2036,6 +2040,31 @@ test "toolbar mouse selects rendered item row" {
 
     try std.testing.expect(try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 14, 8, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), toolbar.active);
+}
+
+test "toolbar clamps far-edge render coordinates" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{"Open"});
+    defer toolbar.deinit();
+
+    try toolbar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 2, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try toolbar.widget.draw(&renderer);
+}
+
+test "toolbar clamps far-edge mouse hit coordinates" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{"Open"});
+    defer toolbar.deinit();
+
+    toolbar.widget.rect = layout_module.Rect.init(std.math.maxInt(u16), 0, 1, 1);
+
+    try std.testing.expect(!try toolbar.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), 0, 1, 0),
+    }));
 }
 
 var test_breadcrumb_click_index: ?usize = null;
