@@ -85,6 +85,18 @@ pub const Sparkline = struct {
         return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
     }
 
+    fn normalizedSample(value: f32, min_val: f32, max_val: f32) f32 {
+        if (std.math.isPositiveInf(value)) return 1;
+        if (!std.math.isFinite(value)) return 0;
+
+        const range = max_val - min_val;
+        if (!std.math.isFinite(range) or range <= 0) return 0;
+
+        const ratio = (value - min_val) / range;
+        if (!std.math.isFinite(ratio)) return 0;
+        return std.math.clamp(ratio, 0, 1);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Sparkline = @fieldParentPtr("widget", widget_ref);
@@ -100,7 +112,6 @@ pub const Sparkline = struct {
         const min_max = calcRange(self.values.items);
         const min_val = min_max[0];
         const max_val = min_max[1];
-        const range: f32 = if (max_val - min_val == 0) 1 else max_val - min_val;
 
         const steps = [_]u21{ '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█' };
 
@@ -110,7 +121,7 @@ pub const Sparkline = struct {
             const sample_index = (x * self.values.items.len) / @max(available_width, 1);
             const clamped_index = @min(sample_index, self.values.items.len - 1);
             const value = self.values.items[clamped_index];
-            const normalized = (value - min_val) / range;
+            const normalized = normalizedSample(value, min_val, max_val);
             const step_count: f32 = @floatFromInt(steps.len);
             const level = @min(steps.len - 1, @as(usize, @intFromFloat(@floor(normalized * step_count))));
             const char = steps[level];
@@ -140,12 +151,23 @@ pub const Sparkline = struct {
     }
 
     fn calcRange(values: []const f32) [2]f32 {
-        var min_val = values[0];
-        var max_val = values[0];
-        for (values[1..]) |v| {
+        var min_val: f32 = 0;
+        var max_val: f32 = 0;
+        var found_finite = false;
+
+        for (values) |v| {
+            if (!std.math.isFinite(v)) continue;
+            if (!found_finite) {
+                min_val = v;
+                max_val = v;
+                found_finite = true;
+                continue;
+            }
             min_val = @min(min_val, v);
             max_val = @max(max_val, v);
         }
+
+        if (!found_finite) return .{ 0, 1 };
         return .{ min_val, max_val };
     }
 };
@@ -190,6 +212,26 @@ test "sparkline clamps edge draw coordinates" {
 
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "sparkline renders non-finite samples deterministically" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    const samples = [_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32), 1.0 };
+    try spark.setValues(&samples);
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 4, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try spark.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, '▁'), renderer.back.getCell(0, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, '█'), renderer.back.getCell(1, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, '▁'), renderer.back.getCell(2, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, '▁'), renderer.back.getCell(3, 0).*.codepoint());
 }
 
 test "sparkline setValues preserves samples on allocation failure" {

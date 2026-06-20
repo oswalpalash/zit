@@ -91,6 +91,17 @@ pub const Gauge = struct {
         return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
     }
 
+    fn normalizedRatio(value: f32, min: f32, max: f32) f32 {
+        if (!std.math.isFinite(min) or !std.math.isFinite(max) or !(max > min)) return 0;
+        if (std.math.isPositiveInf(value)) return 1;
+        if (!std.math.isFinite(value)) return 0;
+
+        const clamped = std.math.clamp(value, min, max);
+        const ratio = (clamped - min) / (max - min);
+        if (!std.math.isFinite(ratio)) return 0;
+        return std.math.clamp(ratio, 0, 1);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Gauge = @fieldParentPtr("widget", widget_ref);
@@ -99,9 +110,7 @@ pub const Gauge = struct {
         const rect = self.widget.rect;
         if (rect.width == 0 or rect.height == 0) return;
 
-        // Clamp ratio between 0 and 1.
-        const clamped = std.math.clamp(self.value, self.min, self.max);
-        const ratio = if (self.max - self.min == 0) 0 else (clamped - self.min) / (self.max - self.min);
+        const ratio = normalizedRatio(self.value, self.min, self.max);
 
         // Draw background.
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
@@ -234,6 +243,40 @@ test "gauge clamps edge draw coordinates" {
     gauge.setOrientation(.vertical);
     try gauge.widget.draw(&renderer);
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).*.codepoint());
+}
+
+test "gauge renders non-finite values deterministically" {
+    const alloc = std.testing.allocator;
+    var gauge = try Gauge.init(alloc);
+    defer gauge.deinit();
+
+    gauge.border = .none;
+    gauge.setRange(0, 100);
+    try gauge.widget.layout(layout_module.Rect.init(0, 0, 4, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    gauge.setValue(std.math.nan(f32));
+    try gauge.widget.draw(&renderer);
+    for (0..4) |x| {
+        try std.testing.expectEqual(@as(u21, '░'), renderer.back.getCell(@intCast(x), 0).*.codepoint());
+    }
+
+    gauge.setValue(std.math.inf(f32));
+    gauge.widget.markDirty();
+    try gauge.widget.draw(&renderer);
+    for (0..4) |x| {
+        try std.testing.expectEqual(@as(u21, '█'), renderer.back.getCell(@intCast(x), 0).*.codepoint());
+    }
+
+    gauge.setRange(std.math.nan(f32), 100);
+    gauge.setValue(50);
+    gauge.widget.markDirty();
+    try gauge.widget.draw(&renderer);
+    for (0..4) |x| {
+        try std.testing.expectEqual(@as(u21, '░'), renderer.back.getCell(@intCast(x), 0).*.codepoint());
+    }
 }
 
 test "gauge setLabel preserves label on allocation failure" {
