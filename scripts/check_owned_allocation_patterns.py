@@ -37,6 +37,61 @@ FREE_BEFORE_DUPLICATE = re.compile(
 SELF_CREATE = re.compile(
     r"const\s+self\s*=\s*try\s+allocator\.create\s*\([^;]+;\s*",
 )
+SELF_INIT = re.compile(r"\bself\.\*\s*=")
+
+
+def unsafe_owned_allocation_before_self_init(text: str, init_start: int) -> bool:
+    """Return true when fallible owned data is copied before self is initialized."""
+    init_match = SELF_INIT.search(text, init_start)
+    if init_match is None:
+        return False
+
+    init_window = text[init_start:init_match.start()]
+    if "try allocator.dupe" not in init_window:
+        return False
+    return "errdefer allocator.destroy(self)" not in init_window
+
+
+def run_self_tests() -> None:
+    def create_end(sample: str) -> int:
+        match = SELF_CREATE.search(sample)
+        if match is None:
+            raise AssertionError("self-test fixture did not match SELF_CREATE")
+        return match.end()
+
+    unsafe = """
+pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Widget {
+    const self = try allocator.create(Widget);
+    const text_copy = try allocator.dupe(u8, text);
+    self.* = .{ .text = text_copy };
+    return self;
+}
+"""
+    safe_destroy = """
+pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Widget {
+    const self = try allocator.create(Widget);
+    errdefer allocator.destroy(self);
+    const text_copy = try allocator.dupe(u8, text);
+    self.* = .{ .text = text_copy };
+    return self;
+}
+"""
+    safe_after_init = """
+pub fn init(allocator: std.mem.Allocator, text: []const u8) !*Widget {
+    const self = try allocator.create(Widget);
+    self.* = .{ .text = "" };
+    errdefer self.deinit();
+    const text_copy = try allocator.dupe(u8, text);
+    self.text = text_copy;
+    return self;
+}
+"""
+    if not unsafe_owned_allocation_before_self_init(unsafe, create_end(unsafe)):
+        raise AssertionError("unsafe self init allocation pattern was not detected")
+    if unsafe_owned_allocation_before_self_init(safe_destroy, create_end(safe_destroy)):
+        raise AssertionError("allocator.destroy errdefer should satisfy self init cleanup")
+    if unsafe_owned_allocation_before_self_init(safe_after_init, create_end(safe_after_init)):
+        raise AssertionError("owned allocation after self init should not trip pre-init cleanup check")
 
 
 def iter_files() -> list[Path]:
@@ -59,6 +114,7 @@ def line_no(text: str, index: int) -> int:
 
 
 def main() -> int:
+    run_self_tests()
     violations: list[str] = []
     files = iter_files()
     for path in files:
@@ -81,22 +137,11 @@ def main() -> int:
             )
 
         for match in SELF_CREATE.finditer(text):
-            init_start = match.end()
-            init_end = text.find("self.*", init_start)
-            if init_end == -1:
-                continue
-            init_window = text[init_start:init_end]
-            if "try allocator.dupe" not in init_window:
-                continue
-            has_cleanup = (
-                "errdefer allocator.destroy(self)" in init_window
-                or "errdefer self.deinit()" in init_window
-            )
-            if has_cleanup:
+            if not unsafe_owned_allocation_before_self_init(text, match.end()):
                 continue
             violations.append(
-                f"{rel}:{line_no(text, match.start())}: install `errdefer allocator.destroy(self)` or "
-                "`errdefer self.deinit()` before fallible owned allocations after `allocator.create`"
+                f"{rel}:{line_no(text, match.start())}: install `errdefer allocator.destroy(self)` before "
+                "fallible owned allocations that run before `self.*` initialization"
             )
 
     if violations:
