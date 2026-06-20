@@ -144,20 +144,25 @@ pub const ToggleSwitch = struct {
         const bg = if (self.on) self.on_bg else self.off_bg;
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, self.track_style);
+        if (rect.width == 0 or rect.height == 0) return;
 
         // Switch pill representation: [ ON ]
-        const pill_width: u16 = 6;
-        const pill_x = rect.x;
-        renderer.drawChar(pill_x, rect.y, '[', fg, bg, self.track_style);
-        renderer.drawChar(pill_x + pill_width - 1, rect.y, ']', fg, bg, self.track_style);
+        const width: usize = rect.width;
+        const pill_width: usize = 6;
+        renderer.drawChar(rect.x, rect.y, '[', fg, bg, self.track_style);
+        if (width >= pill_width) {
+            renderer.drawChar(offsetCoord(rect.x, pill_width - 1), rect.y, ']', fg, bg, self.track_style);
+        }
         const text = if (self.on) " ON " else " OFF";
-        renderer.drawStr(pill_x + 1, rect.y, text, fg, bg, render.Style{ .bold = true });
+        if (width > 1) {
+            renderer.drawStr(offsetCoord(rect.x, 1), rect.y, text[0..@min(text.len, width - 1)], fg, bg, render.Style{ .bold = true });
+        }
 
-        if (rect.width > pill_width and self.label.len > 0) {
-            const available = rect.width - pill_width - 1;
+        if (width > pill_width and self.label.len > 0) {
+            const available = width - pill_width - 1;
             if (available > 0) {
                 const draw_text = self.label[0..@min(self.label.len, available)];
-                renderer.drawStr(pill_x + pill_width + 1, rect.y, draw_text, fg, bg, self.track_style);
+                renderer.drawStr(offsetCoord(rect.x, pill_width + 1), rect.y, draw_text, fg, bg, self.track_style);
             }
         }
     }
@@ -265,11 +270,12 @@ pub const RadioGroup = struct {
             const idx = @as(usize, @intCast(y));
             const option = self.options.items[idx];
             const marker = if (idx == self.selected) "(*)" else "( )";
-            renderer.drawStr(rect.x, rect.y + y, marker, fg, bg, render.Style{});
+            const row_y = offsetCoord(rect.y, y);
+            renderer.drawStr(rect.x, row_y, marker[0..@min(marker.len, rect.width)], fg, bg, render.Style{});
             if (rect.width > marker.len + 1) {
                 const available = rect.width - @as(u16, @intCast(marker.len)) - 1;
                 const draw_text = option[0..@min(option.len, available)];
-                renderer.drawStr(rect.x + 4, rect.y + y, draw_text, fg, bg, render.Style{});
+                renderer.drawStr(offsetCoord(rect.x, 4), row_y, draw_text, fg, bg, render.Style{});
             }
         }
     }
@@ -390,24 +396,26 @@ pub const Slider = struct {
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
 
-        if (rect.width < 4) return;
-        const track_start = rect.x + 1;
-        const track_end = rect.x + rect.width - 2;
-        var x = track_start;
-        while (x <= track_end) : (x += 1) {
-            renderer.drawChar(x, rect.y, '-', self.fg, self.bg, render.Style{});
+        const width: usize = rect.width;
+        if (width < 4) return;
+        const track_start_offset: usize = 1;
+        const track_end_offset: usize = width - 2;
+        var x_offset: usize = track_start_offset;
+        while (x_offset <= track_end_offset) : (x_offset += 1) {
+            renderer.drawChar(offsetCoord(rect.x, x_offset), rect.y, '-', self.fg, self.bg, render.Style{});
         }
 
         const ratio = normalizedRangeRatio(self.value, self.min, self.max);
-        const pos = track_start + @as(u16, @intFromFloat(@floor(ratio * @as(f32, @floatFromInt(track_end - track_start)))));
-        renderer.drawChar(pos, rect.y, '|', render.Color.named(render.NamedColor.white), self.bg, render.Style{ .bold = true });
+        const track_span = track_end_offset - track_start_offset;
+        const pos_offset = track_start_offset + @as(usize, @intFromFloat(@floor(ratio * @as(f32, @floatFromInt(track_span)))));
+        renderer.drawChar(offsetCoord(rect.x, pos_offset), rect.y, '|', render.Color.named(render.NamedColor.white), self.bg, render.Style{ .bold = true });
 
-        if (self.show_value and rect.width > 6) {
+        if (self.show_value and width > 6) {
             var buf: [16]u8 = undefined;
             const rendered = std.fmt.bufPrint(&buf, "{d:.2}", .{self.value}) catch buf[0..0];
-            const value_x = track_end - @as(u16, @intCast(rendered.len)) + 1;
-            if (value_x > rect.x and value_x < rect.x + rect.width) {
-                renderer.drawStr(value_x, rect.y, rendered, self.fg, self.bg, render.Style{});
+            if (rendered.len + 1 < width) {
+                const value_offset = width - rendered.len - 1;
+                renderer.drawStr(offsetCoord(rect.x, value_offset), rect.y, rendered, self.fg, self.bg, render.Style{});
             }
         }
     }
@@ -440,13 +448,14 @@ pub const Slider = struct {
             },
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1 and self.widget.rect.contains(mouse.x, mouse.y)) {
-                    const track_width = self.widget.rect.width - 3;
-                    if (track_width > 0) {
-                        const offset = mouse.x - (self.widget.rect.x + 1);
-                        const ratio = @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(track_width));
-                        self.setValue(self.min + ratio * (self.max - self.min));
-                        return true;
-                    }
+                    const rect = self.widget.rect;
+                    if (rect.width < 4) return false;
+                    const track_width = rect.width - 3;
+                    const track_start = offsetCoord(rect.x, 1);
+                    const offset = if (mouse.x <= track_start) 0 else @min(mouse.x - track_start, track_width);
+                    const ratio = @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(track_width));
+                    self.setValue(self.min + ratio * (self.max - self.min));
+                    return true;
                 }
             },
             else => {},
@@ -512,14 +521,15 @@ pub const RatingStars = struct {
         const self: *RatingStars = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
+        if (rect.width == 0 or rect.height == 0) return;
         const filled = normalizedRatingValue(self.value, self.max_stars);
-        var x = rect.x;
+        var x_offset: usize = 0;
         var i: u8 = 0;
-        while (i < self.max_stars and x < rect.x + rect.width) : (i += 1) {
+        while (i < self.max_stars and x_offset < rect.width) : (i += 1) {
             const star_char: []const u8 = if (@as(f32, @floatFromInt(i)) + 0.5 <= filled) "★" else "☆";
             const color = if (@as(f32, @floatFromInt(i)) + 0.5 <= filled) self.filled_color else self.empty_color;
-            renderer.drawStr(x, rect.y, star_char, color, render.Color.named(render.NamedColor.default), render.Style{});
-            x += 1;
+            renderer.drawStr(offsetCoord(rect.x, x_offset), rect.y, star_char, color, render.Color.named(render.NamedColor.default), render.Style{});
+            x_offset += 1;
         }
     }
 
@@ -1679,6 +1689,24 @@ test "toggle switch mouse toggles rendered row only" {
     try std.testing.expect(toggle.on);
 }
 
+test "toggle switch draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var toggle = try ToggleSwitch.init(alloc, "Turbo");
+    defer toggle.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &toggle.widget, layout_module.Size.init(1, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try toggle.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16), 1, 1));
+    try toggle.widget.draw(&renderer);
+}
+
 test "radio group updates selection" {
     const alloc = std.testing.allocator;
 
@@ -1703,6 +1731,24 @@ test "radio group mouse selects rendered option rows" {
 
     try std.testing.expect(try radio.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 5, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), radio.selected);
+}
+
+test "radio group draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{ "Alpha", "Beta" });
+    defer radio.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &radio.widget, layout_module.Size.init(1, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try radio.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 1, 2));
+    try radio.widget.draw(&renderer);
 }
 
 test "slider clamps values" {
@@ -1769,6 +1815,28 @@ test "slider draws with non-finite internal state" {
     }
 }
 
+test "slider handles narrow edge rectangles and mouse input" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &slider.widget, layout_module.Size.init(1, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    slider.widget.rect = layout_module.Rect.init(5, 5, 1, 1);
+    try std.testing.expect(!try slider.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 5, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try slider.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 3, std.math.maxInt(u16), 4, 1));
+    try slider.widget.draw(&renderer);
+}
+
 test "rating stars increments with input" {
     const alloc = std.testing.allocator;
     var stars = try RatingStars.init(alloc, 3);
@@ -1815,6 +1883,24 @@ test "rating stars draw with non-finite internal state" {
     var snap = try testing.renderWidget(alloc, &stars.widget, layout_module.Size.init(5, 1));
     defer snap.deinit(alloc);
     try snap.expectWellFormed();
+}
+
+test "rating stars draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 5);
+    defer stars.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &stars.widget, layout_module.Size.init(1, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try stars.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16), 1, 1));
+    try stars.widget.draw(&renderer);
 }
 
 test "status bar renders long segments in narrow rects" {
