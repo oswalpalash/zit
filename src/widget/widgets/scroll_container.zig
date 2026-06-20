@@ -333,24 +333,28 @@ pub const ScrollContainer = struct {
         // Draw border if enabled
         if (self.show_border and rect.width >= 2 and rect.height >= 2) {
             const border_chars = self.getBorderChars();
+            const right_x = rectEndCoord(rect.x, rect.width);
+            const bottom_y = rectEndCoord(rect.y, rect.height);
 
             // Top and bottom borders
             for (1..@as(usize, @intCast(rect.width - 1))) |i| {
-                renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y, border_chars[4], fg, bg, style);
-                renderer.drawChar(rect.x + @as(u16, @intCast(i)), rect.y + rect.height - 1, border_chars[4], fg, bg, style);
+                const x = rectOffsetCoord(rect.x, i);
+                renderer.drawChar(x, rect.y, border_chars[4], fg, bg, style);
+                renderer.drawChar(x, bottom_y, border_chars[4], fg, bg, style);
             }
 
             // Left and right borders
             for (1..@as(usize, @intCast(rect.height - 1))) |i| {
-                renderer.drawChar(rect.x, rect.y + @as(u16, @intCast(i)), border_chars[5], fg, bg, style);
-                renderer.drawChar(rect.x + rect.width - 1, rect.y + @as(u16, @intCast(i)), border_chars[5], fg, bg, style);
+                const y = rectOffsetCoord(rect.y, i);
+                renderer.drawChar(rect.x, y, border_chars[5], fg, bg, style);
+                renderer.drawChar(right_x, y, border_chars[5], fg, bg, style);
             }
 
             // Corners
             renderer.drawChar(rect.x, rect.y, border_chars[0], fg, bg, style);
-            renderer.drawChar(rect.x + rect.width - 1, rect.y, border_chars[1], fg, bg, style);
-            renderer.drawChar(rect.x, rect.y + rect.height - 1, border_chars[2], fg, bg, style);
-            renderer.drawChar(rect.x + rect.width - 1, rect.y + rect.height - 1, border_chars[3], fg, bg, style);
+            renderer.drawChar(right_x, rect.y, border_chars[1], fg, bg, style);
+            renderer.drawChar(rect.x, bottom_y, border_chars[2], fg, bg, style);
+            renderer.drawChar(right_x, bottom_y, border_chars[3], fg, bg, style);
         }
 
         // Draw content
@@ -693,6 +697,12 @@ fn rectEndCoord(start: u16, size: u16) u16 {
     return @intCast(@min(end, std.math.maxInt(u16)));
 }
 
+fn rectOffsetCoord(start: u16, offset: usize) u16 {
+    const capped_offset = @min(offset, @as(usize, std.math.maxInt(u16)));
+    const coord = @as(u32, start) + @as(u32, @intCast(capped_offset));
+    return @intCast(@min(coord, std.math.maxInt(u16)));
+}
+
 test "scroll container init/deinit" {
     const alloc = std.testing.allocator;
     var container = try ScrollContainer.init(alloc);
@@ -842,6 +852,24 @@ test "scroll container tolerates tiny layouts with overflowing content" {
         try container.widget.layout(rect);
         try container.widget.draw(&renderer);
     }
+}
+
+test "scroll container clips border edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    try container.widget.layout(layout_module.Rect.init(
+        std.math.maxInt(u16) - 1,
+        std.math.maxInt(u16) - 1,
+        4,
+        4,
+    ));
+
+    var renderer = try render.Renderer.init(alloc, 4, 4);
+    defer renderer.deinit();
+
+    try container.widget.draw(&renderer);
 }
 
 test "scroll container translates mouse events into scrolled content space" {
