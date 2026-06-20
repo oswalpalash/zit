@@ -737,10 +737,11 @@ pub const TabView = struct {
             const border_space: i16 = if (self.show_border) 2 else 0;
             const content_width: i16 = @intCast(@min(content_size.width, std.math.maxInt(i16)));
             const content_height: i16 = @intCast(@min(content_size.height, std.math.maxInt(i16)));
-            width = @max(width, content_width + border_space * 2);
-            height += content_height + border_space * 2;
+            const chrome_cells = nonNegativeCells(border_space) * 2;
+            width = @max(width, saturatingI16AddU32(content_width, chrome_cells));
+            height = saturatingI16AddU32(height, saturatingAddU32(nonNegativeCells(content_height), chrome_cells));
         } else {
-            height += 6;
+            height = saturatingI16AddU32(height, 6);
         }
 
         return layout_module.Size.init(width, height);
@@ -1002,6 +1003,42 @@ test "tab view deinit detaches tab content parent links" {
 
     try std.testing.expect(a.widget.parent == null);
     try std.testing.expect(b.widget.parent == null);
+}
+
+test "tab view preferred size saturates active content chrome" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(std.math.maxInt(i16), std.math.maxInt(i16));
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+    var dummy = Dummy{};
+
+    try tab_view.addTab("max", &dummy.widget);
+    const size = try tab_view.widget.getPreferredSize();
+
+    try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.width);
+    try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.height);
 }
 
 test "tab view remove before active preserves active tab" {
