@@ -1313,11 +1313,12 @@ pub const Renderer = struct {
 
     fn drawFallbackBytes(self: *Renderer, x: u16, y: u16, text: []const u8, fg: Color, bg: Color, style: Style) void {
         var utf8_it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-        var cursor: u16 = 0;
+        var cursor: u32 = 0;
         const use_bounds = self.viewport == null;
         while (utf8_it.nextCodepoint()) |cp| {
             const target_x = std.math.add(u32, @as(u32, x), @as(u32, cursor)) catch break;
             if (use_bounds and target_x >= self.back.width) break;
+            if (target_x > std.math.maxInt(u16)) break;
             self.drawGrapheme(@intCast(target_x), y, text_metrics.graphemeFromCodepoint(cp), fg, bg, style);
             cursor += 1;
         }
@@ -1354,6 +1355,7 @@ pub const Renderer = struct {
                 if (cursor >= self.back.width) break;
                 if (cursor + width > self.back.width) break;
             }
+            if (cursor > std.math.maxInt(u16)) break;
             self.drawGrapheme(@intCast(cursor), y, g, fg, bg, style);
             cursor += width;
         }
@@ -1876,6 +1878,39 @@ test "renderer draws strings at edge without overflow" {
 
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'H'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer clips viewport text before u16 cursor overflow" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+
+    var viewport = Renderer.Viewport{ .x = 0, .y = 0, .width = 2, .height = 1 };
+    renderer.setViewport(&viewport);
+
+    const fg = Color.named(NamedColor.white);
+    const bg = Color.named(NamedColor.black);
+
+    renderer.drawStr(std.math.maxInt(u16) - 1, 0, "ABCD", fg, bg, Style{});
+    renderer.drawTextDir(std.math.maxInt(u16) - 1, 0, "WXYZ", .ltr, fg, bg, Style{});
+}
+
+test "renderer fallback text clips before u16 cursor overflow" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+
+    var viewport = Renderer.Viewport{ .x = 0, .y = 0, .width = 2, .height = 1 };
+    renderer.setViewport(&viewport);
+
+    renderer.drawFallbackBytes(
+        std.math.maxInt(u16) - 1,
+        0,
+        "ABCD",
+        Color.named(NamedColor.white),
+        Color.named(NamedColor.black),
+        Style{},
+    );
 }
 
 test "renderer clamps fillRect to bounds" {
