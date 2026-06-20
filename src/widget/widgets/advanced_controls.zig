@@ -1064,23 +1064,30 @@ pub const Pagination = struct {
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color.named(.default), render.Color.named(.default), render.Style{});
-        var cursor = rect.x;
+        if (rect.width == 0 or rect.height == 0) return;
+
         const prev = "<";
         const next = ">";
         const fg = render.Color.named(.white);
-        renderer.drawStr(cursor, rect.y, prev, fg, render.Color.named(.default), render.Style{ .bold = self.current > 1 });
-        cursor += 2;
+        renderer.drawStr(rect.x, rect.y, prev, fg, render.Color.named(.default), render.Style{ .bold = self.current > 1 });
+
+        const width: usize = rect.width;
+        var cursor_offset: usize = @min(width, 2);
+        const page_limit = if (width > 2) width - 2 else width;
         var page: usize = 1;
-        while (page <= self.total and cursor < rect.x + rect.width - 2) : (page += 1) {
+        while (page <= self.total and cursor_offset < page_limit) : (page += 1) {
             var buf: [8]u8 = undefined;
             const rendered = std.fmt.bufPrint(&buf, "{d}", .{page}) catch buf[0..0];
+            const remaining_width = page_limit - cursor_offset;
+            const draw_text = rendered[0..@min(rendered.len, remaining_width)];
             const fg_page = if (page == self.current) render.Color.named(.black) else fg;
             const bg_page = if (page == self.current) render.Color.named(.green) else render.Color.named(.default);
-            renderer.drawStr(cursor, rect.y, rendered, fg_page, bg_page, render.Style{ .bold = page == self.current });
-            cursor += @as(u16, @intCast(rendered.len + 1));
+            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, draw_text, fg_page, bg_page, render.Style{ .bold = page == self.current });
+            cursor_offset += rendered.len + 1;
         }
-        if (cursor < rect.x + rect.width) {
-            renderer.drawStr(rect.x + rect.width - 2, rect.y, next, fg, render.Color.named(.default), render.Style{ .bold = self.current < self.total });
+        if (width > 1) {
+            const next_offset = if (width > 2) width - 2 else width - 1;
+            renderer.drawStr(offsetCoord(rect.x, next_offset), rect.y, next, fg, render.Color.named(.default), render.Style{ .bold = self.current < self.total });
         }
     }
 
@@ -1106,11 +1113,15 @@ pub const Pagination = struct {
             },
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1 and self.widget.rect.contains(mouse.x, mouse.y)) {
-                    if (mouse.x <= self.widget.rect.x + 1) {
+                    const rect = self.widget.rect;
+                    const prev_end = if (rect.width > 1) offsetCoord(rect.x, 1) else rect.x;
+                    if (mouse.x <= prev_end) {
                         self.setPage(self.current - 1);
                         return true;
                     }
-                    if (mouse.x >= self.widget.rect.x + self.widget.rect.width - 2) {
+                    const next_offset = if (rect.width > 2) rect.width - 2 else if (rect.width > 1) rect.width - 1 else 0;
+                    const next_start = offsetCoord(rect.x, next_offset);
+                    if (mouse.x >= next_start) {
                         self.setPage(self.current + 1);
                         return true;
                     }
@@ -1189,20 +1200,26 @@ pub const CommandPalette = struct {
         const rect = self.widget.rect;
         const fg = render.Color.named(.white);
         const bg = render.Color.named(.black);
+        if (rect.width == 0 or rect.height == 0) return;
+
         renderer.drawBox(rect.x, rect.y, rect.width, rect.height, .rounded, fg, bg, render.Style{ .bold = true });
         if (rect.height < 3) return;
 
-        renderer.drawStr(rect.x + 2, rect.y + 1, self.title[0..@min(self.title.len, rect.width - 4)], fg, bg, render.Style{ .bold = true });
-        renderer.drawStr(rect.x + 2, rect.y + 2, self.query[0..@min(self.query.len, rect.width - 4)], render.Color.named(.bright_cyan), bg, render.Style{});
+        const width: usize = rect.width;
+        const content_offset: usize = if (width > 2) 2 else 0;
+        const content_width: usize = if (width > 4) width - 4 else width - content_offset;
+        if (content_width == 0) return;
 
-        var list_y: u16 = rect.y + 3;
-        const max_rows = rect.height - 4;
+        const content_x = offsetCoord(rect.x, content_offset);
+        renderer.drawStr(content_x, offsetCoord(rect.y, 1), self.title[0..@min(self.title.len, content_width)], fg, bg, render.Style{ .bold = true });
+        renderer.drawStr(content_x, offsetCoord(rect.y, 2), self.query[0..@min(self.query.len, content_width)], render.Color.named(.bright_cyan), bg, render.Style{});
+
+        const max_rows = if (rect.height > 4) rect.height - 4 else 0;
         for (self.commands.items, 0..) |cmd, idx| {
             if (idx >= max_rows) break;
             const cmd_fg = if (idx == self.selected) render.Color.named(.black) else fg;
             const cmd_bg = if (idx == self.selected) render.Color.named(.cyan) else bg;
-            renderer.drawStr(rect.x + 2, list_y, cmd[0..@min(cmd.len, rect.width - 4)], cmd_fg, cmd_bg, render.Style{});
-            list_y += 1;
+            renderer.drawStr(content_x, offsetCoord(rect.y, 3 + idx), cmd[0..@min(cmd.len, content_width)], cmd_fg, cmd_bg, render.Style{});
         }
     }
 
@@ -1560,30 +1577,32 @@ pub const WizardStepper = struct {
         const self: *WizardStepper = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        if (self.steps.items.len == 0) return;
+        if (self.steps.items.len == 0 or rect.width == 0 or rect.height == 0) return;
         const active = @min(self.current, self.steps.items.len - 1);
 
-        var cursor = rect.x;
+        var cursor_offset: usize = 0;
         for (self.steps.items, 0..) |step, idx| {
-            if (cursor >= rect.x + rect.width) break;
+            if (cursor_offset >= rect.width) break;
             var buf: [32]u8 = undefined;
             const rendered = std.fmt.bufPrint(&buf, "{d}. {s}", .{ idx + 1, step }) catch buf[0..0];
             const slice = rendered;
+            const remaining_width = rect.width - cursor_offset;
             const selected = idx == active;
             const fg = if (selected) render.Color.named(.black) else render.Color.named(.white);
             const bg = if (selected) render.Color.named(.green) else render.Color.named(.default);
-            renderer.drawStr(cursor, rect.y, slice[0..@min(slice.len, rect.width - (cursor - rect.x))], fg, bg, render.Style{ .bold = selected });
-            cursor += @as(u16, @intCast(slice.len + 2));
+            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, slice[0..@min(slice.len, remaining_width)], fg, bg, render.Style{ .bold = selected });
+            cursor_offset += slice.len + 2;
         }
 
         // Progress bar along bottom if height > 1
         if (rect.height > 1 and self.steps.items.len > 0) {
             const progress = @as(f32, @floatFromInt(active + 1)) / @as(f32, @floatFromInt(self.steps.items.len));
-            const fill = @as(u16, @intFromFloat(progress * @as(f32, @floatFromInt(rect.width))));
-            var x = rect.x;
-            while (x < rect.x + rect.width) : (x += 1) {
-                const filled = x - rect.x < fill;
-                renderer.drawChar(x, rect.y + rect.height - 1, if (filled) '█' else '░', render.Color.named(.green), render.Color.named(.default), render.Style{});
+            const fill = @as(usize, @intFromFloat(progress * @as(f32, @floatFromInt(rect.width))));
+            const progress_y = offsetCoord(rect.y, rect.height - 1);
+            var x_offset: usize = 0;
+            while (x_offset < rect.width) : (x_offset += 1) {
+                const filled = x_offset < fill;
+                renderer.drawChar(offsetCoord(rect.x, x_offset), progress_y, if (filled) '█' else '░', render.Color.named(.green), render.Color.named(.default), render.Style{});
             }
         }
     }
@@ -1854,6 +1873,42 @@ test "pagination advances pages" {
     try std.testing.expectEqual(@as(usize, 3), pager.current);
 }
 
+test "pagination draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var pager = try Pagination.init(alloc, 5);
+    defer pager.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &pager.widget, layout_module.Size.init(1, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+
+    try pager.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16), 1, 1));
+    try pager.widget.draw(&renderer);
+}
+
+test "command palette draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{ "Open file", "Run tests" });
+    defer palette.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &palette.widget, layout_module.Size.init(1, 3));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+
+    try palette.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 2, 1, 3));
+    try palette.widget.draw(&renderer);
+}
+
 test "wizard stepper draws with stale current index" {
     const alloc = std.testing.allocator;
     var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
@@ -1863,6 +1918,24 @@ test "wizard stepper draws with stale current index" {
     var snap = try testing.renderWidget(alloc, &wizard.widget, layout_module.Size.init(24, 2));
     defer snap.deinit(alloc);
     try snap.expectWellFormed();
+}
+
+test "wizard stepper draws narrow edge rectangles" {
+    const alloc = std.testing.allocator;
+    var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+
+    {
+        var snap = try testing.renderWidget(alloc, &wizard.widget, layout_module.Size.init(1, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try wizard.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 1, 2));
+    try wizard.widget.draw(&renderer);
 }
 
 test "toolbar mouse selects rendered item row" {
