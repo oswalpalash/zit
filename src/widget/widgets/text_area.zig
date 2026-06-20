@@ -7,6 +7,11 @@ const form = @import("../form.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
 
+fn addOffsetClamped(origin: u16, offset: u16) u16 {
+    const value = @as(u32, origin) + @as(u32, offset);
+    return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+}
+
 /// Multi-line text editor with scrolling, undo/redo, and clipboard support.
 pub const TextArea = struct {
     widget: base.Widget,
@@ -976,8 +981,8 @@ pub const TextArea = struct {
         }
 
         const border_adjust: u16 = if (self.show_border) 1 else 0;
-        const inner_x = rect.x + border_adjust;
-        const inner_y = rect.y + border_adjust;
+        const inner_x = addOffsetClamped(rect.x, border_adjust);
+        const inner_y = addOffsetClamped(rect.y, border_adjust);
         const viewport = self.viewportSize();
         if (viewport.width == 0 or viewport.height == 0) {
             self.widget.drawFocusRing(renderer);
@@ -1010,8 +1015,8 @@ pub const TextArea = struct {
                                     cell_style.bold = true;
                                 }
                             }
-                            const draw_x = inner_x + @as(u16, @intCast(col - slice_start));
-                            renderer.drawChar(draw_x, inner_y + row, ch, fg, bg, cell_style);
+                            const draw_x = addOffsetClamped(inner_x, @intCast(col - slice_start));
+                            renderer.drawChar(draw_x, addOffsetClamped(inner_y, row), ch, fg, bg, cell_style);
                         }
                     }
                 } else {
@@ -1027,8 +1032,8 @@ pub const TextArea = struct {
                 const pos = self.positionForIndex(mark.pos);
                 if (pos.row >= self.scroll_row and pos.row < self.scroll_row + @as(usize, @intCast(viewport.height))) {
                     if (pos.col >= self.scroll_col and pos.col <= self.scroll_col + @as(usize, @intCast(viewport.width))) {
-                        const cx = inner_x + @as(u16, @intCast(pos.col - self.scroll_col));
-                        const cy = inner_y + @as(u16, @intCast(pos.row - self.scroll_row));
+                        const cx = addOffsetClamped(inner_x, @intCast(pos.col - self.scroll_col));
+                        const cy = addOffsetClamped(inner_y, @intCast(pos.row - self.scroll_row));
                         var cursor_style = render.Style{ .underline = true };
                         if (!mark.primary) cursor_style.italic = true;
                         renderer.drawChar(cx, cy, '_', fg, bg, cursor_style);
@@ -1364,6 +1369,25 @@ test "text area setText resets cursor and scroll" {
     try std.testing.expectEqual(@as(usize, 0), area.scroll_row);
     try std.testing.expectEqual(@as(usize, 0), area.scroll_col);
     try std.testing.expectEqual(@as(?TextArea.Selection, null), area.selection);
+}
+
+test "text area clips edge draw coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+
+    var area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("abcd");
+    try area.widget.layout(layout_module.Rect.init(max - 1, max - 1, 4, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try area.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
 }
 
 test "text area placeholder survives allocation failure" {
