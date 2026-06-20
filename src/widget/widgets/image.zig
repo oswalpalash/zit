@@ -115,53 +115,118 @@ pub const ImageWidget = struct {
         return false;
     }
 
-    fn drawBackground(self: *ImageWidget, renderer: *render.Renderer, rect: layout_module.Rect) void {
-        const target_w = rect.width;
-        const target_h = rect.height;
+    const VisibleClip = struct {
+        start_x: u32,
+        end_x: u32,
+        start_y: u32,
+        end_y: u32,
+    };
 
-        var row: u16 = 0;
-        while (row < target_h) : (row += 1) {
-            const src_y: u16 = @intCast(@divFloor(@as(u32, row) * self.height, target_h));
-            var col: u16 = 0;
-            while (col < target_w) : (col += 1) {
-                const src_x: u16 = @intCast(@divFloor(@as(u32, col) * self.width, target_w));
+    fn visibleClip(rect: layout_module.Rect, renderer: *render.Renderer) ?VisibleClip {
+        if (rect.width == 0 or rect.height == 0) return null;
+        if (renderer.back.width == 0 or renderer.back.height == 0) return null;
+
+        var visible_left: i64 = 0;
+        var visible_top: i64 = 0;
+        var visible_right: i64 = renderer.back.width;
+        var visible_bottom: i64 = renderer.back.height;
+
+        if (renderer.getViewport()) |vp| {
+            if (vp.width == 0 or vp.height == 0) return null;
+
+            const mapped_left: i64 = vp.x;
+            const mapped_top: i64 = vp.y;
+            const mapped_right = @min(@as(i64, vp.x) + @as(i64, vp.width), @as(i64, renderer.back.width));
+            const mapped_bottom = @min(@as(i64, vp.y) + @as(i64, vp.height), @as(i64, renderer.back.height));
+            if (mapped_left >= mapped_right or mapped_top >= mapped_bottom) return null;
+
+            visible_left = mapped_left + @as(i64, vp.offset_x);
+            visible_top = mapped_top + @as(i64, vp.offset_y);
+            visible_right = mapped_right + @as(i64, vp.offset_x);
+            visible_bottom = mapped_bottom + @as(i64, vp.offset_y);
+        }
+
+        const max_coord_end = @as(i64, std.math.maxInt(u16)) + 1;
+        const rect_right = @as(i64, rect.x) + @as(i64, rect.width);
+        const rect_bottom = @as(i64, rect.y) + @as(i64, rect.height);
+        const start_x = @max(@as(i64, rect.x), @max(visible_left, 0));
+        const start_y = @max(@as(i64, rect.y), @max(visible_top, 0));
+        const end_x = @min(rect_right, @min(visible_right, max_coord_end));
+        const end_y = @min(rect_bottom, @min(visible_bottom, max_coord_end));
+        if (start_x >= end_x or start_y >= end_y) return null;
+
+        return .{
+            .start_x = @intCast(start_x),
+            .end_x = @intCast(end_x),
+            .start_y = @intCast(start_y),
+            .end_y = @intCast(end_y),
+        };
+    }
+
+    fn scaledIndex(position: u64, source_size: u16, virtual_size: u64) u16 {
+        const scaled = @divFloor(position * @as(u64, source_size), virtual_size);
+        return @intCast(@min(scaled, @as(u64, source_size - 1)));
+    }
+
+    fn drawBackground(self: *ImageWidget, renderer: *render.Renderer, rect: layout_module.Rect) void {
+        const clip = visibleClip(rect, renderer) orelse return;
+        const target_w: u64 = rect.width;
+        const target_h: u64 = rect.height;
+
+        var y = clip.start_y;
+        while (y < clip.end_y) : (y += 1) {
+            const local_y = @as(u64, y) - @as(u64, rect.y);
+            const src_y = scaledIndex(local_y, self.height, target_h);
+            var x = clip.start_x;
+            while (x < clip.end_x) : (x += 1) {
+                const local_x = @as(u64, x) - @as(u64, rect.x);
+                const src_x = scaledIndex(local_x, self.width, target_w);
                 const idx = @as(usize, src_y) * @as(usize, self.width) + @as(usize, src_x);
                 const color = self.pixels[idx];
-                renderer.drawChar(rect.x + col, rect.y + row, ' ', render.Color.named(render.NamedColor.default), color, render.Style{});
+                renderer.drawChar(@intCast(x), @intCast(y), ' ', render.Color.named(render.NamedColor.default), color, render.Style{});
             }
         }
     }
 
     fn drawBlock(self: *ImageWidget, renderer: *render.Renderer, rect: layout_module.Rect) void {
-        if (rect.height == 0 or rect.width == 0) return;
+        const clip = visibleClip(rect, renderer) orelse return;
+        const virtual_h = @as(u64, rect.height) * 2;
+        const target_w: u64 = rect.width;
 
-        var row: u16 = 0;
-        while (row < rect.height) : (row += 1) {
-            const top_src_y: u16 = @intCast(@divFloor(@as(u32, row) * 2 * self.height, rect.height * 2));
-            const bottom_src_y: u16 = @intCast(@divFloor(@as(u32, row) * 2 * self.height + 1, rect.height * 2));
-            var col: u16 = 0;
-            while (col < rect.width) : (col += 1) {
-                const src_x: u16 = @intCast(@divFloor(@as(u32, col) * self.width, rect.width));
+        var y = clip.start_y;
+        while (y < clip.end_y) : (y += 1) {
+            const local_y = @as(u64, y) - @as(u64, rect.y);
+            const top_src_y = scaledIndex(local_y * 2, self.height, virtual_h);
+            const bottom_src_y: u16 = @intCast(@min(
+                @divFloor(local_y * 2 * @as(u64, self.height) + 1, virtual_h),
+                @as(u64, self.height - 1),
+            ));
+            var x = clip.start_x;
+            while (x < clip.end_x) : (x += 1) {
+                const local_x = @as(u64, x) - @as(u64, rect.x);
+                const src_x = scaledIndex(local_x, self.width, target_w);
                 const top_color = self.pixels[@as(usize, top_src_y) * @as(usize, self.width) + @as(usize, src_x)];
                 const bottom_color = self.pixels[@as(usize, bottom_src_y) * @as(usize, self.width) + @as(usize, src_x)];
                 const glyph: u21 = if (colorsEqual(top_color, bottom_color)) '█' else '▀';
-                renderer.drawChar(rect.x + col, rect.y + row, glyph, top_color, bottom_color, render.Style{});
+                renderer.drawChar(@intCast(x), @intCast(y), glyph, top_color, bottom_color, render.Style{});
             }
         }
     }
 
     fn drawBraille(self: *ImageWidget, renderer: *render.Renderer, rect: layout_module.Rect) void {
-        if (rect.height == 0 or rect.width == 0) return;
+        const clip = visibleClip(rect, renderer) orelse return;
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color.named(render.NamedColor.default), render.Color.named(render.NamedColor.default), render.Style{});
 
-        const virtual_w: u32 = @as(u32, rect.width) * 2;
-        const virtual_h: u32 = @as(u32, rect.height) * 4;
+        const virtual_w = @as(u64, rect.width) * 2;
+        const virtual_h = @as(u64, rect.height) * 4;
 
-        var cell_y: u16 = 0;
-        while (cell_y < rect.height) : (cell_y += 1) {
-            var cell_x: u16 = 0;
-            while (cell_x < rect.width) : (cell_x += 1) {
+        var y = clip.start_y;
+        while (y < clip.end_y) : (y += 1) {
+            const local_cell_y = @as(u64, y) - @as(u64, rect.y);
+            var x = clip.start_x;
+            while (x < clip.end_x) : (x += 1) {
+                const local_cell_x = @as(u64, x) - @as(u64, rect.x);
                 var pattern: u8 = 0;
                 var accum = AccumColor{};
 
@@ -169,11 +234,11 @@ pub const ImageWidget = struct {
                 while (dot_y < 4) : (dot_y += 1) {
                     var dot_x: u16 = 0;
                     while (dot_x < 2) : (dot_x += 1) {
-                        const virtual_x = @as(u32, cell_x) * 2 + dot_x;
-                        const virtual_y = @as(u32, cell_y) * 4 + dot_y;
+                        const virtual_x = local_cell_x * 2 + @as(u64, dot_x);
+                        const virtual_y = local_cell_y * 4 + @as(u64, dot_y);
 
-                        const src_x: u16 = @intCast(@divFloor(virtual_x * @as(u32, self.width), virtual_w));
-                        const src_y: u16 = @intCast(@divFloor(virtual_y * @as(u32, self.height), virtual_h));
+                        const src_x = scaledIndex(virtual_x, self.width, virtual_w);
+                        const src_y = scaledIndex(virtual_y, self.height, virtual_h);
                         const src_idx = @as(usize, src_y) * @as(usize, self.width) + @as(usize, src_x);
                         const c = self.pixels[src_idx];
 
@@ -189,7 +254,7 @@ pub const ImageWidget = struct {
 
                 const avg = accum.average();
                 const glyph: u21 = 0x2800 + @as(u21, pattern);
-                renderer.drawChar(rect.x + cell_x, rect.y + cell_y, glyph, avg, render.Color.named(render.NamedColor.default), render.Style{});
+                renderer.drawChar(@intCast(x), @intCast(y), glyph, avg, render.Color.named(render.NamedColor.default), render.Style{});
             }
         }
     }
@@ -340,4 +405,91 @@ test "image widget braille rendering emits dot patterns" {
 
     const cell = renderer.back.getCell(0, 0).*;
     try std.testing.expect(cell.codepoint() != ' ');
+}
+
+test "image widget clips oversized render rects to visible cells" {
+    const alloc = std.testing.allocator;
+    const pixels = [_]render.Color{
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+    };
+
+    const modes = [_]RenderMode{ .background, .block, .braille };
+    inline for (modes) |mode| {
+        var image = try ImageWidget.fromData(alloc, 2, 2, &pixels);
+        defer image.deinit();
+        image.setRenderMode(mode);
+        try image.widget.layout(layout_module.Rect.init(0, 0, std.math.maxInt(u16), std.math.maxInt(u16)));
+
+        var renderer = try render.Renderer.init(alloc, 2, 2);
+        defer renderer.deinit();
+        try image.widget.draw(&renderer);
+
+        var painted: usize = 0;
+        for (0..2) |x| {
+            for (0..2) |y| {
+                const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+                if (cell.codepoint() != ' ' or !std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default))) painted += 1;
+            }
+        }
+        try std.testing.expect(painted > 0);
+    }
+}
+
+test "image widget skips fully offscreen edge rects" {
+    const alloc = std.testing.allocator;
+    const pixels = [_]render.Color{
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.white),
+    };
+
+    const modes = [_]RenderMode{ .background, .block, .braille };
+    inline for (modes) |mode| {
+        var image = try ImageWidget.fromData(alloc, 2, 2, &pixels);
+        defer image.deinit();
+        image.setRenderMode(mode);
+        try image.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4));
+
+        var renderer = try render.Renderer.init(alloc, 2, 2);
+        defer renderer.deinit();
+        try image.widget.draw(&renderer);
+
+        for (0..2) |x| {
+            for (0..2) |y| {
+                const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+                try std.testing.expectEqual(@as(u21, ' '), cell.codepoint());
+                try std.testing.expect(std.meta.eql(cell.bg, render.Color.named(render.NamedColor.default)));
+            }
+        }
+    }
+}
+
+test "image widget clipped drawing respects renderer viewport offsets" {
+    const alloc = std.testing.allocator;
+    const pixels = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.white),
+    };
+
+    var image = try ImageWidget.fromData(alloc, 2, 2, &pixels);
+    defer image.deinit();
+    try image.widget.layout(layout_module.Rect.init(10, 10, 2, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    var viewport = render.Renderer.Viewport{ .x = 0, .y = 0, .width = 2, .height = 2, .offset_x = 10, .offset_y = 10 };
+    renderer.setViewport(&viewport);
+
+    try image.widget.draw(&renderer);
+
+    try std.testing.expect(std.meta.eql(renderer.back.getCell(0, 0).bg, render.Color.named(render.NamedColor.red)));
+    try std.testing.expect(std.meta.eql(renderer.back.getCell(1, 0).bg, render.Color.named(render.NamedColor.blue)));
+    try std.testing.expect(std.meta.eql(renderer.back.getCell(0, 1).bg, render.Color.named(render.NamedColor.green)));
+    try std.testing.expect(std.meta.eql(renderer.back.getCell(1, 1).bg, render.Color.named(render.NamedColor.white)));
 }
