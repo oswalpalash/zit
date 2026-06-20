@@ -74,6 +74,15 @@ pub const Canvas = struct {
         self.cells.items[idx] = CanvasCell{ .char = char, .fg = fg, .bg = bg, .style = style };
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return clampCoord(value);
+    }
+
+    fn clampCoord(value: u32) u16 {
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Draw a line using a simplified Bresenham algorithm.
     pub fn drawLine(self: *Canvas, x0: i32, y0: i32, x1: i32, y1: i32, char: u21, fg: render.Color, bg: render.Color, style: render.Style) void {
         const dx = if (x1 > x0) x1 - x0 else x0 - x1;
@@ -105,14 +114,18 @@ pub const Canvas = struct {
     /// Draw a rectangle outline.
     pub fn drawRect(self: *Canvas, x: u16, y: u16, width: u16, height: u16, char: u21, fg: render.Color, bg: render.Color, style: render.Style) void {
         if (width == 0 or height == 0) return;
-        const max_x = x + width - 1;
-        const max_y = y + height - 1;
+        const max_x_u32 = @as(u32, x) + @as(u32, width) - 1;
+        const max_y_u32 = @as(u32, y) + @as(u32, height) - 1;
+        const max_x = clampCoord(max_x_u32);
+        const max_y = clampCoord(max_y_u32);
 
         self.drawLine(@intCast(x), @intCast(y), @intCast(max_x), @intCast(y), char, fg, bg, style);
         self.drawLine(@intCast(x), @intCast(max_y), @intCast(max_x), @intCast(max_y), char, fg, bg, style);
         if (height > 2) {
-            self.drawLine(@intCast(x), @intCast(y + 1), @intCast(x), @intCast(max_y - 1), char, fg, bg, style);
-            self.drawLine(@intCast(max_x), @intCast(y + 1), @intCast(max_x), @intCast(max_y - 1), char, fg, bg, style);
+            const inner_top = addOffsetClamped(y, 1);
+            const inner_bottom = clampCoord(max_y_u32 - 1);
+            self.drawLine(@intCast(x), @intCast(inner_top), @intCast(x), @intCast(inner_bottom), char, fg, bg, style);
+            self.drawLine(@intCast(max_x), @intCast(inner_top), @intCast(max_x), @intCast(inner_bottom), char, fg, bg, style);
         }
     }
 
@@ -122,7 +135,7 @@ pub const Canvas = struct {
         while (cy < height) : (cy += 1) {
             var cx: u16 = 0;
             while (cx < width) : (cx += 1) {
-                self.drawPoint(x + cx, y + cy, char, fg, bg, style);
+                self.drawPoint(addOffsetClamped(x, cx), addOffsetClamped(y, cy), char, fg, bg, style);
             }
         }
     }
@@ -140,7 +153,7 @@ pub const Canvas = struct {
             for (0..width) |x| {
                 const idx = y * @as(usize, self.width) + x;
                 const cell = self.cells.items[idx];
-                renderer.drawChar(rect.x + @as(u16, @intCast(x)), rect.y + @as(u16, @intCast(y)), cell.char, cell.fg, cell.bg, cell.style);
+                renderer.drawChar(addOffsetClamped(rect.x, @intCast(x)), addOffsetClamped(rect.y, @intCast(y)), cell.char, cell.fg, cell.bg, cell.style);
             }
         }
     }
@@ -199,6 +212,38 @@ test "canvas draws primitives" {
 
     const rect_cell = renderer.back.getCell(2, 2).*;
     try std.testing.expectEqual(@as(u21, '*'), rect_cell.codepoint());
+}
+
+test "canvas clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var canvas = try Canvas.init(alloc, 2, 2);
+    defer canvas.deinit();
+
+    canvas.fillRect(0, 0, 2, 2, '#', render.Color.named(render.NamedColor.green), render.Color.named(render.NamedColor.black), render.Style{});
+    try canvas.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16), 2, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try canvas.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "canvas primitives clamp edge-local coordinates" {
+    const alloc = std.testing.allocator;
+    var canvas = try Canvas.init(alloc, 2, 2);
+    defer canvas.deinit();
+
+    const fg = render.Color.named(render.NamedColor.green);
+    const bg = render.Color.named(render.NamedColor.black);
+    canvas.drawRect(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4, '#', fg, bg, render.Style{});
+    canvas.fillRect(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4, '*', fg, bg, render.Style{});
+
+    for (canvas.cells.items) |cell| {
+        try std.testing.expectEqual(@as(u21, ' '), cell.char);
+    }
 }
 
 fn canvasInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
