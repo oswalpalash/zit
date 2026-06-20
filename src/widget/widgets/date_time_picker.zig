@@ -27,6 +27,8 @@ pub const DateTimePicker = struct {
     };
 
     pub const Field = enum { year, month, day, hour, minute };
+    const min_year: u16 = 1;
+    const max_year: u16 = std.math.maxInt(u16);
 
     pub const vtable = base.Widget.VTable{
         .draw = drawFn,
@@ -117,21 +119,21 @@ pub const DateTimePicker = struct {
     }
 
     fn adjustYear(self: *DateTimePicker, delta: i32) void {
-        var year: i32 = self.value.year;
-        year = @max(1, year + delta);
+        const year = std.math.clamp(
+            @as(i64, self.value.year) + @as(i64, delta),
+            @as(i64, min_year),
+            @as(i64, max_year),
+        );
         self.value.year = @intCast(year);
         self.value.day = clampDay(self.value.year, self.value.month, self.value.day);
     }
 
     fn adjustMonth(self: *DateTimePicker, delta: i32) void {
-        var total: i32 = @as(i32, self.value.month) - 1 + delta;
-        while (total < 0) : (total += 12) {
-            self.adjustYear(-1);
-        }
-        while (total >= 12) : (total -= 12) {
-            self.adjustYear(1);
-        }
-        self.value.month = @intCast(total + 1);
+        const month_index = (@as(i64, self.value.year) - 1) * 12 + (@as(i64, self.value.month) - 1);
+        const max_index = (@as(i64, max_year) - 1) * 12 + 11;
+        const next_index = std.math.clamp(month_index + @as(i64, delta), 0, max_index);
+        self.value.year = @intCast(@divTrunc(next_index, 12) + 1);
+        self.value.month = @intCast(@mod(next_index, 12) + 1);
         self.value.day = clampDay(self.value.year, self.value.month, self.value.day);
     }
 
@@ -152,8 +154,14 @@ pub const DateTimePicker = struct {
                     day = 1;
                     month += 1;
                     if (month > 12) {
+                        if (year >= max_year) {
+                            month = 12;
+                            day = 31;
+                            remaining = 0;
+                            break;
+                        }
                         month = 1;
-                        year = @max(1, year + 1);
+                        year += 1;
                     }
                 }
             } else {
@@ -164,8 +172,14 @@ pub const DateTimePicker = struct {
                     remaining += day;
                     month -= 1;
                     if (month < 1) {
+                        if (year <= min_year) {
+                            month = 1;
+                            day = 1;
+                            remaining = 0;
+                            break;
+                        }
                         month = 12;
-                        year = @max(1, year - 1);
+                        year -= 1;
                     }
                     day = daysInMonth(@intCast(year), @intCast(month));
                 }
@@ -180,9 +194,17 @@ pub const DateTimePicker = struct {
     fn adjustHour(self: *DateTimePicker, delta: i32) void {
         var total: i32 = @as(i32, self.value.hour) + delta;
         while (total < 0) : (total += 24) {
+            if (self.isAtMinDate()) {
+                total = 0;
+                break;
+            }
             self.adjustDay(-1);
         }
         while (total >= 24) : (total -= 24) {
+            if (self.isAtMaxDate()) {
+                total = 23;
+                break;
+            }
             self.adjustDay(1);
         }
         self.value.hour = @intCast(total);
@@ -191,12 +213,28 @@ pub const DateTimePicker = struct {
     fn adjustMinute(self: *DateTimePicker, delta: i32) void {
         var total: i32 = @as(i32, self.value.minute) + delta;
         while (total < 0) : (total += 60) {
+            if (self.isAtMinDate() and self.value.hour == 0) {
+                total = 0;
+                break;
+            }
             self.adjustHour(-1);
         }
         while (total >= 60) : (total -= 60) {
+            if (self.isAtMaxDate() and self.value.hour == 23) {
+                total = 59;
+                break;
+            }
             self.adjustHour(1);
         }
         self.value.minute = @intCast(total);
+    }
+
+    fn isAtMinDate(self: *const DateTimePicker) bool {
+        return self.value.year == min_year and self.value.month == 1 and self.value.day == 1;
+    }
+
+    fn isAtMaxDate(self: *const DateTimePicker) bool {
+        return self.value.year == max_year and self.value.month == 12 and self.value.day == 31;
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -334,6 +372,43 @@ test "date time picker rolls over time correctly" {
     try std.testing.expectEqual(@as(u8, 1), picker.value.day);
     try std.testing.expectEqual(@as(u8, 1), picker.value.month);
     try std.testing.expectEqual(@as(u16, 2025), picker.value.year);
+}
+
+test "date time picker saturates upper date time adjustments" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    const max = std.math.maxInt(u16);
+    inline for (.{ DateTimePicker.Field.year, .month, .day, .hour, .minute }) |field| {
+        picker.setDateTime(.{ .year = max, .month = 12, .day = 31, .hour = 23, .minute = 59 });
+        picker.selected_field = field;
+        picker.adjust(1);
+
+        try std.testing.expectEqual(@as(u16, max), picker.value.year);
+        try std.testing.expectEqual(@as(u8, 12), picker.value.month);
+        try std.testing.expectEqual(@as(u8, 31), picker.value.day);
+        try std.testing.expectEqual(@as(u8, 23), picker.value.hour);
+        try std.testing.expectEqual(@as(u8, 59), picker.value.minute);
+    }
+}
+
+test "date time picker saturates lower date time adjustments" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    inline for (.{ DateTimePicker.Field.year, .month, .day, .hour, .minute }) |field| {
+        picker.setDateTime(.{ .year = 1, .month = 1, .day = 1, .hour = 0, .minute = 0 });
+        picker.selected_field = field;
+        picker.adjust(-1);
+
+        try std.testing.expectEqual(@as(u16, 1), picker.value.year);
+        try std.testing.expectEqual(@as(u8, 1), picker.value.month);
+        try std.testing.expectEqual(@as(u8, 1), picker.value.day);
+        try std.testing.expectEqual(@as(u8, 0), picker.value.hour);
+        try std.testing.expectEqual(@as(u8, 0), picker.value.minute);
+    }
 }
 
 test "date time picker highlights selected field" {
