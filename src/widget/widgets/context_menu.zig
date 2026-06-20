@@ -121,18 +121,32 @@ pub const ContextMenu = struct {
         if (visible_rows == 0) return;
 
         renderer.drawBox(rect.x, rect.y, rect.width, rect.height, render.BorderStyle.single, fg, bg, render.Style{});
-        renderer.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2, ' ', fg, bg, render.Style{});
+        if (rect.width <= 2 or rect.height <= 2) return;
+
+        const right = rectRight(rect);
+        const bottom = rectBottom(rect);
+        const inner_x = u16Coord(@as(u32, rect.x) + 1) orelse return;
+        const inner_y = u16Coord(@as(u32, rect.y) + 1) orelse return;
+        renderer.fillRect(inner_x, inner_y, rect.width - 2, rect.height - 2, ' ', fg, bg, render.Style{});
 
         var row: usize = 0;
-        while (row < visible_rows) : (row += 1) {
-            const item_y = rect.y + 1 + @as(u16, @intCast(row));
+        const drawable_rows = @min(visible_rows, @as(usize, rect.height - 2));
+        while (row < drawable_rows) : (row += 1) {
+            const item_y_u32 = @as(u32, rect.y) + 1 + @as(u32, @intCast(row));
+            if (item_y_u32 + 1 >= bottom) break;
+            const item_y = u16Coord(item_y_u32) orelse break;
             const idx = row;
             const item = self.items.items[idx];
             const is_selected = idx == self.selected;
             const row_fg = if (!item.enabled) disabled else if (is_selected) highlight_fg else fg;
             const row_bg = if (is_selected) highlight_bg else bg;
-            renderer.fillRect(rect.x + 1, item_y, rect.width - 2, 1, ' ', row_fg, row_bg, render.Style{});
-            renderer.drawSmartStr(rect.x + 2, item_y, item.label, row_fg, row_bg, render.Style{ .bold = is_selected });
+            renderer.fillRect(inner_x, item_y, rect.width - 2, 1, ' ', row_fg, row_bg, render.Style{});
+            const text_x_u32 = @as(u32, rect.x) + 2;
+            if (text_x_u32 < right) {
+                if (u16Coord(text_x_u32)) |text_x| {
+                    renderer.drawSmartStr(text_x, item_y, item.label, row_fg, row_bg, render.Style{ .bold = is_selected });
+                }
+            }
         }
     }
 
@@ -167,11 +181,17 @@ pub const ContextMenu = struct {
             },
             .mouse => |mouse_event| {
                 const rect = self.widget.rect;
-                const inside_x = mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width;
-                const inside_y = mouse_event.y >= rect.y and mouse_event.y < rect.y + rect.height;
+                const mouse_x: u32 = mouse_event.x;
+                const mouse_y: u32 = mouse_event.y;
+                const right = rectRight(rect);
+                const bottom = rectBottom(rect);
+                const inside_x = mouse_x >= rect.x and mouse_x < right;
+                const inside_y = mouse_y >= rect.y and mouse_y < bottom;
                 if (inside_x and inside_y) {
-                    if (mouse_event.y > rect.y and mouse_event.y < rect.y + rect.height - 1) {
-                        const idx = @as(usize, @intCast(mouse_event.y - rect.y - 1));
+                    const inner_top: u32 = @as(u32, rect.y) + 1;
+                    const inner_bottom: u32 = if (bottom > 0) bottom - 1 else 0;
+                    if (mouse_y >= inner_top and mouse_y < inner_bottom) {
+                        const idx: usize = @intCast(mouse_y - inner_top);
                         if (idx < self.items.items.len and idx < self.max_visible) {
                             self.selected = idx;
                             if (mouse_event.action == .press and mouse_event.button == 1) {
@@ -217,15 +237,15 @@ pub const ContextMenu = struct {
     fn preferredWidth(self: *const ContextMenu) u16 {
         var max_len: usize = 4; // padding + border
         for (self.items.items) |item| {
-            max_len = @max(max_len, item.label.len + 4);
+            max_len = @max(max_len, saturatedLenWithPadding(item.label.len, 4));
         }
-        return @intCast(max_len);
+        return @intCast(@min(max_len, @as(usize, std.math.maxInt(u16))));
     }
 
     fn computedHeight(self: *const ContextMenu) u16 {
         const visible_rows: usize = @min(self.items.items.len, self.max_visible);
         if (visible_rows == 0) return 0;
-        return @intCast(visible_rows + 2);
+        return @intCast(@min(visible_rows +| 2, @as(usize, std.math.maxInt(u16))));
     }
 
     fn activateSelected(self: *ContextMenu) !bool {
@@ -240,6 +260,23 @@ pub const ContextMenu = struct {
         }
         self.close();
         return true;
+    }
+
+    fn rectRight(rect: layout_module.Rect) u32 {
+        return @as(u32, rect.x) + @as(u32, rect.width);
+    }
+
+    fn rectBottom(rect: layout_module.Rect) u32 {
+        return @as(u32, rect.y) + @as(u32, rect.height);
+    }
+
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
+    }
+
+    fn saturatedLenWithPadding(len: usize, padding: usize) usize {
+        return len +| padding;
     }
 };
 
@@ -313,4 +350,43 @@ test "context menu closes on outside click" {
     const click = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, 20, 20, 1, 0) };
     _ = try menu.widget.handleEvent(click);
     try std.testing.expect(!menu.open);
+}
+
+test "context menu tolerates tiny and edge render rectangles" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+
+    menu.openAt(0, 0);
+    try menu.widget.layout(layout_module.Rect.init(0, 0, 1, 1));
+    try menu.widget.draw(&renderer);
+
+    try menu.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4));
+    try menu.widget.draw(&renderer);
+
+    const item_click = input.Event{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), std.math.maxInt(u16), 1, 0) };
+    try std.testing.expect(try menu.widget.handleEvent(item_click));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+    try std.testing.expect(!menu.open);
+}
+
+test "context menu preferred width saturates long labels" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+
+    const long_label = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 256);
+    defer alloc.free(long_label);
+    @memset(long_label, 'x');
+
+    try menu.addItem(long_label, true, null);
+    const size = try menu.widget.getPreferredSize();
+
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, 3), size.height);
 }
