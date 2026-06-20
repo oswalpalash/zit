@@ -240,18 +240,26 @@ pub const Markdown = struct {
         const base_fg = self.theme.color(.text);
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', base_fg, bg, self.theme.style);
 
+        const right: u32 = @as(u32, rect.x) + @as(u32, rect.width);
+        const bottom: u32 = @as(u32, rect.y) + @as(u32, rect.height);
         const max_lines = @min(self.lines.items.len, rect.height);
         var row: usize = 0;
         while (row < max_lines) : (row += 1) {
+            const row_u32: u32 = @intCast(row);
+            const draw_y_u32 = @as(u32, rect.y) + row_u32;
+            if (draw_y_u32 >= bottom) break;
+            const draw_y = u16Coord(draw_y_u32) orelse break;
+
             const line = &self.lines.items[row];
-            var cursor_x: u16 = rect.x;
+            var cursor_x: u32 = rect.x;
             var scratch: [1024]u8 = undefined;
             for (line.segments.items) |segment| {
-                if (cursor_x >= rect.x + rect.width) break;
-                const available: u16 = rect.x + rect.width - cursor_x;
+                if (cursor_x >= right) break;
+                const draw_x = u16Coord(cursor_x) orelse break;
+                const available: u16 = @intCast(@min(right - cursor_x, @as(u32, std.math.maxInt(u16))));
                 const clipped = text_metrics.truncateToWidth(segment.text, available, scratch[0..], false);
                 if (clipped.len == 0) break;
-                renderer.drawStr(cursor_x, rect.y + @as(u16, @intCast(row)), clipped, segment.color, bg, segment.style);
+                renderer.drawStr(draw_x, draw_y, clipped, segment.color, bg, segment.style);
                 const width = text_metrics.measureWidth(clipped).width;
                 if (width == 0) break;
                 cursor_x += width;
@@ -302,6 +310,11 @@ pub const Markdown = struct {
     fn canFocusFn(_: *anyopaque) bool {
         return false;
     }
+
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
+    }
 };
 
 test "markdown renders headings and bullets" {
@@ -319,6 +332,21 @@ test "markdown renders headings and bullets" {
     try std.testing.expectEqual(@as(u21, 'T'), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'i'), renderer.back.getCell(2, 1).codepoint());
     try std.testing.expectEqual(@as(u21, '•'), renderer.back.getCell(0, 1).codepoint());
+}
+
+test "markdown clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var md = try Markdown.init(alloc, "# Title\n- item");
+    defer md.deinit();
+
+    var renderer = try render.Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+
+    try md.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, 0, 4, 2));
+    try md.widget.draw(&renderer);
+
+    try md.widget.layout(layout_module.Rect.init(0, std.math.maxInt(u16) - 1, 4, 2));
+    try md.widget.draw(&renderer);
 }
 
 fn markdownInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
