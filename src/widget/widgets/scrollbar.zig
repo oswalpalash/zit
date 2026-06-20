@@ -163,24 +163,45 @@ pub const Scrollbar = struct {
         // Draw thumb
         if (self.orientation == .vertical) {
             if (rect.height > 2) {
-                const track_height = @as(f32, @floatFromInt(rect.height));
-                const thumb_height = @as(i16, @intFromFloat(@max(1, track_height * self.thumb_ratio)));
-                const thumb_pos = @as(i16, @intFromFloat(@min(track_height - @as(f32, @floatFromInt(thumb_height)), track_height * self.value)));
-                const thumb_y: u16 = @intCast(@max(@as(i16, @intCast(rect.y)) + thumb_pos, 0));
-                const thumb_height_u16: u16 = @intCast(@max(thumb_height, 0));
+                const thumb_height = clampedThumbSize(rect.height, self.thumb_ratio);
+                const thumb_offset = thumbOffset(rect.height, thumb_height, self.value);
+                const thumb_y_value = @as(u32, rect.y) + @as(u32, thumb_offset);
 
-                renderer.fillRect(rect.x, thumb_y, rect.width, thumb_height_u16, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                if (u16Coord(thumb_y_value)) |thumb_y| {
+                    renderer.fillRect(rect.x, thumb_y, rect.width, thumb_height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                }
             }
         } else {
             if (rect.width > 2) {
-                const track_width = @as(f32, @floatFromInt(rect.width));
-                const thumb_width = @as(i16, @intFromFloat(@max(1, track_width * self.thumb_ratio)));
-                const thumb_pos = @as(i16, @intFromFloat(@min(track_width - @as(f32, @floatFromInt(thumb_width)), track_width * self.value)));
-                const thumb_x: u16 = @intCast(@max(@as(i16, @intCast(rect.x)) + thumb_pos, 0));
+                const thumb_width = clampedThumbSize(rect.width, self.thumb_ratio);
+                const thumb_offset = thumbOffset(rect.width, thumb_width, self.value);
+                const thumb_x_value = @as(u32, rect.x) + @as(u32, thumb_offset);
 
-                renderer.fillRect(thumb_x, rect.y, @intCast(@max(thumb_width, 0)), rect.height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                if (u16Coord(thumb_x_value)) |thumb_x| {
+                    renderer.fillRect(thumb_x, rect.y, thumb_width, rect.height, ' ', self.thumb_fg, self.thumb_fg, render.Style{});
+                }
             }
         }
+    }
+
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) {
+            return null;
+        }
+        return @intCast(value);
+    }
+
+    fn clampedThumbSize(track: u16, ratio: f32) u16 {
+        const track_f = @as(f32, @floatFromInt(track));
+        const size = @min(@max(1, track_f * ratio), track_f);
+        return @intFromFloat(size);
+    }
+
+    fn thumbOffset(track: u16, thumb_size: u16, value: f32) u16 {
+        const available = track - thumb_size;
+        const available_f = @as(f32, @floatFromInt(available));
+        const offset = available_f * std.math.clamp(value, 0, 1);
+        return @intFromFloat(@min(offset, available_f));
     }
 
     /// Event handling implementation for Scrollbar
@@ -378,4 +399,32 @@ test "scrollbar clamps out-of-range values" {
 
     bar.setValue(-1.0);
     try std.testing.expectEqual(@as(f32, 0), bar.value);
+}
+
+test "scrollbar clips vertical edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    bar.setValue(1);
+    try bar.widget.layout(layout_module.Rect.init(0, std.math.maxInt(u16), 1, 4));
+
+    var renderer = try render.Renderer.init(alloc, 4, 4);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+}
+
+test "scrollbar clips horizontal edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .horizontal);
+    defer bar.deinit();
+
+    bar.setValue(1);
+    try bar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 4, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 4);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
 }
