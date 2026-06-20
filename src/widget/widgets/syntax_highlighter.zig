@@ -71,6 +71,24 @@ pub const SyntaxHighlighter = struct {
         self.number_color = number;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn endCoordClamped(start: u16, len: u16) u16 {
+        if (len == 0) return start;
+        return addOffsetClamped(start, len - 1);
+    }
+
+    fn addUsizeClamped(a: usize, b: usize) usize {
+        return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+    }
+
+    fn clampUsizeToU16(value: usize) u16 {
+        return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *SyntaxHighlighter = @fieldParentPtr("widget", widget_ref);
@@ -91,51 +109,57 @@ pub const SyntaxHighlighter = struct {
         const content_height = if (rect.height > inset * 2) rect.height - inset * 2 else 0;
         if (content_width == 0 or content_height == 0) return;
 
-        const start_x = rect.x + inset;
-        const start_y = rect.y + inset;
-        const max_x = start_x + content_width - 1;
-        const max_y = start_y + content_height - 1;
+        const start_x = addOffsetClamped(rect.x, inset);
+        const start_y = addOffsetClamped(rect.y, inset);
+        const max_x = endCoordClamped(start_x, content_width);
+        const max_y = endCoordClamped(start_y, content_height);
+
+        const start_x_u32: u32 = start_x;
+        const start_y_u32: u32 = start_y;
+        const max_x_u32: u32 = max_x;
+        const max_y_u32: u32 = max_y;
 
         var state: State = .normal;
-        var x = start_x;
-        var y = start_y;
+        var x = start_x_u32;
+        var y = start_y_u32;
         var i: usize = 0;
 
         while (i < self.code.len) : (i += 1) {
-            if (y > max_y) break;
+            if (y > max_y_u32) break;
             const ch = self.code[i];
 
             // Handle newlines
             if (ch == '\n') {
                 state = if (state == .comment) .normal else state;
-                x = start_x;
+                x = start_x_u32;
                 y += 1;
                 continue;
             }
 
             // Handle tabs
             if (ch == '\t') {
-                const spaces_needed = self.tab_width - @as(u8, @intCast((x - start_x) % self.tab_width));
+                const tab_width = @max(self.tab_width, 1);
+                const spaces_needed = tab_width - @as(u8, @intCast((x - start_x_u32) % tab_width));
                 var s: u8 = 0;
                 while (s < spaces_needed) : (s += 1) {
-                    if (x > max_x) {
+                    if (x > max_x_u32) {
                         if (self.wrap) {
-                            x = start_x;
+                            x = start_x_u32;
                             y += 1;
-                            if (y > max_y) break;
+                            if (y > max_y_u32) break;
                         } else break;
                     }
-                    renderer.drawChar(x, y, ' ', self.fg, self.bg, render.Style{});
+                    renderer.drawChar(@intCast(x), @intCast(y), ' ', self.fg, self.bg, render.Style{});
                     x += 1;
                 }
                 continue;
             }
 
-            if (x > max_x) {
+            if (x > max_x_u32) {
                 if (self.wrap) {
-                    x = start_x;
+                    x = start_x_u32;
                     y += 1;
-                    if (y > max_y) break;
+                    if (y > max_y_u32) break;
                 } else {
                     continue;
                 }
@@ -164,13 +188,13 @@ pub const SyntaxHighlighter = struct {
                         fg = self.number_color;
                         style = render.Style{ .bold = false };
                         var n: usize = 0;
-                        while (n < len and x <= max_x and y <= max_y) : (n += 1) {
-                            renderer.drawChar(x, y, self.code[i + n], fg, self.bg, style);
+                        while (n < len and x <= max_x_u32 and y <= max_y_u32) : (n += 1) {
+                            renderer.drawChar(@intCast(x), @intCast(y), self.code[i + n], fg, self.bg, style);
                             x += 1;
-                            if (x > max_x and self.wrap and n + 1 < len) {
-                                x = start_x;
+                            if (x > max_x_u32 and self.wrap and n + 1 < len) {
+                                x = start_x_u32;
                                 y += 1;
-                                if (y > max_y) break;
+                                if (y > max_y_u32) break;
                             }
                         }
                         i += len - 1;
@@ -183,13 +207,13 @@ pub const SyntaxHighlighter = struct {
                             style = render.Style{ .bold = true };
                         }
                         var n: usize = 0;
-                        while (n < word_len and x <= max_x and y <= max_y) : (n += 1) {
-                            renderer.drawChar(x, y, self.code[i + n], fg, self.bg, style);
+                        while (n < word_len and x <= max_x_u32 and y <= max_y_u32) : (n += 1) {
+                            renderer.drawChar(@intCast(x), @intCast(y), self.code[i + n], fg, self.bg, style);
                             x += 1;
-                            if (x > max_x and self.wrap and n + 1 < word_len) {
-                                x = start_x;
+                            if (x > max_x_u32 and self.wrap and n + 1 < word_len) {
+                                x = start_x_u32;
                                 y += 1;
-                                if (y > max_y) break;
+                                if (y > max_y_u32) break;
                             }
                         }
                         i += word_len - 1;
@@ -204,7 +228,7 @@ pub const SyntaxHighlighter = struct {
                 .normal => fg,
             };
             const draw_style = if (state == .comment or state == .string) render.Style{} else style;
-            renderer.drawChar(x, y, ch, draw_color, self.bg, draw_style);
+            renderer.drawChar(@intCast(x), @intCast(y), ch, draw_color, self.bg, draw_style);
             x += 1;
         }
     }
@@ -294,8 +318,8 @@ pub const SyntaxHighlighter = struct {
         }
         max_width = @max(max_width, width);
 
-        const preferred_width: u16 = @intCast(@max(max_width + 2, 24));
-        const preferred_height: u16 = @intCast(@max(lines, 3));
+        const preferred_width = clampUsizeToU16(@max(addUsizeClamped(max_width, 2), 24));
+        const preferred_height = clampUsizeToU16(@max(lines, 3));
         return layout_module.Size.init(preferred_width, preferred_height);
     }
 
@@ -336,6 +360,58 @@ test "syntax highlighter colors keywords and comments" {
     // Comment area should use comment color.
     const comment_cell = renderer.back.getCell(start_x + 22, start_y).*;
     try std.testing.expect(std.meta.eql(comment_cell.fg, highlighter.comment_color));
+}
+
+test "syntax highlighter clamps far-edge render coordinates" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    try highlighter.setCode("12");
+    try highlighter.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 3, 3));
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+
+    try highlighter.widget.draw(&renderer);
+}
+
+test "syntax highlighter preferred size saturates long content" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    const long_code = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 128);
+    defer alloc.free(long_code);
+    @memset(long_code, 'x');
+
+    try highlighter.setCode(long_code);
+    var size = try highlighter.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, 3), size.height);
+
+    @memset(long_code, '\n');
+
+    try highlighter.setCode(long_code);
+    size = try highlighter.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 24), size.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.height);
+}
+
+test "syntax highlighter treats zero tab width as one column" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    highlighter.border = .none;
+    highlighter.tab_width = 0;
+    try highlighter.setCode("\t");
+    try highlighter.widget.layout(layout_module.Rect.init(0, 0, 2, 1));
+
+    var renderer = try render.Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+
+    try highlighter.widget.draw(&renderer);
 }
 
 test "syntax highlighter setCode preserves code on allocation failure" {
