@@ -101,6 +101,11 @@ pub const Label = struct {
         self.widget.markDirty();
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Draw implementation for Label
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
@@ -135,7 +140,7 @@ pub const Label = struct {
             if (line_idx >= rect.height) break;
 
             const line = self.text[start..i];
-            const y = rect.y + line_idx;
+            const y = addOffsetClamped(rect.y, line_idx);
             var truncated_text: [256]u8 = undefined;
             const clipped = text_metrics.clipWithEllipsis(line, rect.width, &truncated_text);
 
@@ -143,11 +148,11 @@ pub const Label = struct {
             var x: u16 = rect.x;
             if (self.alignment == .center) {
                 if (clipped.width < rect.width) {
-                    x = rect.x + (rect.width - clipped.width) / 2;
+                    x = addOffsetClamped(rect.x, (rect.width - clipped.width) / 2);
                 }
             } else if (self.alignment == .right) {
                 if (clipped.width < rect.width) {
-                    x = rect.x + rect.width - clipped.width;
+                    x = addOffsetClamped(rect.x, rect.width - clipped.width);
                 }
             }
 
@@ -264,6 +269,23 @@ test "label does not ellipsize text that exactly fits" {
     try std.testing.expectEqual(@as(u21, 'r'), renderer.back.getCell(17, 0).*.codepoint());
     try std.testing.expectEqual(@as(u21, 's'), renderer.back.getCell(18, 0).*.codepoint());
     try std.testing.expectEqual(@as(u21, 't'), renderer.back.getCell(19, 0).*.codepoint());
+}
+
+test "label clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+    var label = try Label.init(alloc, "a\nb\nc");
+    defer label.deinit();
+
+    label.setAlignment(.right);
+    try label.widget.layout(layout_module.Rect.init(max - 1, max - 1, 4, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try label.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
 }
 
 test "label handles empty text" {
