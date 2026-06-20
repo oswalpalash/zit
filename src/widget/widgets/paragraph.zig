@@ -96,6 +96,24 @@ pub const Paragraph = struct {
         self.widget.markDirty();
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addU16Clamped(a: u16, b: u16) u16 {
+        const value = @as(u32, a) + @as(u32, b);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addUsizeClamped(a: usize, b: usize) usize {
+        return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+    }
+
+    fn clampUsizeToU16(value: usize) u16 {
+        return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Paragraph = @fieldParentPtr("widget", widget_ref);
@@ -106,12 +124,14 @@ pub const Paragraph = struct {
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{});
 
-        const content_width = if (rect.width > self.padding.left + self.padding.right)
-            rect.width - (self.padding.left + self.padding.right)
+        const horizontal_padding = addU16Clamped(self.padding.left, self.padding.right);
+        const vertical_padding = addU16Clamped(self.padding.top, self.padding.bottom);
+        const content_width = if (rect.width > horizontal_padding)
+            rect.width - horizontal_padding
         else
             0;
-        const content_height = if (rect.height > self.padding.top + self.padding.bottom)
-            rect.height - (self.padding.top + self.padding.bottom)
+        const content_height = if (rect.height > vertical_padding)
+            rect.height - vertical_padding
         else
             0;
         if (content_width == 0 or content_height == 0) return;
@@ -122,8 +142,8 @@ pub const Paragraph = struct {
         const start_line = @min(@as(usize, self.scroll_offset), lines.items.len);
         const max_lines = @min(@as(usize, content_height), lines.items.len - start_line);
 
-        const base_y = rect.y + self.padding.top;
-        const base_x = rect.x + self.padding.left;
+        const base_y = addOffsetClamped(rect.y, self.padding.top);
+        const base_x = addOffsetClamped(rect.x, self.padding.left);
 
         for (lines.items[start_line .. start_line + max_lines], 0..) |line, row| {
             const slice = if (line.len > content_width) line[0..content_width] else line;
@@ -134,17 +154,17 @@ pub const Paragraph = struct {
                 .left => {},
                 .center => {
                     if (line_width < content_width) {
-                        draw_x += (content_width - line_width) / 2;
+                        draw_x = addOffsetClamped(draw_x, (content_width - line_width) / 2);
                     }
                 },
                 .right => {
                     if (line_width < content_width) {
-                        draw_x += content_width - line_width;
+                        draw_x = addOffsetClamped(draw_x, content_width - line_width);
                     }
                 },
             }
 
-            const y = base_y + @as(u16, @intCast(row));
+            const y = addOffsetClamped(base_y, @intCast(row));
             renderer.drawStr(draw_x, y, slice, self.fg, self.bg, self.style);
         }
     }
@@ -179,8 +199,10 @@ pub const Paragraph = struct {
         }
         max_width = @max(max_width, current);
 
-        const width = self.padding.left + self.padding.right + @as(u16, @intCast(@max(max_width, 1)));
-        const height = self.padding.top + self.padding.bottom + @as(u16, @intCast(@max(lines, 1)));
+        const horizontal_padding = addUsizeClamped(self.padding.left, self.padding.right);
+        const vertical_padding = addUsizeClamped(self.padding.top, self.padding.bottom);
+        const width = clampUsizeToU16(addUsizeClamped(horizontal_padding, @max(max_width, 1)));
+        const height = clampUsizeToU16(addUsizeClamped(vertical_padding, @max(lines, 1)));
         return layout_module.Size.init(width, height);
     }
 
@@ -249,6 +271,51 @@ test "paragraph wraps and scrolls" {
     // After scrolling one line, the second wrapped line should be visible first.
     const cell0 = renderer.back.getCell(0, 0).*;
     try std.testing.expectEqual(@as(u21, 'b'), cell0.codepoint());
+}
+
+test "paragraph clamps edge padding and draw coordinates" {
+    const alloc = std.testing.allocator;
+    var p = try Paragraph.init(alloc, "x");
+    defer p.deinit();
+
+    p.setPadding(.{ .left = std.math.maxInt(u16), .right = 1 });
+    try p.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
+
+    var renderer = try render.Renderer.init(alloc, 10, 1);
+    defer renderer.deinit();
+
+    try p.widget.draw(&renderer);
+
+    p.setPadding(.{ .left = 1 });
+    try p.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 2, 1));
+    try p.widget.draw(&renderer);
+}
+
+test "paragraph preferred size saturates padding and long content" {
+    const alloc = std.testing.allocator;
+
+    const long_text = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 128);
+    defer alloc.free(long_text);
+    @memset(long_text, 'x');
+
+    var p = try Paragraph.init(alloc, long_text);
+    defer p.deinit();
+
+    var size = try p.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, 1), size.height);
+
+    p.setPadding(.{ .left = std.math.maxInt(u16), .right = 1, .top = std.math.maxInt(u16), .bottom = 1 });
+    size = try p.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.height);
+
+    p.setPadding(.{});
+    @memset(long_text, '\n');
+    try p.setText(long_text);
+    size = try p.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 1), size.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.height);
 }
 
 fn paragraphInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
