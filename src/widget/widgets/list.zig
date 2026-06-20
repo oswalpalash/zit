@@ -494,6 +494,20 @@ pub const List = struct {
         return rect;
     }
 
+    fn rowOffsetAtY(content_rect: layout_module.Rect, y: u16) usize {
+        if (y <= content_rect.y) return 0;
+        return @intCast(@as(u32, y) - @as(u32, content_rect.y));
+    }
+
+    fn itemIndexAtY(self: *const List, content_rect: layout_module.Rect, y: u16) usize {
+        return self.first_visible_index + rowOffsetAtY(content_rect, y);
+    }
+
+    fn dropIndexAtY(self: *const List, content_rect: layout_module.Rect, y: u16) usize {
+        const rel_y = @min(rowOffsetAtY(content_rect, y), @as(usize, content_rect.height));
+        return self.first_visible_index + rel_y;
+    }
+
     /// Draw implementation for List
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = fromWidgetPtr(widget_ptr);
@@ -627,8 +641,7 @@ pub const List = struct {
             // External drag hover/drop
             if (active_drag) |drag| {
                 if (inside_content and self.accept_external_drops and (drag.source != self or self.enable_reorder)) {
-                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(content_rect.y));
-                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(content_rect.height)))));
+                    const drop_index = self.dropIndexAtY(content_rect, mouse_event.y);
                     self.drag_hover_index = @min(drop_index, total_items);
 
                     if (mouse_event.action == .release) {
@@ -665,7 +678,7 @@ pub const List = struct {
                 if (!inside_content) return true;
 
                 // Convert y position to item index
-                const item_index = self.first_visible_index + @as(usize, @intCast(mouse_event.y - content_rect.y));
+                const item_index = self.itemIndexAtY(content_rect, mouse_event.y);
 
                 if (item_index < total_items) {
                     // Mouse click selects item
@@ -683,8 +696,7 @@ pub const List = struct {
 
                 // Drag updates
                 if (mouse_event.action == .move and self.dragging) {
-                    const rel_y: i16 = @as(i16, @intCast(mouse_event.y)) - @as(i16, @intCast(content_rect.y));
-                    const drop_index = self.first_visible_index + @as(usize, @intCast(std.math.clamp(rel_y, 0, @as(i16, @intCast(content_rect.height)))));
+                    const drop_index = self.dropIndexAtY(content_rect, mouse_event.y);
                     self.drag_hover_index = @min(drop_index, total_items);
                     return true;
                 }
@@ -1016,6 +1028,32 @@ test "list drag reorder updates item order and selection" {
     try std.testing.expectEqualStrings("a", list.items.items[1]);
     try std.testing.expectEqualStrings("c", list.items.items[2]);
     try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+    try std.testing.expect(!list.dragging);
+    try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
+}
+
+test "list drag reorder accepts edge row coordinates above i16 max" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.setReorderable(true);
+    try list.addItem("a");
+    try list.addItem("b");
+    try list.addItem("c");
+
+    try list.widget.layout(layout_module.Rect.init(0, std.math.maxInt(u16) - 2, 4, 3));
+
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, std.math.maxInt(u16) - 2, 1, 0) });
+    try std.testing.expect(list.dragging);
+
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 0, std.math.maxInt(u16), 1, 0) });
+    try std.testing.expectEqual(@as(?usize, 2), list.drag_hover_index);
+
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 0, std.math.maxInt(u16), 1, 0) });
+    try std.testing.expectEqualStrings("b", list.items.items[0]);
+    try std.testing.expectEqualStrings("a", list.items.items[1]);
+    try std.testing.expectEqualStrings("c", list.items.items[2]);
     try std.testing.expect(!list.dragging);
     try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
 }
