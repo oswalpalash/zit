@@ -82,7 +82,7 @@ pub const Scrollbar = struct {
     /// Set the scrollbar value (0-1)
     pub fn setValue(self: *Scrollbar, value: f32) void {
         const old_value = self.value;
-        self.value = std.math.clamp(value, 0, 1);
+        self.value = normalizedUnit(value);
 
         if (old_value != self.value and self.on_value_change != null) {
             self.on_value_change.?(self.value);
@@ -96,7 +96,7 @@ pub const Scrollbar = struct {
 
     /// Set the thumb ratio (0-1)
     pub fn setThumbRatio(self: *Scrollbar, ratio: f32) void {
-        self.thumb_ratio = std.math.clamp(ratio, 0.1, 1);
+        self.thumb_ratio = normalizedThumbRatio(ratio);
     }
 
     /// Set the scrollbar colors
@@ -191,16 +191,28 @@ pub const Scrollbar = struct {
         return @intCast(value);
     }
 
+    fn normalizedUnit(value: f32) f32 {
+        if (std.math.isPositiveInf(value)) return 1;
+        if (!std.math.isFinite(value)) return 0;
+        return std.math.clamp(value, 0, 1);
+    }
+
+    fn normalizedThumbRatio(ratio: f32) f32 {
+        if (std.math.isPositiveInf(ratio)) return 1;
+        if (!std.math.isFinite(ratio)) return 0.1;
+        return std.math.clamp(ratio, 0.1, 1);
+    }
+
     fn clampedThumbSize(track: u16, ratio: f32) u16 {
         const track_f = @as(f32, @floatFromInt(track));
-        const size = @min(@max(1, track_f * ratio), track_f);
+        const size = @min(@max(1, track_f * normalizedThumbRatio(ratio)), track_f);
         return @intFromFloat(size);
     }
 
     fn thumbOffset(track: u16, thumb_size: u16, value: f32) u16 {
         const available = track - thumb_size;
         const available_f = @as(f32, @floatFromInt(available));
-        const offset = available_f * std.math.clamp(value, 0, 1);
+        const offset = available_f * normalizedUnit(value);
         return @intFromFloat(@min(offset, available_f));
     }
 
@@ -260,7 +272,7 @@ pub const Scrollbar = struct {
                     const delta_value = delta / track_height;
 
                     var new_value = self.drag_start_value + delta_value;
-                    new_value = std.math.clamp(new_value, 0, 1);
+                    new_value = normalizedUnit(new_value);
 
                     self.setValue(new_value);
                 } else {
@@ -270,7 +282,7 @@ pub const Scrollbar = struct {
                     const delta_value = delta / track_width;
 
                     var new_value = self.drag_start_value + delta_value;
-                    new_value = std.math.clamp(new_value, 0, 1);
+                    new_value = normalizedUnit(new_value);
 
                     self.setValue(new_value);
                 }
@@ -399,6 +411,53 @@ test "scrollbar clamps out-of-range values" {
 
     bar.setValue(-1.0);
     try std.testing.expectEqual(@as(f32, 0), bar.value);
+}
+
+test "scrollbar normalizes non-finite value and thumb ratio" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    bar.setValue(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), bar.value);
+
+    bar.setValue(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 1), bar.value);
+
+    bar.setValue(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), bar.value);
+
+    bar.setThumbRatio(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0.1), bar.thumb_ratio);
+
+    bar.setThumbRatio(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 1), bar.thumb_ratio);
+
+    bar.setThumbRatio(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0.1), bar.thumb_ratio);
+}
+
+test "scrollbar draws with non-finite internal state" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    bar.value = std.math.nan(f32);
+    bar.thumb_ratio = std.math.nan(f32);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 1, 10));
+
+    var renderer = try render.Renderer.init(alloc, 2, 10);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+
+    bar.orientation = .horizontal;
+    bar.value = std.math.inf(f32);
+    bar.thumb_ratio = std.math.inf(f32);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
+    bar.widget.markDirty();
+
+    try bar.widget.draw(&renderer);
 }
 
 test "scrollbar clips vertical edge coordinates before u16 overflow" {
