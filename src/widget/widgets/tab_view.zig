@@ -139,38 +139,40 @@ pub const TabBar = struct {
 
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
 
-        var x = rect.x;
+        const right = rectRight(rect);
+        var x: u32 = rect.x;
         for (self.tabs, 0..) |tab, i| {
             const is_active = i == self.active_tab;
             const tab_fg = if (is_active) self.active_fg else self.inactive_fg;
             const tab_bg = if (is_active) self.active_bg else self.inactive_bg;
-            const width = self.tabWidth(tab);
-            const width_u16: u16 = @intCast(@max(width, 0));
-            const height_u16: u16 = @intCast(@max(self.tab_height, 0));
-            if (x >= rect.x + rect.width) break;
+            const width = self.tabWidthCells(tab);
+            const height_u16: u16 = @intCast(@min(nonNegativeCells(self.tab_height), @as(u32, std.math.maxInt(u16))));
+            if (x >= right) break;
 
-            renderer.fillRect(x, rect.y, width_u16, height_u16, ' ', tab_fg, tab_bg, style);
+            const draw_x = u16Coord(x) orelse break;
+            const fill_width: u16 = @intCast(@min(width, right - x, @as(u32, std.math.maxInt(u16))));
+            renderer.fillRect(draw_x, rect.y, fill_width, height_u16, ' ', tab_fg, tab_bg, style);
 
-            const padding: u16 = @intCast(@max(self.tab_padding, 0));
-            const cursor: u16 = x + padding;
+            const padding = nonNegativeCells(self.tab_padding);
+            const cursor = x + padding;
             for (tab.title, 0..) |char, j| {
-                const draw_x = cursor + @as(u16, @intCast(j));
-                if (draw_x >= rect.x + rect.width) break;
-                renderer.drawChar(draw_x, rect.y, char, tab_fg, tab_bg, style);
+                if (cursor >= right or j >= right - cursor) break;
+                const title_x = cursor + @as(u32, @intCast(j));
+                const title_draw_x = u16Coord(title_x) orelse break;
+                renderer.drawChar(title_draw_x, rect.y, char, tab_fg, tab_bg, style);
             }
 
             if (tab.closable or self.allow_close) {
-                const close_x_i16: i16 = @as(i16, @intCast(x)) + width - self.tab_padding - 1;
-                if (close_x_i16 >= 0) {
-                    const close_x: u16 = @intCast(close_x_i16);
-                    if (close_x < rect.x + rect.width) {
-                        renderer.drawChar(close_x, rect.y, 'x', tab_fg, tab_bg, render.Style{ .bold = true });
-                    }
+                const close_offset = width -| padding -| 1;
+                if (close_offset < right - x) {
+                    const close_x = x + close_offset;
+                    const close_draw_x = u16Coord(close_x) orelse break;
+                    renderer.drawChar(close_draw_x, rect.y, 'x', tab_fg, tab_bg, render.Style{ .bold = true });
                 }
             }
 
-            const advance: u16 = @intCast(@max(width + 1, 0));
-            x += advance;
+            const advance = saturatingAddU32(width, 1);
+            x = saturatingAddU32(x, advance);
         }
 
         self.widget.drawFocusRing(renderer);
@@ -184,8 +186,8 @@ pub const TabBar = struct {
         if (event == .mouse) {
             const m = event.mouse;
             if (m.action == .press and m.button == 1) {
-                if (self.getTabIndexAt(@as(i16, @intCast(m.x)), @as(i16, @intCast(m.y)))) |idx| {
-                    if (self.isOnCloseGlyph(@as(i16, @intCast(m.x)), idx)) {
+                if (self.getTabIndexAt(m.x, m.y)) |idx| {
+                    if (self.isOnCloseGlyph(m.x, idx)) {
                         if ((self.tabs[idx].closable or self.allow_close) and self.on_tab_closed != null) {
                             self.on_tab_closed.?(idx, self.callback_ctx);
                             return true;
@@ -252,7 +254,7 @@ pub const TabBar = struct {
         const self: *TabBar = @fieldParentPtr("widget", widget_ref);
         var width: i16 = 2;
         for (self.tabs) |tab| {
-            width += self.tabWidth(tab) + 1;
+            width = saturatingI16AddU32(width, saturatingAddU32(self.tabWidthCells(tab), 1));
         }
         return layout_module.Size.init(width, self.tab_height);
     }
@@ -263,40 +265,79 @@ pub const TabBar = struct {
         return self.widget.enabled and self.tabs.len > 0;
     }
 
-    fn getTabIndexAt(self: *TabBar, x: i16, y: i16) ?usize {
-        const rect_y: i16 = @intCast(@min(self.widget.rect.y, std.math.maxInt(i16)));
-        const rect_x: i16 = @intCast(@min(self.widget.rect.x, std.math.maxInt(i16)));
-        if (y < rect_y or y >= rect_y + self.tab_height) return null;
-        var tab_x = rect_x;
+    fn getTabIndexAt(self: *TabBar, x: u16, y: u16) ?usize {
+        const rect = self.widget.rect;
+        const right = rectRight(rect);
+        const bottom = @as(u32, rect.y) + nonNegativeCells(self.tab_height);
+        const mouse_x: u32 = x;
+        const mouse_y: u32 = y;
+        if (mouse_y < rect.y or mouse_y >= bottom or mouse_x < rect.x or mouse_x >= right) return null;
+
+        var tab_x: u32 = rect.x;
         for (self.tabs, 0..) |tab, idx| {
-            const width = self.tabWidth(tab);
-            if (x >= tab_x and x < tab_x + width) {
+            const width = self.tabWidthCells(tab);
+            const end = saturatingAddU32(tab_x, width);
+            if (mouse_x >= tab_x and mouse_x < end) {
                 return idx;
             }
-            tab_x += width + 1;
+            tab_x = saturatingAddU32(tab_x, saturatingAddU32(width, 1));
+            if (tab_x >= right) break;
         }
         return null;
     }
 
-    fn isOnCloseGlyph(self: *TabBar, x: i16, idx: usize) bool {
+    fn isOnCloseGlyph(self: *TabBar, x: u16, idx: usize) bool {
         if (!(self.tabs[idx].closable or self.allow_close)) return false;
-        var tab_x: i16 = @intCast(@min(self.widget.rect.x, std.math.maxInt(i16)));
+        const right = rectRight(self.widget.rect);
+        var tab_x: u32 = self.widget.rect.x;
         for (self.tabs, 0..) |tab, i| {
-            const width = self.tabWidth(tab);
+            const width = self.tabWidthCells(tab);
             if (i == idx) {
-                const close_x = tab_x + width - self.tab_padding - 1;
-                return x == close_x;
+                const padding = nonNegativeCells(self.tab_padding);
+                const close_x = tab_x + (width -| padding -| 1);
+                return @as(u32, x) == close_x and close_x < right;
             }
-            tab_x += width + 1;
+            tab_x = saturatingAddU32(tab_x, saturatingAddU32(width, 1));
+            if (tab_x >= right) break;
         }
         return false;
     }
 
     fn tabWidth(self: TabBar, tab: TabItem) i16 {
-        const close_extra: i16 = if (tab.closable or self.allow_close) 2 else 0;
-        return @as(i16, @intCast(tab.title.len)) + self.tab_padding * 2 + close_extra;
+        return @intCast(@min(self.tabWidthCells(tab), @as(u32, std.math.maxInt(i16))));
+    }
+
+    fn tabWidthCells(self: TabBar, tab: TabItem) u32 {
+        const close_extra: u32 = if (tab.closable or self.allow_close) 2 else 0;
+        const padding = nonNegativeCells(self.tab_padding);
+        const reserved = padding *| 2 +| close_extra;
+        const max_title = std.math.maxInt(u32) - reserved;
+        const title_len: u32 = @intCast(@min(tab.title.len, @as(usize, max_title)));
+        return title_len + reserved;
     }
 };
+
+fn nonNegativeCells(value: i16) u32 {
+    return @intCast(@max(value, 0));
+}
+
+fn rectRight(rect: layout_module.Rect) u32 {
+    return @as(u32, rect.x) + @as(u32, rect.width);
+}
+
+fn u16Coord(value: u32) ?u16 {
+    if (value > std.math.maxInt(u16)) return null;
+    return @intCast(value);
+}
+
+fn saturatingAddU32(a: u32, b: u32) u32 {
+    return std.math.add(u32, a, b) catch std.math.maxInt(u32);
+}
+
+fn saturatingI16AddU32(a: i16, b: u32) i16 {
+    const sum = @as(u32, @intCast(@max(a, 0))) +| b;
+    return @intCast(@min(sum, @as(u32, std.math.maxInt(i16))));
+}
 
 /// Tab view widget for managing tabbed interfaces
 pub const TabView = struct {
@@ -1088,6 +1129,26 @@ test "tab bar mouse selects rendered tab row" {
 
     try std.testing.expect(try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 5, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), tab_bar.active_tab);
+}
+
+test "tab bar clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var tab_bar = try TabBar.init(alloc);
+    defer tab_bar.deinit();
+
+    const tabs = [_]TabItem{
+        .{ .title = "A" },
+        .{ .title = "B" },
+    };
+    tab_bar.setTabs(&tabs);
+    try tab_bar.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, 0, 2, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+    try tab_bar.widget.draw(&renderer);
+
+    try std.testing.expect(try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), 0, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), tab_bar.active_tab);
 }
 
 test "tab view clamps active tab index" {
