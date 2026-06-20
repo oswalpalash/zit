@@ -83,6 +83,16 @@ pub const ColorPicker = struct {
         }
     }
 
+    fn checkedCoord(value: u64) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
+    }
+
+    fn saturatingProduct(count: usize, cell_size: u16) u16 {
+        const product = std.math.mul(usize, count, @as(usize, cell_size)) catch return std.math.maxInt(u16);
+        return @intCast(@min(product, @as(usize, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *ColorPicker = @fieldParentPtr("widget", widget_ref);
@@ -93,31 +103,41 @@ pub const ColorPicker = struct {
 
         if (self.palette.items.len == 0 or rect.width == 0 or rect.height == 0 or self.columns == 0) return;
 
-        const cols = self.columns;
+        const cols: usize = @intCast(self.columns);
         const sw_w = if (self.swatch_width < 2) 2 else self.swatch_width;
         const sw_h = if (self.swatch_height < 2) 2 else self.swatch_height;
+        const right = @as(u64, rect.x) + @as(u64, rect.width);
+        const bottom = @as(u64, rect.y) + @as(u64, rect.height);
 
         for (self.palette.items, 0..) |color, idx| {
-            const col: u16 = @intCast(idx % cols);
-            const row: u16 = @intCast(idx / cols);
+            const col = idx % cols;
+            const row = idx / cols;
 
-            const base_x = rect.x + col * sw_w;
-            const base_y = rect.y + row * sw_h;
+            const offset_x = std.math.mul(u64, @as(u64, @intCast(col)), @as(u64, sw_w)) catch break;
+            const offset_y = std.math.mul(u64, @as(u64, @intCast(row)), @as(u64, sw_h)) catch break;
+            const base_x = std.math.add(u64, @as(u64, rect.x), offset_x) catch break;
+            const base_y = std.math.add(u64, @as(u64, rect.y), offset_y) catch break;
 
-            if (base_x >= rect.x + rect.width or base_y >= rect.y + rect.height) continue;
-            if (base_x + sw_w > rect.x + rect.width or base_y + sw_h > rect.y + rect.height) continue;
+            if (base_y >= bottom) break;
+            if (base_x >= right) continue;
+            if (base_x + @as(u64, sw_w) > right or base_y + @as(u64, sw_h) > bottom) continue;
+
+            const draw_x = checkedCoord(base_x) orelse continue;
+            const draw_y = checkedCoord(base_y) orelse continue;
 
             const inset: u16 = if (sw_w > 2 and sw_h > 2) 1 else 0;
             if (inset == 0) {
-                renderer.fillRect(base_x, base_y, sw_w, sw_h, ' ', color, color, render.Style{});
+                renderer.fillRect(draw_x, draw_y, sw_w, sw_h, ' ', color, color, render.Style{});
             } else {
-                renderer.drawBox(base_x, base_y, sw_w, sw_h, render.BorderStyle.single, render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
-                renderer.fillRect(base_x + 1, base_y + 1, sw_w - 2, sw_h - 2, ' ', color, color, render.Style{});
+                renderer.drawBox(draw_x, draw_y, sw_w, sw_h, render.BorderStyle.single, render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
+                const inner_x = checkedCoord(base_x + 1) orelse continue;
+                const inner_y = checkedCoord(base_y + 1) orelse continue;
+                renderer.fillRect(inner_x, inner_y, sw_w - 2, sw_h - 2, ' ', color, color, render.Style{});
             }
 
             if (self.selected_index == idx) {
-                const marker_x = base_x + inset;
-                const marker_y = base_y + inset;
+                const marker_x = checkedCoord(base_x + @as(u64, inset)) orelse continue;
+                const marker_y = checkedCoord(base_y + @as(u64, inset)) orelse continue;
                 renderer.drawChar(marker_x, marker_y, 'X', render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{ .bold = true });
             }
         }
@@ -189,7 +209,7 @@ pub const ColorPicker = struct {
         const sw_h = if (self.swatch_height == 0) 1 else self.swatch_height;
         const count = self.palette.items.len;
         const rows_count: usize = if (count == 0) 1 else (count + cols_count - 1) / cols_count;
-        return layout.Size.init(@as(u16, @intCast(cols_count)) * sw_w, @as(u16, @intCast(rows_count)) * sw_h);
+        return layout.Size.init(saturatingProduct(cols_count, sw_w), saturatingProduct(rows_count, sw_h));
     }
 
     fn canFocusFn(widget_ptr: *anyopaque) bool {
@@ -257,6 +277,45 @@ test "color picker handles mouse and keyboard selection" {
     try std.testing.expect(try picker.widget.handleEvent(down_event));
     try std.testing.expectEqual(@as(usize, 3), picker.selected_index);
     try std.testing.expect(change_called);
+}
+
+test "color picker preferred size saturates large products" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.setColumns(std.math.maxInt(u16));
+    picker.swatch_width = 2;
+    picker.swatch_height = std.math.maxInt(u16);
+
+    const pref = try picker.widget.getPreferredSize();
+    try std.testing.expectEqual(std.math.maxInt(u16), pref.width);
+    try std.testing.expectEqual(std.math.maxInt(u16), pref.height);
+}
+
+test "color picker draw clips edge coordinates before u16 overflow" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.setColumns(1);
+    picker.swatch_width = 2;
+    picker.swatch_height = 2;
+    try picker.widget.layout(layout.Rect.init(std.math.maxInt(u16) - 1, 0, 2, 2));
+
+    var renderer = try render.Renderer.init(allocator, 4, 2);
+    defer renderer.deinit();
+    try picker.widget.draw(&renderer);
 }
 
 test "color picker setPalette preserves palette on allocation failure" {
