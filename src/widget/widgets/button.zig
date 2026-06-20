@@ -111,6 +111,11 @@ pub const Button = struct {
         return rect;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Apply theme defaults for button colors and text style.
     pub fn setTheme(self: *Button, theme_value: theme.Theme) void {
         const colors = theme.controlColors(theme_value);
@@ -173,10 +178,10 @@ pub const Button = struct {
             var truncated_text: [256]u8 = undefined;
             const clipped = text_metrics.clipWithEllipsis(self.button_text, inner_width, &truncated_text);
             const text_x = if (inner_width > clipped.width)
-                rect.x + 1 + (inner_width - clipped.width) / 2
+                addOffsetClamped(rect.x, 1 + (inner_width - clipped.width) / 2)
             else
-                rect.x + 1;
-            const text_y = rect.y + rect.height / 2;
+                addOffsetClamped(rect.x, 1);
+            const text_y = addOffsetClamped(rect.y, rect.height / 2);
             renderer.drawStr(text_x, text_y, clipped.text, fg, bg, style);
         }
     }
@@ -361,6 +366,21 @@ test "button does not ellipsize text that exactly fits inner width" {
     for (expected, 0..) |char, idx| {
         try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 1)), 1).*.codepoint());
     }
+}
+
+test "button clamps edge text coordinates" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "OK");
+    defer button.deinit();
+
+    try button.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try button.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).*.codepoint());
 }
 
 test "button ignores presses when bounds are zero" {
