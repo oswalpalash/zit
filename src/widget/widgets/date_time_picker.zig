@@ -199,6 +199,11 @@ pub const DateTimePicker = struct {
         self.value.minute = @intCast(total);
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
@@ -226,8 +231,8 @@ pub const DateTimePicker = struct {
             self.value.minute,
         }) catch return;
 
-        const start_x = rect.x + inset + 1;
-        const start_y = rect.y + inset + (rect.height - inset * 2) / 2;
+        const start_x = addOffsetClamped(rect.x, inset + 1);
+        const start_y = addOffsetClamped(rect.y, inset + (rect.height - inset * 2) / 2);
         const max_width = rect.width - inset * 2 - 1;
 
         var utf8_it = std.unicode.Utf8Iterator{
@@ -238,7 +243,7 @@ pub const DateTimePicker = struct {
         var i: usize = 0;
         while (utf8_it.nextCodepoint()) |codepoint| {
             if (i >= max_width) break;
-            const pos_x = start_x + @as(u16, @intCast(i));
+            const pos_x = addOffsetClamped(start_x, @intCast(i));
             const highlight = self.isHighlighted(i);
             const fg = if (highlight) self.accent_fg else self.fg;
             const bg = if (highlight) self.accent_bg else self.bg;
@@ -353,4 +358,21 @@ test "date time picker highlights selected field" {
     const y = rect.y + inset + (rect.height - inset * 2) / 2;
     const cell = renderer.back.getCell(x, y).*;
     try std.testing.expect(std.meta.eql(cell.bg, picker.accent_bg));
+}
+
+test "date time picker clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    picker.setDateTime(.{ .year = 2024, .month = 6, .day = 15, .hour = 10, .minute = 30 });
+    try picker.widget.layout(layout_module.Rect.init(max - 1, max - 1, 24, 5));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try picker.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
 }
