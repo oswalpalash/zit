@@ -88,6 +88,10 @@ pub const ColorPicker = struct {
         return @intCast(value);
     }
 
+    fn checkedSize(value: u64) u16 {
+        return @intCast(@min(value, @as(u64, std.math.maxInt(u16))));
+    }
+
     fn saturatingProduct(count: usize, cell_size: u16) u16 {
         const product = std.math.mul(usize, count, @as(usize, cell_size)) catch return std.math.maxInt(u16);
         return @intCast(@min(product, @as(usize, std.math.maxInt(u16))));
@@ -120,24 +124,35 @@ pub const ColorPicker = struct {
 
             if (base_y >= bottom) break;
             if (base_x >= right) continue;
-            if (base_x + @as(u64, sw_w) > right or base_y + @as(u64, sw_h) > bottom) continue;
 
             const draw_x = checkedCoord(base_x) orelse continue;
             const draw_y = checkedCoord(base_y) orelse continue;
+            const visible_w = checkedSize(@min(@as(u64, sw_w), right - base_x));
+            const visible_h = checkedSize(@min(@as(u64, sw_h), bottom - base_y));
+            if (visible_w == 0 or visible_h == 0) continue;
 
             const inset: u16 = if (sw_w > 2 and sw_h > 2) 1 else 0;
             if (inset == 0) {
-                renderer.fillRect(draw_x, draw_y, sw_w, sw_h, ' ', color, color, render.Style{});
+                renderer.fillRect(draw_x, draw_y, visible_w, visible_h, ' ', color, color, render.Style{});
             } else {
-                renderer.drawBox(draw_x, draw_y, sw_w, sw_h, render.BorderStyle.single, render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
-                const inner_x = checkedCoord(base_x + 1) orelse continue;
-                const inner_y = checkedCoord(base_y + 1) orelse continue;
-                renderer.fillRect(inner_x, inner_y, sw_w - 2, sw_h - 2, ' ', color, color, render.Style{});
+                if (visible_w < 2 or visible_h < 2) {
+                    renderer.fillRect(draw_x, draw_y, visible_w, visible_h, ' ', color, color, render.Style{});
+                } else {
+                    renderer.drawBox(draw_x, draw_y, visible_w, visible_h, render.BorderStyle.single, render.Color.named(render.NamedColor.white), render.Color.named(render.NamedColor.black), render.Style{});
+                }
+                if (visible_w > 2 and visible_h > 2) {
+                    const inner_x = checkedCoord(base_x + 1) orelse continue;
+                    const inner_y = checkedCoord(base_y + 1) orelse continue;
+                    renderer.fillRect(inner_x, inner_y, visible_w - 2, visible_h - 2, ' ', color, color, render.Style{});
+                }
             }
 
             if (self.selected_index == idx) {
-                const marker_x = checkedCoord(base_x + @as(u64, inset)) orelse continue;
-                const marker_y = checkedCoord(base_y + @as(u64, inset)) orelse continue;
+                const marker_base_x = base_x + @as(u64, inset);
+                const marker_base_y = base_y + @as(u64, inset);
+                if (marker_base_x >= right or marker_base_y >= bottom) continue;
+                const marker_x = checkedCoord(marker_base_x) orelse continue;
+                const marker_y = checkedCoord(marker_base_y) orelse continue;
                 renderer.drawChar(marker_x, marker_y, 'X', render.Color.named(render.NamedColor.black), render.Color.named(render.NamedColor.white), render.Style{ .bold = true });
             }
         }
@@ -159,7 +174,8 @@ pub const ColorPicker = struct {
                 const sw_h = if (self.swatch_height == 0) 1 else self.swatch_height;
                 const col: usize = @intCast(@divFloor(mouse.x - self.widget.rect.x, sw_w));
                 const row: usize = @intCast(@divFloor(mouse.y - self.widget.rect.y, sw_h));
-                const idx = row * cols + col;
+                const row_base = std.math.mul(usize, row, cols) catch return false;
+                const idx = std.math.add(usize, row_base, col) catch return false;
                 if (idx < self.palette.items.len) {
                     self.selectIndex(idx);
                     return true;
@@ -167,26 +183,23 @@ pub const ColorPicker = struct {
             },
             .key => |key| {
                 if (!self.widget.focused) return false;
-                const cols_step: isize = @intCast(if (self.columns == 0) 1 else self.columns);
-                var idx: isize = @intCast(self.selected_index);
+                const max_index = self.palette.items.len - 1;
+                const current = @min(self.selected_index, max_index);
+                if (current != self.selected_index) self.selected_index = current;
+                const cols_step: usize = if (self.columns == 0) 1 else self.columns;
 
                 switch (key.key) {
-                    input.KeyCode.LEFT => idx -= 1,
-                    input.KeyCode.RIGHT => idx += 1,
-                    input.KeyCode.UP => idx -= cols_step,
-                    input.KeyCode.DOWN => idx += cols_step,
+                    input.KeyCode.LEFT => self.selectIndex(if (current > 0) current - 1 else 0),
+                    input.KeyCode.RIGHT => self.selectIndex(@min(current +| 1, max_index)),
+                    input.KeyCode.UP => self.selectIndex(if (current > cols_step) current - cols_step else 0),
+                    input.KeyCode.DOWN => self.selectIndex(@min(current +| cols_step, max_index)),
                     input.KeyCode.ENTER, input.KeyCode.SPACE => {
-                        if (self.on_change) |cb| cb(self.palette.items[self.selected_index], self.selected_index);
-                        if (self.on_change_with_ctx) |cb| cb(self.palette.items[self.selected_index], self.selected_index, self.on_change_ctx);
+                        if (self.on_change) |cb| cb(self.palette.items[current], current);
+                        if (self.on_change_with_ctx) |cb| cb(self.palette.items[current], current, self.on_change_ctx);
                         return true;
                     },
                     else => return false,
                 }
-
-                if (idx < 0) idx = 0;
-                const max_index: isize = @intCast(self.palette.items.len - 1);
-                if (idx > max_index) idx = max_index;
-                self.selectIndex(@intCast(idx));
                 return true;
             },
             else => {},
@@ -316,6 +329,72 @@ test "color picker draw clips edge coordinates before u16 overflow" {
     var renderer = try render.Renderer.init(allocator, 4, 2);
     defer renderer.deinit();
     try picker.widget.draw(&renderer);
+}
+
+test "color picker renders clipped partial swatches" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.swatch_width = 2;
+    picker.swatch_height = 2;
+    try picker.widget.layout(layout.Rect.init(0, 0, 1, 1));
+
+    var renderer = try render.Renderer.init(allocator, 1, 1);
+    defer renderer.deinit();
+    try picker.widget.draw(&renderer);
+
+    const cell = renderer.back.getCell(0, 0).*;
+    try std.testing.expect(std.meta.eql(cell.bg, render.Color.named(render.NamedColor.white)));
+    try std.testing.expectEqual(@as(u21, 'X'), cell.codepoint());
+
+    picker.selected_index = 1;
+    picker.swatch_width = 6;
+    picker.swatch_height = 3;
+    renderer.back.clear();
+    picker.widget.markDirty();
+    try picker.widget.draw(&renderer);
+
+    const clipped_cell = renderer.back.getCell(0, 0).*;
+    try std.testing.expect(std.meta.eql(clipped_cell.bg, render.Color.named(render.NamedColor.red)));
+}
+
+test "color picker clamps invalid selected index during keyboard handling" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    var change_index: usize = std.math.maxInt(usize);
+    const Callbacks = struct {
+        fn onChange(_: render.Color, index: usize, ctx: ?*anyopaque) void {
+            if (ctx) |ptr| {
+                const out = @as(*usize, @ptrCast(@alignCast(ptr)));
+                out.* = index;
+            }
+        }
+    };
+
+    picker.widget.setFocus(true);
+    picker.selected_index = std.math.maxInt(usize);
+    picker.setOnChangeWithContext(Callbacks.onChange, &change_index);
+
+    const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) };
+    try std.testing.expect(try picker.widget.handleEvent(enter_event));
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    try std.testing.expectEqual(@as(usize, 1), change_index);
+
+    const right_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) };
+    try std.testing.expect(try picker.widget.handleEvent(right_event));
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
 }
 
 test "color picker setPalette preserves palette on allocation failure" {
