@@ -270,37 +270,45 @@ pub const DropdownMenu = struct {
         // Draw text
         const header_text_capacity: u16 = if (rect.width > 2) rect.width - 2 else 0;
         if (header_text_capacity > 0) {
-            var x = rect.x + 1;
+            const right = rectRight(rect);
+            var x: u32 = @as(u32, rect.x) + 1;
             for (display_text, 0..) |char, i| {
-                if (i >= header_text_capacity) {
+                if (i >= header_text_capacity or x >= right) {
                     break;
                 }
 
-                renderer.drawChar(x, rect.y, char, fg, bg, style);
+                const draw_x = u16Coord(x) orelse break;
+                renderer.drawChar(draw_x, rect.y, char, fg, bg, style);
                 x += 1;
             }
         }
 
         // Draw dropdown arrow
-        const arrow_x = if (rect.width >= 2) rect.x + rect.width - 2 else rect.x;
-        renderer.drawChar(arrow_x, rect.y, '▼', fg, bg, style);
+        const arrow_x = if (rect.width >= 2) rectRight(rect) - 2 else @as(u32, rect.x);
+        if (u16Coord(arrow_x)) |draw_x| {
+            renderer.drawChar(draw_x, rect.y, '▼', fg, bg, style);
+        }
 
         // Draw dropdown menu if open
-        if (self.is_open and self.items.items.len > 0 and rect.y < std.math.maxInt(u16)) {
-            const menu_height = @min(@as(i16, @intCast(self.items.items.len)), 10);
+        if (self.is_open and self.items.items.len > 0) {
+            const menu_top: u32 = @as(u32, rect.y) + 1;
+            const menu_height = visibleItemLimit(self.items.items.len);
             const menu_height_u16: u16 = @intCast(menu_height);
 
             // Fill menu background
-            renderer.fillRect(rect.x, rect.y + 1, rect.width, menu_height_u16, ' ', fg, bg, style);
+            if (u16Coord(menu_top)) |draw_y| {
+                renderer.fillRect(rect.x, draw_y, rect.width, menu_height_u16, ' ', fg, bg, style);
+            }
 
             // Draw menu items
             const item_text_capacity: u16 = if (rect.width > 1) rect.width - 1 else 0;
             for (self.items.items, 0..) |item, i| {
-                if (i >= @as(usize, @intCast(menu_height))) {
+                if (i >= menu_height) {
                     break;
                 }
 
-                const item_y = rect.y + 1 + @as(u16, @intCast(i));
+                const item_y_u32 = menu_top + @as(u32, @intCast(i));
+                const item_y = u16Coord(item_y_u32) orelse break;
                 const is_selected = i == self.selected_index;
 
                 // Choose colors based on selection and enabled state
@@ -321,13 +329,15 @@ pub const DropdownMenu = struct {
 
                 // Draw item text
                 if (item_text_capacity > 0) {
-                    var x = rect.x + 1;
+                    const right = rectRight(rect);
+                    var x: u32 = @as(u32, rect.x) + 1;
                     for (item.text, 0..) |char, text_idx| {
-                        if (text_idx >= item_text_capacity) {
+                        if (text_idx >= item_text_capacity or x >= right) {
                             break;
                         }
 
-                        renderer.drawChar(x, item_y, char, item_fg, item_bg, style);
+                        const draw_x = u16Coord(x) orelse break;
+                        renderer.drawChar(draw_x, item_y, char, item_fg, item_bg, style);
                         x += 1;
                     }
                 }
@@ -348,9 +358,12 @@ pub const DropdownMenu = struct {
         if (event == .mouse) {
             const mouse_event = event.mouse;
             const rect = self.widget.rect;
+            const mouse_x: u32 = mouse_event.x;
+            const mouse_y: u32 = mouse_event.y;
+            const right = rectRight(rect);
 
             // Check if mouse is within dropdown header bounds
-            if (mouse_event.y == rect.y and mouse_event.x >= rect.x and mouse_event.x < rect.x + rect.width) {
+            if (mouse_y == rect.y and mouse_x >= rect.x and mouse_x < right) {
                 // Toggle dropdown on click
                 if (mouse_event.action == .press and mouse_event.button == 1) {
                     self.toggle();
@@ -359,15 +372,18 @@ pub const DropdownMenu = struct {
             }
 
             // Check if mouse is within dropdown menu bounds
+            const menu_top: u32 = @as(u32, rect.y) + 1;
+            const menu_height = visibleItemLimit(self.items.items.len);
+            const menu_bottom = menu_top + @as(u32, @intCast(menu_height));
             if (self.is_open and
-                mouse_event.y >= rect.y + 1 and
-                mouse_event.y < rect.y + 1 + @as(u16, @intCast(@min(@as(i16, @intCast(self.items.items.len)), 10))) and
-                mouse_event.x >= rect.x and
-                mouse_event.x < rect.x + rect.width)
+                mouse_y >= menu_top and
+                mouse_y < menu_bottom and
+                mouse_x >= rect.x and
+                mouse_x < right)
             {
 
                 // Convert y position to item index
-                const item_index = @as(usize, @intCast(mouse_event.y - (rect.y + 1)));
+                const item_index: usize = @intCast(mouse_y - menu_top);
 
                 if (item_index < self.items.items.len and self.items.items[item_index].enabled) {
                     // Select item on click
@@ -466,20 +482,20 @@ pub const DropdownMenu = struct {
         const self: *DropdownMenu = @fieldParentPtr("widget", widget_ref);
 
         // Find the longest item
-        var max_width: i16 = 10; // Minimum width
+        var max_width: u16 = 10; // Minimum width
 
         // Check label length
         if (self.label.len > 0) {
-            max_width = @max(max_width, @as(i16, @intCast(self.label.len)) + 4); // Add space for arrow and padding
+            max_width = @max(max_width, preferredWidthForText(self.label.len)); // Add space for arrow and padding
         }
 
         // Check item lengths
         for (self.items.items) |item| {
-            max_width = @max(max_width, @as(i16, @intCast(item.text.len)) + 4); // Add space for arrow and padding
+            max_width = @max(max_width, preferredWidthForText(item.text.len)); // Add space for arrow and padding
         }
 
         // Height is always 1 when closed
-        return layout_module.Size.init(@as(u16, @intCast(max_width)), 1);
+        return layout_module.Size.init(max_width, 1);
     }
 
     /// Can focus implementation for DropdownMenu
@@ -487,6 +503,25 @@ pub const DropdownMenu = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *DropdownMenu = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled and self.items.items.len > 0;
+    }
+
+    fn rectRight(rect: layout_module.Rect) u32 {
+        return @as(u32, rect.x) + @as(u32, rect.width);
+    }
+
+    fn u16Coord(value: u32) ?u16 {
+        if (value > std.math.maxInt(u16)) return null;
+        return @intCast(value);
+    }
+
+    fn visibleItemLimit(count: usize) usize {
+        return @min(count, 10);
+    }
+
+    fn preferredWidthForText(len: usize) u16 {
+        const max = std.math.maxInt(u16);
+        if (len >= max - 4) return max;
+        return @intCast(len + 4);
     }
 };
 
@@ -621,4 +656,48 @@ test "dropdown menu tolerates tiny render widths" {
     defer one.deinit();
     menu.widget.rect = layout_module.Rect.init(0, 0, 1, 1);
     try menu.widget.draw(&one);
+}
+
+test "dropdown menu clips edge coordinates before u16 overflow" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.open();
+
+    var renderer = try render.Renderer.init(alloc, 4, 3);
+    defer renderer.deinit();
+
+    menu.widget.rect = layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 2);
+    try menu.widget.draw(&renderer);
+
+    const header_click = input.Event{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), std.math.maxInt(u16) - 1, 1, 0) };
+    try std.testing.expect(try menu.widget.handleEvent(header_click));
+    try std.testing.expect(!menu.is_open);
+
+    try std.testing.expect(try menu.widget.handleEvent(header_click));
+    try std.testing.expect(menu.is_open);
+
+    const item_click = input.Event{ .mouse = input.MouseEvent.init(.press, std.math.maxInt(u16), std.math.maxInt(u16), 1, 0) };
+    try std.testing.expect(try menu.widget.handleEvent(item_click));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected_index);
+    try std.testing.expect(!menu.is_open);
+}
+
+test "dropdown menu preferred width saturates long text" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    const long_label = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 128);
+    defer alloc.free(long_label);
+    @memset(long_label, 'x');
+
+    try menu.setLabel(long_label);
+    const size = try menu.widget.getPreferredSize();
+
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
+    try std.testing.expectEqual(@as(u16, 1), size.height);
 }
