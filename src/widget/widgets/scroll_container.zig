@@ -262,6 +262,15 @@ pub const ScrollContainer = struct {
         self.syncHScrollbar();
     }
 
+    fn offsetBySaturating(current: i16, delta: i32) i16 {
+        const value = @as(i32, current) + delta;
+        return @intCast(std.math.clamp(
+            value,
+            @as(i32, std.math.minInt(i16)),
+            @as(i32, std.math.maxInt(i16)),
+        ));
+    }
+
     fn syncVScrollbar(self: *ScrollContainer) void {
         if (self.v_scrollbar) |v_scrollbar_widget| {
             const max_offset = self.maxVerticalOffset();
@@ -485,15 +494,15 @@ pub const ScrollContainer = struct {
             if (content_rect.contains(mouse_event.x, mouse_event.y)) {
                 if (mouse_event.action == .scroll_up or mouse_event.action == .scroll_down) {
                     if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                        const scroll_amount: i16 = 3;
-                        const steps: i16 = if (mouse_event.scroll_delta != 0)
+                        const scroll_amount: i32 = 3;
+                        const steps: i32 = if (mouse_event.scroll_delta != 0)
                             mouse_event.scroll_delta
                         else if (mouse_event.action == .scroll_up)
                             -1
                         else
                             1;
                         const delta = scroll_amount * steps;
-                        self.applyVOffset(self.v_offset + delta);
+                        self.applyVOffset(offsetBySaturating(self.v_offset, delta));
                         return true;
                     }
                 }
@@ -513,33 +522,33 @@ pub const ScrollContainer = struct {
                 switch (action) {
                     .cursor_down => {
                         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                            self.applyVOffset(self.v_offset + 1);
+                            self.applyVOffset(offsetBySaturating(self.v_offset, 1));
                             return true;
                         }
                     },
                     .cursor_up => {
                         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                            self.applyVOffset(self.v_offset - 1);
+                            self.applyVOffset(offsetBySaturating(self.v_offset, -1));
                             return true;
                         }
                     },
                     .page_down => {
                         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                            self.applyVOffset(self.v_offset + self.getViewportHeight());
+                            self.applyVOffset(offsetBySaturating(self.v_offset, self.getViewportHeight()));
                             return true;
                         }
                         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                            self.applyHOffset(self.h_offset + self.getViewportWidth());
+                            self.applyHOffset(offsetBySaturating(self.h_offset, self.getViewportWidth()));
                             return true;
                         }
                     },
                     .page_up => {
                         if (self.show_v_scrollbar and self.content_height > self.getViewportHeight()) {
-                            self.applyVOffset(self.v_offset - self.getViewportHeight());
+                            self.applyVOffset(offsetBySaturating(self.v_offset, -@as(i32, self.getViewportHeight())));
                             return true;
                         }
                         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                            self.applyHOffset(self.h_offset - self.getViewportWidth());
+                            self.applyHOffset(offsetBySaturating(self.h_offset, -@as(i32, self.getViewportWidth())));
                             return true;
                         }
                     },
@@ -565,13 +574,13 @@ pub const ScrollContainer = struct {
                     },
                     .cursor_right => {
                         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                            self.applyHOffset(self.h_offset + 1);
+                            self.applyHOffset(offsetBySaturating(self.h_offset, 1));
                             return true;
                         }
                     },
                     .cursor_left => {
                         if (self.show_h_scrollbar and self.content_width > self.getViewportWidth()) {
-                            self.applyHOffset(self.h_offset - 1);
+                            self.applyHOffset(offsetBySaturating(self.h_offset, -1));
                             return true;
                         }
                     },
@@ -870,6 +879,111 @@ test "scroll container clips border edge coordinates before u16 overflow" {
     defer renderer.deinit();
 
     try container.widget.draw(&renderer);
+}
+
+test "scroll container saturates relative offset arithmetic" {
+    try std.testing.expectEqual(
+        std.math.maxInt(i16),
+        ScrollContainer.offsetBySaturating(std.math.maxInt(i16), 1),
+    );
+    try std.testing.expectEqual(
+        std.math.minInt(i16),
+        ScrollContainer.offsetBySaturating(std.math.minInt(i16), -1),
+    );
+    try std.testing.expectEqual(
+        @as(i16, 15),
+        ScrollContainer.offsetBySaturating(10, 5),
+    );
+    try std.testing.expectEqual(
+        @as(i16, 5),
+        ScrollContainer.offsetBySaturating(10, -5),
+    );
+}
+
+test "scroll container clamps keyboard offsets after saturating overflow edges" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(std.math.maxInt(u16), std.math.maxInt(u16));
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    container.widget.focused = true;
+
+    container.v_offset = std.math.maxInt(i16);
+    try std.testing.expect(try container.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expectEqual(container.maxVerticalOffset(), container.v_offset);
+
+    container.h_offset = std.math.maxInt(i16);
+    container.v_offset = 0;
+    container.show_v_scrollbar = false;
+    try std.testing.expect(try container.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(container.maxHorizontalOffset(), container.h_offset);
+}
+
+test "scroll container saturates large wheel deltas before clamping" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(20, std.math.maxInt(u16));
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+
+    container.v_offset = std.math.maxInt(i16);
+    const scroll_event = input.Event{ .mouse = input.MouseEvent.init(
+        .scroll_down,
+        1,
+        1,
+        0,
+        std.math.maxInt(i16),
+    ) };
+    try std.testing.expect(try container.widget.handleEvent(scroll_event));
+    try std.testing.expectEqual(container.maxVerticalOffset(), container.v_offset);
 }
 
 test "scroll container translates mouse events into scrolled content space" {
