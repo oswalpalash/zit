@@ -110,6 +110,24 @@ pub const List = struct {
         return @fieldParentPtr("widget", widget_ref);
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addU16Clamped(a: u16, b: u16) u16 {
+        const value = @as(u32, a) + @as(u32, b);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addUsizeSaturating(a: usize, b: usize) usize {
+        return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+    }
+
+    fn clampUsizeToU16(value: usize) u16 {
+        return @intCast(@min(value, @as(usize, std.math.maxInt(u16))));
+    }
+
     /// Initialize a new list
     pub fn init(allocator: std.mem.Allocator) !*List {
         const self = try allocator.create(List);
@@ -489,7 +507,7 @@ pub const List = struct {
     fn contentRect(self: *const List) layout_module.Rect {
         const rect = self.widget.rect;
         if (self.hasDrawableBorder() and rect.width > 2 and rect.height > 2) {
-            return layout_module.Rect.init(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+            return layout_module.Rect.init(addOffsetClamped(rect.x, 1), addOffsetClamped(rect.y, 1), rect.width - 2, rect.height - 2);
         }
         return rect;
     }
@@ -500,12 +518,12 @@ pub const List = struct {
     }
 
     fn itemIndexAtY(self: *const List, content_rect: layout_module.Rect, y: u16) usize {
-        return self.first_visible_index + rowOffsetAtY(content_rect, y);
+        return addUsizeSaturating(self.first_visible_index, rowOffsetAtY(content_rect, y));
     }
 
     fn dropIndexAtY(self: *const List, content_rect: layout_module.Rect, y: u16) usize {
         const rel_y = @min(rowOffsetAtY(content_rect, y), @as(usize, content_rect.height));
-        return self.first_visible_index + rel_y;
+        return addUsizeSaturating(self.first_visible_index, rel_y);
     }
 
     /// Draw implementation for List
@@ -548,7 +566,7 @@ pub const List = struct {
 
         // Ensure the first visible index is valid
         const total_items = self.itemCount();
-        if (self.first_visible_index + self.visible_items_count > total_items) {
+        if (addUsizeSaturating(self.first_visible_index, self.visible_items_count) > total_items) {
             self.first_visible_index = if (total_items > self.visible_items_count)
                 total_items - self.visible_items_count
             else
@@ -557,7 +575,7 @@ pub const List = struct {
         }
 
         // Draw visible items
-        const last_visible_index = @min(self.first_visible_index + self.visible_items_count, total_items);
+        const last_visible_index = @min(addUsizeSaturating(self.first_visible_index, self.visible_items_count), total_items);
 
         var y = content_rect.y;
         var i = self.first_visible_index;
@@ -580,24 +598,27 @@ pub const List = struct {
             renderer.fillRect(content_rect.x, y, content_rect.width, 1, ' ', item_fg, item_bg, style);
 
             // Draw item text
-            var x = content_rect.x;
+            var col: u16 = 0;
             for (item) |char| {
-                if (x - content_rect.x >= content_rect.width) {
+                if (col >= content_rect.width) {
                     break;
                 }
 
+                const x = addOffsetClamped(content_rect.x, col);
                 renderer.drawChar(x, y, char, item_fg, item_bg, style);
-                x += 1;
+                col += 1;
             }
 
-            y += 1;
+            y = addOffsetClamped(y, 1);
         }
 
         // Draw drop preview indicator for reorder/drops
         if (self.drag_hover_index) |hover| {
             const clamped_hover = @min(hover, total_items);
-            const indicator_y: u16 = content_rect.y + @as(u16, @intCast(clamped_hover - self.first_visible_index));
-            if (indicator_y >= content_rect.y and indicator_y < content_rect.y + content_rect.height) {
+            const relative_hover = clamped_hover - @min(clamped_hover, self.first_visible_index);
+            const indicator_y = addOffsetClamped(content_rect.y, clampUsizeToU16(relative_hover));
+            const content_end_y = @as(u32, content_rect.y) + @as(u32, content_rect.height);
+            if (indicator_y >= content_rect.y and @as(u32, indicator_y) < content_end_y) {
                 const state = if (active_drag != null and active_drag.?.source != self)
                     event_module.DropVisuals.State.valid
                 else
@@ -867,14 +888,14 @@ pub const List = struct {
         const sample_len = @min(total, self.virtual_sample_limit);
         var i: usize = 0;
         while (i < sample_len) : (i += 1) {
-            max_width = @max(max_width, @as(u16, @intCast(self.itemAt(i).len)));
+            max_width = @max(max_width, clampUsizeToU16(self.itemAt(i).len));
         }
 
         // Preferred height depends on number of items, with a minimum of 1
-        const preferred_height = @as(u16, @intCast(@max(1, @min(10, @as(i16, @intCast(total))))));
+        const preferred_height = @as(u16, @intCast(@max(@as(usize, 1), @min(@as(usize, 10), total))));
 
         const border_extra: u16 = if (self.border == .none) 0 else 2;
-        return layout_module.Size.init(max_width + border_extra, preferred_height + border_extra);
+        return layout_module.Size.init(addU16Clamped(max_width, border_extra), addU16Clamped(preferred_height, border_extra));
     }
 
     /// Can focus implementation for List
@@ -1006,6 +1027,64 @@ test "list border draws around content without consuming first row" {
     try std.testing.expectEqual(@as(u21, '╯'), renderer.back.getCell(9, 3).*.codepoint());
     try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(1, 1).*.codepoint());
     try std.testing.expectEqual(@as(usize, 2), list.visible_items_count);
+}
+
+test "list clamps bordered edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.setBorder(.rounded);
+    try list.addItem("alpha");
+    try list.addItem("beta");
+    list.drag_hover_index = 1;
+
+    try list.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 4));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try list.widget.draw(&renderer);
+
+    try std.testing.expectEqual(std.math.maxInt(u16), list.contentRect().x);
+    try std.testing.expectEqual(std.math.maxInt(u16), list.contentRect().y);
+    try std.testing.expectEqual(@as(usize, 2), list.visible_items_count);
+}
+
+test "list preferred size saturates long rows and huge virtual counts" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    const long = try alloc.alloc(u8, @as(usize, std.math.maxInt(u16)) + 128);
+    defer alloc.free(long);
+    @memset(long, 'x');
+
+    try list.addItem(long);
+    list.setBorder(.rounded);
+
+    const stored_size = try list.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), stored_size.width);
+    try std.testing.expectEqual(@as(u16, 3), stored_size.height);
+
+    const Provider = struct {
+        fn count(_: ?*anyopaque) usize {
+            return std.math.maxInt(usize);
+        }
+
+        fn itemAt(_: usize, _: ?*anyopaque) []const u8 {
+            return "virtual";
+        }
+    };
+
+    list.virtual_sample_limit = 1;
+    list.useItemProvider(.{
+        .ctx = null,
+        .count = Provider.count,
+        .item_at = Provider.itemAt,
+    });
+
+    const virtual_size = try list.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 12), virtual_size.height);
 }
 
 test "list drag reorder updates item order and selection" {
