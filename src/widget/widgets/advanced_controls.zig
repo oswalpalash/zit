@@ -54,6 +54,31 @@ fn freeSectionList(list: *std.ArrayListUnmanaged(Accordion.Section), allocator: 
     list.clearRetainingCapacity();
 }
 
+fn normalizedRangeValue(value: f32, min: f32, max: f32) f32 {
+    if (!std.math.isFinite(min) or !std.math.isFinite(max) or !(max > min)) return 0;
+    if (std.math.isPositiveInf(value)) return max;
+    if (!std.math.isFinite(value)) return min;
+    return std.math.clamp(value, min, max);
+}
+
+fn normalizedRangeRatio(value: f32, min: f32, max: f32) f32 {
+    if (!std.math.isFinite(min) or !std.math.isFinite(max) or !(max > min)) return 0;
+    if (std.math.isPositiveInf(value)) return 1;
+    if (!std.math.isFinite(value)) return 0;
+
+    const clamped = std.math.clamp(value, min, max);
+    const ratio = (clamped - min) / (max - min);
+    if (!std.math.isFinite(ratio)) return 0;
+    return std.math.clamp(ratio, 0, 1);
+}
+
+fn normalizedRatingValue(value: f32, max_stars: u8) f32 {
+    const max = @as(f32, @floatFromInt(max_stars));
+    if (std.math.isPositiveInf(value)) return max;
+    if (!std.math.isFinite(value)) return 0;
+    return std.math.clamp(value, 0, max);
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -350,7 +375,7 @@ pub const Slider = struct {
     }
 
     pub fn setValue(self: *Slider, value: f32) void {
-        const clamped = std.math.clamp(value, self.min, self.max);
+        const clamped = normalizedRangeValue(value, self.min, self.max);
         if (clamped != self.value) self.value = clamped;
     }
 
@@ -369,7 +394,7 @@ pub const Slider = struct {
             renderer.drawChar(x, rect.y, '-', self.fg, self.bg, render.Style{});
         }
 
-        const ratio = if (self.max - self.min == 0) 0 else (self.value - self.min) / (self.max - self.min);
+        const ratio = normalizedRangeRatio(self.value, self.min, self.max);
         const pos = track_start + @as(u16, @intFromFloat(@floor(ratio * @as(f32, @floatFromInt(track_end - track_start)))));
         renderer.drawChar(pos, rect.y, '|', render.Color.named(render.NamedColor.white), self.bg, render.Style{ .bold = true });
 
@@ -475,7 +500,7 @@ pub const RatingStars = struct {
     }
 
     pub fn setValue(self: *RatingStars, value: f32) void {
-        self.value = std.math.clamp(value, 0, @as(f32, @floatFromInt(self.max_stars)));
+        self.value = normalizedRatingValue(value, self.max_stars);
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -483,7 +508,7 @@ pub const RatingStars = struct {
         const self: *RatingStars = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        const filled = self.value;
+        const filled = normalizedRatingValue(self.value, self.max_stars);
         var x = rect.x;
         var i: u8 = 0;
         while (i < self.max_stars and x < rect.x + rect.width) : (i += 1) {
@@ -1515,6 +1540,7 @@ pub const WizardStepper = struct {
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
         if (self.steps.items.len == 0) return;
+        const active = @min(self.current, self.steps.items.len - 1);
 
         var cursor = rect.x;
         for (self.steps.items, 0..) |step, idx| {
@@ -1522,15 +1548,16 @@ pub const WizardStepper = struct {
             var buf: [32]u8 = undefined;
             const rendered = std.fmt.bufPrint(&buf, "{d}. {s}", .{ idx + 1, step }) catch buf[0..0];
             const slice = rendered;
-            const fg = if (idx == self.current) render.Color.named(.black) else render.Color.named(.white);
-            const bg = if (idx == self.current) render.Color.named(.green) else render.Color.named(.default);
-            renderer.drawStr(cursor, rect.y, slice[0..@min(slice.len, rect.width - (cursor - rect.x))], fg, bg, render.Style{ .bold = idx == self.current });
+            const selected = idx == active;
+            const fg = if (selected) render.Color.named(.black) else render.Color.named(.white);
+            const bg = if (selected) render.Color.named(.green) else render.Color.named(.default);
+            renderer.drawStr(cursor, rect.y, slice[0..@min(slice.len, rect.width - (cursor - rect.x))], fg, bg, render.Style{ .bold = selected });
             cursor += @as(u16, @intCast(slice.len + 2));
         }
 
         // Progress bar along bottom if height > 1
         if (rect.height > 1 and self.steps.items.len > 0) {
-            const progress = @as(f32, @floatFromInt(self.current + 1)) / @as(f32, @floatFromInt(self.steps.items.len));
+            const progress = @as(f32, @floatFromInt(active + 1)) / @as(f32, @floatFromInt(self.steps.items.len));
             const fill = @as(u16, @intFromFloat(progress * @as(f32, @floatFromInt(rect.width))));
             var x = rect.x;
             while (x < rect.x + rect.width) : (x += 1) {
@@ -1646,6 +1673,26 @@ test "slider clamps values" {
     try std.testing.expectEqual(@as(f32, 10), slider.value);
 }
 
+test "slider normalizes non-finite values and ranges" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    slider.setValue(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+
+    slider.setValue(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 10), slider.value);
+
+    slider.setValue(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+
+    slider.min = std.math.nan(f32);
+    slider.max = 10;
+    slider.setValue(5);
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+}
+
 test "slider mouse maps rendered track to value" {
     const alloc = std.testing.allocator;
     var slider = try Slider.init(alloc, 0, 10);
@@ -1661,12 +1708,48 @@ test "slider mouse maps rendered track to value" {
     try std.testing.expect(slider.value < 10);
 }
 
+test "slider draws with non-finite internal state" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    slider.value = std.math.nan(f32);
+    {
+        var snap = try testing.renderWidget(alloc, &slider.widget, layout_module.Size.init(12, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+
+    slider.min = 0;
+    slider.max = std.math.nan(f32);
+    {
+        var snap = try testing.renderWidget(alloc, &slider.widget, layout_module.Size.init(12, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+    }
+}
+
 test "rating stars increments with input" {
     const alloc = std.testing.allocator;
     var stars = try RatingStars.init(alloc, 3);
     defer stars.deinit();
     stars.setValue(2);
     try std.testing.expectEqual(@as(f32, 2), stars.value);
+}
+
+test "rating stars normalize non-finite values" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 3);
+    defer stars.deinit();
+
+    stars.setValue(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0), stars.value);
+
+    stars.setValue(std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 3), stars.value);
+
+    stars.setValue(-std.math.inf(f32));
+    try std.testing.expectEqual(@as(f32, 0), stars.value);
 }
 
 test "rating stars mouse maps rendered columns to values" {
@@ -1681,6 +1764,17 @@ test "rating stars mouse maps rendered columns to values" {
 
     try std.testing.expect(try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) }));
     try std.testing.expectEqual(@as(f32, 3), stars.value);
+}
+
+test "rating stars draw with non-finite internal state" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 5);
+    defer stars.deinit();
+
+    stars.value = std.math.nan(f32);
+    var snap = try testing.renderWidget(alloc, &stars.widget, layout_module.Size.init(5, 1));
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
 }
 
 test "status bar renders long segments in narrow rects" {
@@ -1716,6 +1810,17 @@ test "pagination advances pages" {
     defer pager.deinit();
     pager.setPage(3);
     try std.testing.expectEqual(@as(usize, 3), pager.current);
+}
+
+test "wizard stepper draws with stale current index" {
+    const alloc = std.testing.allocator;
+    var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+
+    wizard.current = std.math.maxInt(usize);
+    var snap = try testing.renderWidget(alloc, &wizard.widget, layout_module.Size.init(24, 2));
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
 }
 
 test "toolbar mouse selects rendered item row" {
