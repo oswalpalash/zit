@@ -99,6 +99,35 @@ pub const SplitPane = struct {
         self.orientation = orientation;
     }
 
+    fn normalizedRatio(ratio: f32) f32 {
+        if (!std.math.isFinite(ratio)) return 0.5;
+        return std.math.clamp(ratio, 0.0, 1.0);
+    }
+
+    fn scaledSpan(ratio: f32, span: u16) u16 {
+        if (span == 0) return 0;
+        const scaled = normalizedRatio(ratio) * @as(f32, @floatFromInt(span));
+        if (scaled <= 0) return 0;
+        if (scaled >= @as(f32, @floatFromInt(span))) return span;
+        return @intFromFloat(scaled);
+    }
+
+    fn dividerOffset(ratio: f32, span: u16) u16 {
+        if (span == 0) return 0;
+        return @min(scaledSpan(ratio, span), span - 1);
+    }
+
+    fn firstChildSpan(ratio: f32, available: u16, min_child_size: u16) u16 {
+        if (available == 0) return 0;
+        const min_size = @min(min_child_size, available);
+        return @min(available, @max(min_size, scaledSpan(ratio, available)));
+    }
+
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
@@ -108,10 +137,10 @@ pub const SplitPane = struct {
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.palette.color(.text), self.palette.color(.surface), self.palette.style);
 
         if (self.orientation == .horizontal) {
-            const divider_x = rect.x + @as(u16, @intFromFloat(self.ratio * @as(f32, @floatFromInt(rect.width))));
+            const divider_x = addOffsetClamped(rect.x, dividerOffset(self.ratio, rect.width));
             renderer.drawVLine(divider_x, rect.y, rect.height, '│', self.divider_color, self.palette.color(.surface), render.Style{});
         } else {
-            const divider_y = rect.y + @as(u16, @intFromFloat(self.ratio * @as(f32, @floatFromInt(rect.height))));
+            const divider_y = addOffsetClamped(rect.y, dividerOffset(self.ratio, rect.height));
             renderer.drawHLine(rect.x, divider_y, rect.width, '─', self.divider_color, self.palette.color(.surface), render.Style{});
         }
 
@@ -180,23 +209,25 @@ pub const SplitPane = struct {
 
         if (self.orientation == .horizontal) {
             const available = if (rect.width > 1) rect.width - 1 else rect.width;
-            const first_width = @max(self.min_child_size, @as(u16, @intFromFloat(self.ratio * @as(f32, @floatFromInt(available)))));
-            const second_width = if (available > first_width) available - first_width else 0;
+            const first_width = firstChildSpan(self.ratio, available, self.min_child_size);
+            const second_width = available - first_width;
             if (self.first) |child| {
                 try child.layout(layout_module.Rect.init(rect.x, rect.y, first_width, rect.height));
             }
             if (self.second) |child| {
-                try child.layout(layout_module.Rect.init(rect.x + first_width + 1, rect.y, second_width, rect.height));
+                const second_x = addOffsetClamped(addOffsetClamped(rect.x, first_width), if (rect.width > 1) 1 else 0);
+                try child.layout(layout_module.Rect.init(second_x, rect.y, second_width, rect.height));
             }
         } else {
             const available = if (rect.height > 1) rect.height - 1 else rect.height;
-            const first_height = @max(self.min_child_size, @as(u16, @intFromFloat(self.ratio * @as(f32, @floatFromInt(available)))));
-            const second_height = if (available > first_height) available - first_height else 0;
+            const first_height = firstChildSpan(self.ratio, available, self.min_child_size);
+            const second_height = available - first_height;
             if (self.first) |child| {
                 try child.layout(layout_module.Rect.init(rect.x, rect.y, rect.width, first_height));
             }
             if (self.second) |child| {
-                try child.layout(layout_module.Rect.init(rect.x, rect.y + first_height + 1, rect.width, second_height));
+                const second_y = addOffsetClamped(addOffsetClamped(rect.y, first_height), if (rect.height > 1) 1 else 0);
+                try child.layout(layout_module.Rect.init(rect.x, second_y, rect.width, second_height));
             }
         }
     }
@@ -234,6 +265,57 @@ test "split pane lays out children" {
     try std.testing.expectEqual(@as(u16, 30), pane.widget.rect.width);
     try std.testing.expect(left.widget.rect.width > 0);
     try std.testing.expect(right.widget.rect.width > 0);
+}
+
+test "split pane clamps horizontal edge layout and draw coordinates" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    defer second.deinit();
+
+    pane.setFirst(&first.widget);
+    pane.setSecond(&second.widget);
+    pane.min_child_size = std.math.maxInt(u16);
+    pane.setRatio(0.5);
+
+    try pane.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), 0, 4, 1));
+    try std.testing.expectEqual(@as(u16, 3), first.widget.rect.width);
+    try std.testing.expectEqual(@as(u16, 0), second.widget.rect.width);
+    try std.testing.expectEqual(std.math.maxInt(u16), second.widget.rect.x);
+
+    var renderer = try render.Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+    try pane.widget.draw(&renderer);
+}
+
+test "split pane clamps vertical edge layout and invalid ratios" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    defer second.deinit();
+
+    pane.setFirst(&first.widget);
+    pane.setSecond(&second.widget);
+    pane.setOrientation(.vertical);
+    pane.min_child_size = std.math.maxInt(u16);
+    pane.ratio = std.math.nan(f32);
+
+    try pane.widget.layout(layout_module.Rect.init(0, std.math.maxInt(u16), 1, 4));
+    try std.testing.expectEqual(@as(u16, 3), first.widget.rect.height);
+    try std.testing.expectEqual(@as(u16, 0), second.widget.rect.height);
+    try std.testing.expectEqual(std.math.maxInt(u16), second.widget.rect.y);
+
+    var renderer = try render.Renderer.init(alloc, 1, 2);
+    defer renderer.deinit();
+    try pane.widget.draw(&renderer);
 }
 
 test "split pane replacing first child detaches previous child" {
