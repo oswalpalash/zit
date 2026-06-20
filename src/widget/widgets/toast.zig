@@ -89,6 +89,11 @@ pub const ToastManager = struct {
         };
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *ToastManager = @fieldParentPtr("widget", widget_ref);
@@ -105,11 +110,11 @@ pub const ToastManager = struct {
             const colors = self.levelColors(toast.level);
             const text_len = @as(u16, @intCast(@min(toast.message.len, rect.width - 2)));
             const box_height: u16 = 3;
-            const y = rect.y + y_offset;
-            if (y + box_height > rect.y + rect.height) break;
+            if (y_offset > rect.height - box_height) break;
+            const y = addOffsetClamped(rect.y, y_offset);
 
             renderer.drawBox(rect.x, y, rect.width, box_height, .rounded, colors.fg, colors.bg, render.Style{});
-            renderer.drawStr(rect.x + 1, y + 1, toast.message[0..text_len], colors.fg, colors.bg, render.Style{});
+            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(y, 1), toast.message[0..text_len], colors.fg, colors.bg, render.Style{});
             y_offset += box_height;
         }
     }
@@ -159,6 +164,38 @@ test "toast manager drops expired messages" {
 
     manager.tick(2);
     try std.testing.expectEqual(@as(usize, 0), manager.toasts.items.len);
+}
+
+test "toast manager clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var manager = try ToastManager.init(alloc);
+    defer manager.deinit();
+
+    try manager.push("edge", .info, 4);
+    try manager.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try manager.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "toast manager clips stack height without absolute coordinate overflow" {
+    const alloc = std.testing.allocator;
+    var manager = try ToastManager.init(alloc);
+    defer manager.deinit();
+
+    try manager.push("first", .info, 4);
+    try manager.push("second", .success, 4);
+    try manager.widget.layout(layout_module.Rect.init(0, std.math.maxInt(u16), 10, 3));
+
+    var renderer = try render.Renderer.init(alloc, 10, 3);
+    defer renderer.deinit();
+
+    try manager.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
 }
 
 fn toastPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
