@@ -86,6 +86,11 @@ pub const Gauge = struct {
         self.orientation = orientation;
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Gauge = @fieldParentPtr("widget", widget_ref);
@@ -109,17 +114,17 @@ pub const Gauge = struct {
         const inset: u16 = if (self.border == .none) 0 else 1;
         const inner_width = if (rect.width > inset * 2) rect.width - inset * 2 else 0;
         const inner_height = if (rect.height > inset * 2) rect.height - inset * 2 else 0;
-        const inner_x = rect.x + inset;
-        const inner_y = rect.y + inset;
+        const inner_x = addOffsetClamped(rect.x, inset);
+        const inner_y = addOffsetClamped(rect.y, inset);
 
         if (inner_width == 0 or inner_height == 0) return;
 
         if (self.orientation == .horizontal) {
             const filled = @as(u16, @intFromFloat(ratio * @as(f32, @floatFromInt(inner_width))));
             for (0..inner_height) |row| {
-                const y = inner_y + @as(u16, @intCast(row));
+                const y = addOffsetClamped(inner_y, @intCast(row));
                 for (0..inner_width) |col| {
-                    const x = inner_x + @as(u16, @intCast(col));
+                    const x = addOffsetClamped(inner_x, @intCast(col));
                     const is_filled = col < filled;
                     renderer.drawChar(
                         x,
@@ -133,12 +138,12 @@ pub const Gauge = struct {
             }
         } else {
             const filled = @as(u16, @intFromFloat(ratio * @as(f32, @floatFromInt(inner_height))));
-            const start_y = inner_y + inner_height - filled;
+            const start_y = addOffsetClamped(inner_y, inner_height - filled);
             for (0..inner_height) |row| {
-                const y = inner_y + @as(u16, @intCast(row));
+                const y = addOffsetClamped(inner_y, @intCast(row));
                 const is_filled_row = y >= start_y;
                 for (0..inner_width) |col| {
-                    const x = inner_x + @as(u16, @intCast(col));
+                    const x = addOffsetClamped(inner_x, @intCast(col));
                     renderer.drawChar(
                         x,
                         y,
@@ -153,8 +158,8 @@ pub const Gauge = struct {
 
         // Render label centered.
         if (self.label.len > 0 and inner_width > 2 and inner_height > 0) {
-            const text_x = inner_x + (inner_width - @as(u16, @intCast(@min(self.label.len, inner_width)))) / 2;
-            const text_y = inner_y + inner_height / 2;
+            const text_x = addOffsetClamped(inner_x, (inner_width - @as(u16, @intCast(@min(self.label.len, inner_width)))) / 2);
+            const text_y = addOffsetClamped(inner_y, inner_height / 2);
             renderer.drawStr(text_x, text_y, self.label, self.fg, self.bg, render.Style{ .bold = true });
         }
     }
@@ -208,6 +213,27 @@ test "gauge fills proportionally" {
 
     try std.testing.expect(filled > 0);
     try std.testing.expect(empty > 0);
+}
+
+test "gauge clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var gauge = try Gauge.init(alloc);
+    defer gauge.deinit();
+
+    gauge.setRange(0, 100);
+    gauge.setValue(50);
+    try gauge.setLabel("Edge");
+    try gauge.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 8, 5));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try gauge.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).*.codepoint());
+
+    gauge.setOrientation(.vertical);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).*.codepoint());
 }
 
 test "gauge setLabel preserves label on allocation failure" {
