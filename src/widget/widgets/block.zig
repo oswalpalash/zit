@@ -93,6 +93,18 @@ pub const Block = struct {
         self.child = null;
     }
 
+    fn clampCoord(value: u32) u16 {
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        return clampCoord(@as(u32, origin) + @as(u32, offset));
+    }
+
+    fn addSizeClamped(size: u16, delta: u16) u16 {
+        return addOffsetClamped(size, delta);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Block = @fieldParentPtr("widget", widget_ref);
@@ -110,7 +122,7 @@ pub const Block = struct {
         if (self.title) |title_text| {
             const border_inset: u16 = if (self.border == .none) 0 else 1;
             if (rect.width > border_inset * 2 and rect.height > 0) {
-                const start_x = rect.x + border_inset;
+                const start_x = addOffsetClamped(rect.x, border_inset);
                 const available: usize = @intCast(rect.width - border_inset * 2);
                 const slice_len = @min(title_text.len, available);
                 renderer.drawStr(start_x, rect.y, title_text[0..slice_len], self.title_color, self.bg, self.title_style);
@@ -150,13 +162,15 @@ pub const Block = struct {
         const border_thickness: u16 = if (self.border == .none) 0 else 2;
 
         var preferred = layout_module.Size.init(border_thickness, border_thickness);
-        preferred.width += self.padding.left + self.padding.right;
-        preferred.height += self.padding.top + self.padding.bottom;
+        preferred.width = addSizeClamped(preferred.width, self.padding.left);
+        preferred.width = addSizeClamped(preferred.width, self.padding.right);
+        preferred.height = addSizeClamped(preferred.height, self.padding.top);
+        preferred.height = addSizeClamped(preferred.height, self.padding.bottom);
 
         if (self.child) |child| {
             const child_size = try child.*.getPreferredSize();
-            preferred.width += child_size.width;
-            preferred.height += child_size.height;
+            preferred.width = addSizeClamped(preferred.width, child_size.width);
+            preferred.height = addSizeClamped(preferred.height, child_size.height);
         }
 
         // Ensure a minimal footprint for border/title even without a child.
@@ -175,14 +189,16 @@ pub const Block = struct {
 
     fn innerRect(self: *Block, rect: layout_module.Rect) layout_module.Rect {
         const border_inset: u16 = if (self.border == .none) 0 else 1;
-        const x = rect.x + border_inset + self.padding.left;
-        const y = rect.y + border_inset + self.padding.top;
-        const width = if (rect.width > (border_inset * 2 + self.padding.left + self.padding.right))
-            rect.width - (border_inset * 2 + self.padding.left + self.padding.right)
+        const horizontal_inset = @as(u32, border_inset) * 2 + @as(u32, self.padding.left) + @as(u32, self.padding.right);
+        const vertical_inset = @as(u32, border_inset) * 2 + @as(u32, self.padding.top) + @as(u32, self.padding.bottom);
+        const x = addOffsetClamped(addOffsetClamped(rect.x, border_inset), self.padding.left);
+        const y = addOffsetClamped(addOffsetClamped(rect.y, border_inset), self.padding.top);
+        const width = if (@as(u32, rect.width) > horizontal_inset)
+            @as(u16, @intCast(@as(u32, rect.width) - horizontal_inset))
         else
             0;
-        const height = if (rect.height > (border_inset * 2 + self.padding.top + self.padding.bottom))
-            rect.height - (border_inset * 2 + self.padding.top + self.padding.bottom)
+        const height = if (@as(u32, rect.height) > vertical_inset)
+            @as(u16, @intCast(@as(u32, rect.height) - vertical_inset))
         else
             0;
         return layout_module.Rect.init(x, y, width, height);
@@ -253,6 +269,89 @@ test "block draws title inside border" {
 
     const cell = renderer.back.getCell(1, 0).*;
     try std.testing.expectEqual('S', cell.codepoint());
+}
+
+test "block clamps edge title draw coordinates" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+    try block.setTitle("Edge");
+    block.setBorder(.single);
+    try block.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try block.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "block clamps edge child layout coordinates" {
+    const alloc = std.testing.allocator;
+
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        last_rect: ?layout_module.Rect = null,
+        const Self = @This();
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, rect: layout_module.Rect) anyerror!void {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *Self = @fieldParentPtr("widget", widget_ref);
+            self.last_rect = rect;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    var dummy = Dummy{};
+    var block = try Block.init(alloc);
+    defer block.deinit();
+    block.setChild(&dummy.widget);
+    block.setPadding(.{ .left = 8, .right = 8, .top = 8, .bottom = 8 });
+    block.setBorder(.single);
+
+    try block.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4));
+
+    try std.testing.expect(dummy.last_rect != null);
+    const inner = dummy.last_rect.?;
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), inner.x);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), inner.y);
+    try std.testing.expectEqual(@as(u16, 0), inner.width);
+    try std.testing.expectEqual(@as(u16, 0), inner.height);
+}
+
+test "block preferred size saturates large padding" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+
+    block.setPadding(.{
+        .left = std.math.maxInt(u16),
+        .right = std.math.maxInt(u16),
+        .top = std.math.maxInt(u16),
+        .bottom = std.math.maxInt(u16),
+    });
+
+    const preferred = try block.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), preferred.width);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), preferred.height);
 }
 
 test "block setTitle preserves title on allocation failure" {
