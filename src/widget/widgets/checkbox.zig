@@ -106,6 +106,11 @@ pub const Checkbox = struct {
         self.widget.markDirty();
     }
 
+    fn addOffsetClamped(origin: u16, offset: u16) u16 {
+        const value = @as(u32, origin) + @as(u32, offset);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
     /// Draw implementation for Checkbox
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
@@ -145,8 +150,8 @@ pub const Checkbox = struct {
         // Draw checkbox inside the assigned rect so visual and mouse bounds match.
         if (rect.width >= 3) {
             renderer.drawChar(rect.x, rect.y, '[', fg, bg, render.Style{});
-            renderer.drawChar(rect.x + 1, rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});
-            renderer.drawChar(rect.x + 2, rect.y, ']', fg, bg, render.Style{});
+            renderer.drawChar(addOffsetClamped(rect.x, 1), rect.y, if (self.checked) 'X' else ' ', fg, bg, render.Style{});
+            renderer.drawChar(addOffsetClamped(rect.x, 2), rect.y, ']', fg, bg, render.Style{});
         }
 
         // Draw label
@@ -155,7 +160,7 @@ pub const Checkbox = struct {
             var truncated_text: [256]u8 = undefined;
             const label_width = available_width;
             const clipped = text_metrics.clipWithEllipsis(self.label, label_width, &truncated_text);
-            renderer.drawStr(rect.x + 4, rect.y, clipped.text, fg, bg, render.Style{});
+            renderer.drawStr(addOffsetClamped(rect.x, 4), rect.y, clipped.text, fg, bg, render.Style{});
         }
     }
 
@@ -289,6 +294,22 @@ test "checkbox does not ellipsize label that exactly fits preferred width" {
     for (expected, 0..) |char, idx| {
         try std.testing.expectEqual(@as(u21, char), renderer.back.getCell(@as(u16, @intCast(idx + 5)), 0).*.codepoint());
     }
+}
+
+test "checkbox clamps edge draw coordinates" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Edge");
+    defer checkbox.deinit();
+
+    checkbox.setChecked(true);
+    try checkbox.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16), 8, 1));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+    try checkbox.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).*.codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).*.codepoint());
 }
 
 test "checkbox ignores presses when bounds are zero" {
