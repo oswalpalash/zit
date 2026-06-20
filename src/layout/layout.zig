@@ -1247,14 +1247,14 @@ pub const Center = struct {
             if (self.horizontal) {
                 // Safely calculate the centered position
                 if (rect.width > child_size.width) {
-                    x = rect.x + (rect.width - child_size.width) / 2;
+                    x = saturatingAdd(rect.x, (rect.width - child_size.width) / 2);
                 }
             }
 
             if (self.vertical) {
                 // Safely calculate the centered position
                 if (rect.height > child_size.height) {
-                    y = rect.y + (rect.height - child_size.height) / 2;
+                    y = saturatingAdd(rect.y, (rect.height - child_size.height) / 2);
                 }
             }
 
@@ -1863,6 +1863,49 @@ test "rect arithmetic saturates intermediate overflow" {
     try std.testing.expectEqual(@as(u16, 65_200), overlap.y);
     try std.testing.expectEqual(@as(u16, 200), overlap.width);
     try std.testing.expectEqual(@as(u16, 300), overlap.height);
+}
+
+test "center layout saturates far-edge child offsets" {
+    const allocator = std.testing.allocator;
+    const max = std.math.maxInt(u16);
+
+    const RecordingElement = struct {
+        const Self = @This();
+
+        rect: Rect = Rect.init(0, 0, 0, 0),
+
+        fn layout(_: *anyopaque, constraints: Constraints) Size {
+            return constraints.constrain(2, 2);
+        }
+
+        fn render(ctx: *anyopaque, _: *renderer_mod.Renderer, rect: Rect) void {
+            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
+            self.rect = rect;
+        }
+
+        fn asElement(self: *Self) LayoutElement {
+            return .{
+                .layoutFn = Self.layout,
+                .renderFn = Self.render,
+                .ctx = @ptrCast(@alignCast(self)),
+            };
+        }
+    };
+
+    var child = RecordingElement{};
+    var center = try Center.init(allocator, child.asElement(), true, true);
+    defer center.deinit();
+
+    var renderer = try renderer_mod.Renderer.init(allocator, 1, 1);
+    defer renderer.deinit();
+
+    const element = center.asElement();
+    element.render(&renderer, Rect.init(max - 1, max - 1, 8, 8));
+
+    try std.testing.expectEqual(max, child.rect.x);
+    try std.testing.expectEqual(max, child.rect.y);
+    try std.testing.expectEqual(@as(u16, 2), child.rect.width);
+    try std.testing.expectEqual(@as(u16, 2), child.rect.height);
 }
 
 test "flex layout addChild is transactional when scratch allocation fails" {
