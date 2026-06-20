@@ -1302,7 +1302,13 @@ pub const DragManager = struct {
     }
 
     fn pointInRect(x: u16, y: u16, rect: layout.Rect) bool {
-        return x >= rect.x and y >= rect.y and x < rect.x + rect.width and y < rect.y + rect.height;
+        const x_u32: u32 = x;
+        const y_u32: u32 = y;
+        const rect_x: u32 = rect.x;
+        const rect_y: u32 = rect.y;
+        const rect_right = rect_x + @as(u32, rect.width);
+        const rect_bottom = rect_y + @as(u32, rect.height);
+        return x_u32 >= rect_x and y_u32 >= rect_y and x_u32 < rect_right and y_u32 < rect_bottom;
     }
 };
 
@@ -1767,6 +1773,53 @@ test "drop targets gate acceptance" {
     try mgr.end(6, 6, null);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
     try std.testing.expect(queue.queue.items[3].data.drop.accepted);
+}
+
+test "drag manager hit testing accepts edge coordinates above u16 rect end" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const dummy_vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: @import("../layout/layout.zig").Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!@import("../layout/layout.zig").Size {
+                return @import("../layout/layout.zig").Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return false;
+            }
+        }.can,
+    };
+
+    var stub = widget.Widget.init(&dummy_vtable);
+    stub.rect = layout.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 4, 4);
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.registerTarget(.{
+        .widget = &stub,
+        .accept = struct {
+            fn accept(_: *widget.Widget, _: DragEventData) bool {
+                return true;
+            }
+        }.accept,
+        .on_drop = null,
+    });
+
+    try std.testing.expect(mgr.hitTest(std.math.maxInt(u16), std.math.maxInt(u16)) != null);
 }
 
 test "drag manager begin preserves active drag on event allocation failure" {
