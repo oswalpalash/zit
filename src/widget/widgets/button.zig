@@ -68,6 +68,8 @@ pub const Button = struct {
 
     /// Set the button label
     pub fn setText(self: *Button, text: []const u8) !void {
+        if (std.mem.eql(u8, self.button_text, text)) return;
+
         const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.button_text);
         self.button_text = next;
@@ -77,6 +79,11 @@ pub const Button = struct {
 
     /// Set the button colors
     pub fn setColors(self: *Button, fg: render.Color, bg: render.Color, focused_fg: render.Color, focused_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.focused_fg, focused_fg) and
+            std.meta.eql(self.focused_bg, focused_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.focused_fg = focused_fg;
@@ -86,6 +93,9 @@ pub const Button = struct {
 
     /// Set the button disabled colors
     pub fn setDisabledColors(self: *Button, disabled_fg: render.Color, disabled_bg: render.Color) void {
+        if (std.meta.eql(self.disabled_fg, disabled_fg) and
+            std.meta.eql(self.disabled_bg, disabled_bg)) return;
+
         self.disabled_fg = disabled_fg;
         self.disabled_bg = disabled_bg;
         self.widget.markDirty();
@@ -119,6 +129,16 @@ pub const Button = struct {
     /// Apply theme defaults for button colors and text style.
     pub fn setTheme(self: *Button, theme_value: theme.Theme) void {
         const colors = theme.controlColors(theme_value);
+        const changed = !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.focused_fg, colors.focused_fg) or
+            !std.meta.eql(self.focused_bg, colors.focused_bg) or
+            !std.meta.eql(self.disabled_fg, colors.disabled_fg) or
+            !std.meta.eql(self.disabled_bg, colors.disabled_bg) or
+            !std.meta.eql(self.style, theme_value.style);
+
+        if (!changed) return;
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.focused_fg = colors.focused_fg;
@@ -279,6 +299,64 @@ test "button setText preserves label on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, button.setText("Replacement"));
     try std.testing.expectEqualStrings("Stable", button.button_text);
+}
+
+test "button visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Save");
+    defer button.deinit();
+
+    button.widget.clearDirty();
+    try button.setText("Save");
+    try std.testing.expect(!button.widget.dirty);
+    button.widget.clearDirty();
+    try button.setText("Deploy");
+    try std.testing.expect(button.widget.dirty);
+    try std.testing.expectEqualStrings("Deploy", button.button_text);
+
+    button.widget.clearDirty();
+    button.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(button.widget.dirty);
+    button.widget.clearDirty();
+    button.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!button.widget.dirty);
+
+    button.widget.clearDirty();
+    button.setDisabledColors(render.Color.named(.bright_black), render.Color.named(.blue));
+    try std.testing.expect(button.widget.dirty);
+    button.widget.clearDirty();
+    button.setDisabledColors(render.Color.named(.bright_black), render.Color.named(.blue));
+    try std.testing.expect(!button.widget.dirty);
+
+    button.widget.clearDirty();
+    button.setBorder(.rounded);
+    try std.testing.expect(button.widget.dirty);
+    button.widget.clearDirty();
+    button.setBorder(.rounded);
+    try std.testing.expect(!button.widget.dirty);
+
+    button.widget.clearDirty();
+    button.setTheme(theme.Theme.light());
+    try std.testing.expect(button.widget.dirty);
+    button.widget.clearDirty();
+    button.setTheme(theme.Theme.light());
+    try std.testing.expect(!button.widget.dirty);
+}
+
+test "button setText no-op does not allocate" {
+    const alloc = std.testing.allocator;
+    var button = try Button.init(alloc, "Stable");
+    defer button.deinit();
+
+    button.widget.clearDirty();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = button.allocator;
+    button.allocator = failing.allocator();
+    defer button.allocator = original_allocator;
+
+    try button.setText("Stable");
+    try std.testing.expectEqualStrings("Stable", button.button_text);
+    try std.testing.expect(!button.widget.dirty);
 }
 
 test "button triggers callback on press" {
