@@ -214,6 +214,7 @@ pub const Table = struct {
             .resizable = resizable,
         });
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Enable or disable sorting on a given column.
@@ -226,7 +227,9 @@ pub const Table = struct {
     pub fn setColumnWidth(self: *Table, column: usize, width: u16) void {
         if (column >= self.columns.items.len) return;
         const clamped = @max(@as(u16, 3), width);
+        if (self.columns.items[column].width == clamped) return;
         self.columns.items[column].width = clamped;
+        self.widget.markDirty();
     }
 
     /// Sort the table by the given column (or clear sorting when null).
@@ -234,9 +237,11 @@ pub const Table = struct {
         if (column) |idx| {
             if (idx >= self.columns.items.len or !self.columns.items[idx].sortable) return;
         }
+        if (self.sort_column == column and self.sort_descending == descending) return;
         self.sort_column = column;
         self.sort_descending = descending;
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Toggle sort state for the given column.
@@ -249,6 +254,7 @@ pub const Table = struct {
             self.sort_descending = false;
         }
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Group rows by the provided column (null disables grouping).
@@ -256,8 +262,10 @@ pub const Table = struct {
         if (column) |idx| {
             if (idx >= self.columns.items.len) return;
         }
+        if (self.grouping_column == column) return;
         self.grouping_column = column;
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Resize a resizable column by the provided delta.
@@ -270,7 +278,9 @@ pub const Table = struct {
         if (column >= self.columns.items.len) return;
         if (!self.columns.items[column].resizable) return;
         const updated = std.math.clamp(@as(i32, @intCast(base_width)) + delta, 3, @as(i32, std.math.maxInt(u16)));
+        if (self.columns.items[column].width == @as(u16, @intCast(updated))) return;
         self.columns.items[column].width = @intCast(updated);
+        self.widget.markDirty();
     }
 
     /// Add a row to the table
@@ -304,6 +314,7 @@ pub const Table = struct {
 
         try self.rows.append(self.allocator, new_row);
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Set a cell value
@@ -325,6 +336,7 @@ pub const Table = struct {
             self.allocator.free(previous);
         }
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     fn isEditing(self: *const Table) bool {
@@ -482,15 +494,18 @@ pub const Table = struct {
         } else {
             self.clampScroll();
         }
+        self.widget.markDirty();
     }
 
     /// Clear all rows from the table
     pub fn clearRows(self: *Table) void {
+        const had_visible_state = self.dataRowCount() > 0 or self.selected_row != null or self.first_visible_row != 0 or self.view_rows.items.len > 0;
         if (self.row_provider != null) {
             self.selected_row = null;
             self.first_visible_row = 0;
             self.resetTypeahead();
             self.view_dirty = true;
+            if (had_visible_state) self.widget.markDirty();
             return;
         }
         // Free all row cell text
@@ -514,6 +529,7 @@ pub const Table = struct {
         if (self.string_intern) |*intern| {
             intern.clearRetainingCapacity();
         }
+        if (had_visible_state) self.widget.markDirty();
     }
 
     fn clearViewRows(self: *Table) void {
@@ -543,6 +559,8 @@ pub const Table = struct {
         }
 
         const old_selected = self.selected_row;
+        const old_column = self.selected_column;
+        const old_first_visible = self.first_visible_row;
         if (self.isEditing() and (self.editing_row.? != row)) {
             self.cancelEdit();
         }
@@ -559,6 +577,9 @@ pub const Table = struct {
         // Call the row selected callback
         if (old_selected != self.selected_row and self.on_row_select != null and self.selected_row != null) {
             self.on_row_select.?(self.selected_row.?);
+        }
+        if (old_selected != self.selected_row or old_column != self.selected_column or old_first_visible != self.first_visible_row) {
+            self.widget.markDirty();
         }
     }
 
@@ -618,35 +639,55 @@ pub const Table = struct {
 
     /// Set the show headers flag
     pub fn setShowHeaders(self: *Table, show_headers: bool) void {
+        if (self.show_headers == show_headers) return;
         self.show_headers = show_headers;
+        self.widget.markDirty();
     }
 
     /// Set the show grid flag
     pub fn setShowGrid(self: *Table, show_grid: bool) void {
+        if (self.show_grid == show_grid) return;
         self.show_grid = show_grid;
+        self.widget.markDirty();
     }
 
     /// Set the table colors
     pub fn setColors(self: *Table, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     /// Set the header colors
     pub fn setHeaderColors(self: *Table, header_fg: render.Color, header_bg: render.Color) void {
+        if (std.meta.eql(self.header_fg, header_fg) and std.meta.eql(self.header_bg, header_bg)) return;
         self.header_fg = header_fg;
         self.header_bg = header_bg;
+        self.widget.markDirty();
     }
 
     /// Set the selected row colors
     pub fn setSelectedColors(self: *Table, selected_fg: render.Color, selected_bg: render.Color) void {
+        if (std.meta.eql(self.selected_fg, selected_fg) and std.meta.eql(self.selected_bg, selected_bg)) return;
         self.selected_fg = selected_fg;
         self.selected_bg = selected_bg;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for table colors.
     pub fn setTheme(self: *Table, theme_value: theme.Theme) void {
         const colors = theme.tableColors(theme_value);
+        if (std.meta.eql(self.fg, colors.fg) and
+            std.meta.eql(self.bg, colors.bg) and
+            std.meta.eql(self.header_fg, colors.header_fg) and
+            std.meta.eql(self.header_bg, colors.header_bg) and
+            std.meta.eql(self.selected_fg, colors.selected_fg) and
+            std.meta.eql(self.selected_bg, colors.selected_bg) and
+            std.meta.eql(self.focused_fg, colors.focused_fg) and
+            std.meta.eql(self.focused_bg, colors.focused_bg) and
+            std.meta.eql(self.grid_fg, colors.grid_fg)) return;
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.header_fg = colors.header_fg;
@@ -656,6 +697,7 @@ pub const Table = struct {
         self.focused_fg = colors.focused_fg;
         self.focused_bg = colors.focused_bg;
         self.grid_fg = colors.grid_fg;
+        self.widget.markDirty();
     }
 
     /// Set the on-row-selected callback
@@ -665,7 +707,9 @@ pub const Table = struct {
 
     /// Set the border style
     pub fn setBorder(self: *Table, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     /// Configure how long to keep accumulating typeahead search input.
@@ -697,14 +741,17 @@ pub const Table = struct {
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
         self.cancelEdit();
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     /// Return to owned row storage.
     pub fn clearRowProvider(self: *Table) void {
+        if (self.row_provider == null) return;
         self.row_provider = null;
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
         self.cancelEdit();
         self.view_dirty = true;
+        self.widget.markDirty();
     }
 
     fn rowCount(self: *Table) usize {
@@ -1017,6 +1064,7 @@ pub const Table = struct {
                     const table = @as(*Table, @ptrCast(@alignCast(ctx.?)));
                     table.scroll_driver.current = value;
                     table.syncScrollFromDriver();
+                    table.widget.markDirty();
                 }
             }.apply;
 
@@ -1031,10 +1079,13 @@ pub const Table = struct {
             ) catch {
                 self.scroll_driver.snap(clamped);
                 self.first_visible_row = scrollIndexFromValue(clamped, max_offset);
+                if (clamped != start) self.widget.markDirty();
             };
+            if (clamped != start) self.widget.markDirty();
         } else {
             self.scroll_driver.snap(clamped);
             self.first_visible_row = scrollIndexFromValue(clamped, max_offset);
+            if (clamped != start) self.widget.markDirty();
         }
     }
 
@@ -1675,6 +1726,149 @@ test "table typeahead search finds matching rows" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try table.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), table.selected_row.?); // Zeta
+}
+
+test "table visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    table.widget.clearDirty();
+    try table.addColumn("Name", 8, true);
+    try std.testing.expect(table.widget.dirty);
+
+    table.widget.clearDirty();
+    try table.addRow(&.{"alpha"});
+    try std.testing.expect(table.widget.dirty);
+
+    table.widget.clearDirty();
+    try table.setCell(0, 0, "beta", null, null);
+    try std.testing.expect(table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setColumnWidth(0, 12);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setColumnWidth(0, 12);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.sortBy(0, false);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.sortBy(0, false);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.groupBy(0);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.groupBy(0);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setShowHeaders(false);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setShowHeaders(false);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setShowGrid(false);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setShowGrid(false);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setHeaderColors(render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setHeaderColors(render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setSelectedColors(render.Color.named(.yellow), render.Color.named(.blue));
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setSelectedColors(render.Color.named(.yellow), render.Color.named(.blue));
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setTheme(theme.Theme.light());
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setTheme(theme.Theme.light());
+    try std.testing.expect(!table.widget.dirty);
+
+    table.widget.clearDirty();
+    table.setBorder(.rounded);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setBorder(.rounded);
+    try std.testing.expect(!table.widget.dirty);
+}
+
+test "table selection and provider changes mark dirty" {
+    const Provider = struct {
+        fn rowCount(_: ?*anyopaque) usize {
+            return 2;
+        }
+
+        fn cellAt(row: usize, col: usize, _: ?*anyopaque) TableCellView {
+            _ = col;
+            return .{ .text = if (row == 0) "virtual one" else "virtual two" };
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addRow(&.{"one"});
+    try table.addRow(&.{"two"});
+    try table.addRow(&.{"three"});
+    try table.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+
+    table.widget.clearDirty();
+    table.setSelectedRow(1);
+    try std.testing.expect(table.widget.dirty);
+    table.widget.clearDirty();
+    table.setSelectedRow(1);
+    try std.testing.expect(!table.widget.dirty);
+
+    table.first_visible_row = 0;
+    table.scroll_driver.snap(0);
+    table.selected_row = 2;
+    table.widget.clearDirty();
+    table.setSelectedRow(2);
+    try std.testing.expect(table.widget.dirty);
+    try std.testing.expect(table.first_visible_row > 0);
+
+    table.widget.clearDirty();
+    table.useRowProvider(.{
+        .row_count = Provider.rowCount,
+        .cell_at = Provider.cellAt,
+    });
+    try std.testing.expect(table.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), table.dataRowCount());
+
+    table.widget.clearDirty();
+    table.clearRowProvider();
+    try std.testing.expect(table.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), table.dataRowCount());
+
+    table.widget.clearDirty();
+    table.clearRowProvider();
+    try std.testing.expect(!table.widget.dirty);
 }
 
 test "table border preserves header and row content" {
