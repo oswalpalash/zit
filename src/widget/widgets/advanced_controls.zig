@@ -34,6 +34,17 @@ fn freePartList(list: *std.ArrayListUnmanaged(Breadcrumbs.Part), allocator: std.
     list.clearRetainingCapacity();
 }
 
+fn partListsEql(existing: []const Breadcrumbs.Part, next: []const Breadcrumbs.Part) bool {
+    if (existing.len != next.len) return false;
+    for (existing, next) |a, b| {
+        if (!std.mem.eql(u8, a.label, b.label)) return false;
+        if (a.icon == null and b.icon == null) continue;
+        if (a.icon == null or b.icon == null) return false;
+        if (!std.mem.eql(u8, a.icon.?, b.icon.?)) return false;
+    }
+    return true;
+}
+
 fn appendOwnedSection(list: *std.ArrayListUnmanaged(Accordion.Section), allocator: std.mem.Allocator, section: Accordion.Section) !void {
     try list.ensureUnusedCapacity(allocator, 1);
     const title = try allocator.dupe(u8, section.title);
@@ -927,6 +938,7 @@ pub const Breadcrumbs = struct {
     }
 
     pub fn setParts(self: *Breadcrumbs, parts: []const Part) !void {
+        const changed = !partListsEql(self.parts.items, parts);
         var next = std.ArrayListUnmanaged(Part).empty;
         errdefer {
             freePartList(&next, self.allocator);
@@ -940,6 +952,7 @@ pub const Breadcrumbs = struct {
         freePartList(&self.parts, self.allocator);
         self.parts.deinit(self.allocator);
         self.parts = next;
+        if (changed) self.widget.markDirty();
     }
 
     fn segmentWidth(part: Part) u16 {
@@ -1118,6 +1131,7 @@ pub const Pagination = struct {
         const clamped = if (page < 1) 1 else if (page > self.total) self.total else page;
         if (clamped != self.current) {
             self.current = clamped;
+            self.widget.markDirty();
             if (self.on_change) |cb| cb(self.current);
         }
     }
@@ -1262,7 +1276,9 @@ pub const CommandPalette = struct {
     }
 
     pub fn setQuery(self: *CommandPalette, query: []const u8) void {
+        const changed = !std.mem.eql(u8, self.query, query);
         self.query = query;
+        if (changed) self.widget.markDirty();
     }
 
     fn clampSelection(self: *CommandPalette) void {
@@ -1652,7 +1668,10 @@ pub const WizardStepper = struct {
     }
 
     pub fn setStep(self: *WizardStepper, idx: usize) void {
-        if (idx < self.steps.items.len) self.current = idx;
+        if (idx < self.steps.items.len and self.current != idx) {
+            self.current = idx;
+            self.widget.markDirty();
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -2293,6 +2312,30 @@ test "command palette draw clamps stale selection" {
     try std.testing.expectEqual(@as(usize, 1), palette.selected);
 }
 
+test "command palette marks dirty when query changes" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{ "Open file", "Run tests" });
+    defer palette.deinit();
+
+    try palette.widget.layout(layout_module.Rect.init(0, 0, 24, 6));
+    var renderer = try render.Renderer.init(alloc, 24, 6);
+    defer renderer.deinit();
+
+    try palette.widget.draw(&renderer);
+    try std.testing.expect(!palette.widget.dirty);
+
+    palette.setQuery("");
+    try std.testing.expect(!palette.widget.dirty);
+
+    palette.setQuery("run");
+    try std.testing.expect(palette.widget.dirty);
+    try palette.widget.draw(&renderer);
+    try std.testing.expect(!palette.widget.dirty);
+
+    palette.setQuery("run");
+    try std.testing.expect(!palette.widget.dirty);
+}
+
 test "command palette ignores execution without commands" {
     const alloc = std.testing.allocator;
     var palette = try CommandPalette.init(alloc, &[_][]const u8{});
@@ -2317,6 +2360,32 @@ test "wizard stepper draws with stale current index" {
     var snap = try testing.renderWidget(alloc, &wizard.widget, layout_module.Size.init(24, 2));
     defer snap.deinit(alloc);
     try snap.expectWellFormed();
+}
+
+test "wizard stepper marks dirty when current step changes" {
+    const alloc = std.testing.allocator;
+    var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+
+    try wizard.widget.layout(layout_module.Rect.init(0, 0, 30, 2));
+    var renderer = try render.Renderer.init(alloc, 30, 2);
+    defer renderer.deinit();
+
+    try wizard.widget.draw(&renderer);
+    try std.testing.expect(!wizard.widget.dirty);
+
+    wizard.setStep(0);
+    try std.testing.expect(!wizard.widget.dirty);
+
+    wizard.setStep(2);
+    try std.testing.expect(wizard.widget.dirty);
+    try wizard.widget.draw(&renderer);
+    try std.testing.expect(!wizard.widget.dirty);
+
+    wizard.setStep(2);
+    try std.testing.expect(!wizard.widget.dirty);
+    wizard.setStep(99);
+    try std.testing.expect(!wizard.widget.dirty);
 }
 
 test "wizard stepper draws narrow edge rectangles" {
@@ -2441,6 +2510,25 @@ test "breadcrumbs mouse clicks rendered segment only" {
     try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
 }
 
+test "breadcrumbs marks dirty when parts change" {
+    const alloc = std.testing.allocator;
+    var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{ "home", "repo" });
+    defer crumbs.deinit();
+
+    try crumbs.widget.layout(layout_module.Rect.init(0, 0, 24, 1));
+    var renderer = try render.Renderer.init(alloc, 24, 1);
+    defer renderer.deinit();
+
+    try crumbs.widget.draw(&renderer);
+    try std.testing.expect(!crumbs.widget.dirty);
+
+    try crumbs.setParts(&[_]Breadcrumbs.Part{ .{ .label = "home" }, .{ .label = "repo" } });
+    try std.testing.expect(!crumbs.widget.dirty);
+
+    try crumbs.setParts(&[_]Breadcrumbs.Part{ .{ .label = "home" }, .{ .label = "docs", .icon = "*" } });
+    try std.testing.expect(crumbs.widget.dirty);
+}
+
 test "breadcrumbs clamp far-edge render coordinates" {
     const alloc = std.testing.allocator;
     var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{ "home", "repo" });
@@ -2503,6 +2591,35 @@ test "pagination mouse activates rendered arrows" {
 
     try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 2), pager.current);
+}
+
+test "pagination marks dirty when page changes" {
+    const alloc = std.testing.allocator;
+    var pager = try Pagination.init(alloc, 5);
+    defer pager.deinit();
+
+    try pager.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+
+    try pager.widget.draw(&renderer);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.setPage(1);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.setPage(3);
+    try std.testing.expect(pager.widget.dirty);
+    try pager.widget.draw(&renderer);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.setPage(99);
+    try std.testing.expect(pager.widget.dirty);
+    try pager.widget.draw(&renderer);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.setPage(99);
+    try std.testing.expect(!pager.widget.dirty);
 }
 
 test "pagination navigation saturates stale current state" {
