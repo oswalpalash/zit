@@ -90,6 +90,7 @@ pub const ContextMenu = struct {
 
     pub fn setMaxVisible(self: *ContextMenu, count: usize) void {
         self.max_visible = @max(@as(usize, 1), count);
+        self.clampSelection();
     }
 
     pub fn openAt(self: *ContextMenu, x: u16, y: u16) void {
@@ -158,6 +159,7 @@ pub const ContextMenu = struct {
         switch (event) {
             .key => |key_event| {
                 if (!self.widget.focused) return false;
+                self.clampSelection();
                 switch (key_event.key) {
                     input.KeyCode.UP => {
                         if (self.selected > 0) self.selected -= 1;
@@ -248,6 +250,15 @@ pub const ContextMenu = struct {
         return @intCast(@min(visible_rows +| 2, @as(usize, std.math.maxInt(u16))));
     }
 
+    fn clampSelection(self: *ContextMenu) void {
+        const visible_items = @min(self.items.items.len, self.max_visible);
+        if (visible_items == 0) {
+            self.selected = 0;
+        } else if (self.selected >= visible_items) {
+            self.selected = visible_items - 1;
+        }
+    }
+
     fn activateSelected(self: *ContextMenu) !bool {
         if (self.items.items.len == 0 or self.selected >= self.items.items.len) return false;
         const item = self.items.items[self.selected];
@@ -309,6 +320,44 @@ test "context menu selection via keyboard" {
     try std.testing.expect(try menu.widget.handleEvent(enter));
     try std.testing.expectEqual(@as(usize, 1), selection);
     try std.testing.expect(!menu.open);
+}
+
+test "context menu clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    try menu.addItem("Three", true, null);
+    menu.setMaxVisible(2);
+    menu.openAt(0, 0);
+    menu.widget.setFocus(true);
+    menu.selected = std.math.maxInt(usize);
+
+    const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
+    try std.testing.expect(try menu.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), menu.selected);
+
+    const up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) };
+    try std.testing.expect(try menu.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+}
+
+test "context menu keyboard handles empty items" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    menu.openAt(0, 0);
+    menu.widget.setFocus(true);
+    menu.selected = std.math.maxInt(usize);
+
+    const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
+    try std.testing.expect(try menu.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+
+    const enter = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) };
+    try std.testing.expect(!try menu.widget.handleEvent(enter));
+    try std.testing.expect(menu.open);
 }
 
 fn contextMenuAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
