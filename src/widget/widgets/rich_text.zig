@@ -87,8 +87,37 @@ pub const RichText = struct {
     }
 
     pub fn setBoxStyle(self: *RichText, style: render.BoxStyle) void {
+        if (self.box_style) |current| {
+            if (boxStyleEql(current, style)) return;
+        }
         self.box_style = style;
         self.widget.markDirty();
+    }
+
+    fn boxStyleEql(a: render.BoxStyle, b: render.BoxStyle) bool {
+        return a.border == b.border and
+            std.meta.eql(a.border_color, b.border_color) and
+            std.meta.eql(a.background, b.background) and
+            std.meta.eql(a.style, b.style) and
+            std.meta.eql(a.fill_style, b.fill_style) and
+            std.meta.eql(a.shadow, b.shadow) and
+            gradientEql(a.gradient, b.gradient);
+    }
+
+    fn gradientEql(a: ?render.GradientFill, b: ?render.GradientFill) bool {
+        if (a == null and b == null) return true;
+        if (a == null or b == null) return false;
+
+        const left = a.?;
+        const right = b.?;
+        if (left.direction != right.direction or left.stops.len != right.stops.len) return false;
+
+        for (left.stops, right.stops) |left_stop, right_stop| {
+            if (left_stop.position != right_stop.position or !std.meta.eql(left_stop.color, right_stop.color)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -301,6 +330,10 @@ test "rich text marks dirty when rendering options change" {
 
     text.setBoxStyle(render.BoxStyle{ .border = .rounded, .background = render.Color{ .named_color = render.NamedColor.black } });
     try std.testing.expect(text.widget.dirty);
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+    text.setBoxStyle(render.BoxStyle{ .border = .rounded, .background = render.Color{ .named_color = render.NamedColor.black } });
+    try std.testing.expect(!text.widget.dirty);
 }
 
 test "rich text clamps far-edge render coordinates" {
