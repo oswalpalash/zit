@@ -65,6 +65,8 @@ pub const Label = struct {
 
     /// Set the label text
     pub fn setText(self: *Label, text: []const u8) !void {
+        if (std.mem.eql(u8, self.text, text)) return;
+
         const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
         self.text = next;
@@ -81,6 +83,8 @@ pub const Label = struct {
 
     /// Set the text color
     pub fn setColor(self: *Label, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.widget.markDirty();
@@ -88,6 +92,8 @@ pub const Label = struct {
 
     /// Set the text style
     pub fn setStyle(self: *Label, style: render.Style) void {
+        if (std.meta.eql(self.style, style)) return;
+
         self.style = style;
         self.widget.markDirty();
     }
@@ -95,6 +101,12 @@ pub const Label = struct {
     /// Apply theme defaults for label colors and text style.
     pub fn setTheme(self: *Label, theme_value: theme.Theme) void {
         const colors = theme.textColors(theme_value);
+        const changed = !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.style, colors.style);
+
+        if (!changed) return;
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.style = colors.style;
@@ -253,6 +265,64 @@ test "label setText preserves text on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, label.setText("replacement"));
     try std.testing.expectEqualStrings("stable", label.text);
+}
+
+test "label visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "stable");
+    defer label.deinit();
+
+    label.widget.clearDirty();
+    try label.setText("stable");
+    try std.testing.expect(!label.widget.dirty);
+    label.widget.clearDirty();
+    try label.setText("changed");
+    try std.testing.expect(label.widget.dirty);
+    try std.testing.expectEqualStrings("changed", label.text);
+
+    label.widget.clearDirty();
+    label.setAlignment(.center);
+    try std.testing.expect(label.widget.dirty);
+    label.widget.clearDirty();
+    label.setAlignment(.center);
+    try std.testing.expect(!label.widget.dirty);
+
+    label.widget.clearDirty();
+    label.setColor(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(label.widget.dirty);
+    label.widget.clearDirty();
+    label.setColor(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(!label.widget.dirty);
+
+    label.widget.clearDirty();
+    label.setStyle(render.Style{ .bold = true });
+    try std.testing.expect(label.widget.dirty);
+    label.widget.clearDirty();
+    label.setStyle(render.Style{ .bold = true });
+    try std.testing.expect(!label.widget.dirty);
+
+    label.widget.clearDirty();
+    label.setTheme(theme.Theme.light());
+    try std.testing.expect(label.widget.dirty);
+    label.widget.clearDirty();
+    label.setTheme(theme.Theme.light());
+    try std.testing.expect(!label.widget.dirty);
+}
+
+test "label setText no-op does not allocate" {
+    const alloc = std.testing.allocator;
+    var label = try Label.init(alloc, "stable");
+    defer label.deinit();
+
+    label.widget.clearDirty();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = label.allocator;
+    label.allocator = failing.allocator();
+    defer label.allocator = original_allocator;
+
+    try label.setText("stable");
+    try std.testing.expectEqualStrings("stable", label.text);
+    try std.testing.expect(!label.widget.dirty);
 }
 
 test "label does not ellipsize text that exactly fits" {
