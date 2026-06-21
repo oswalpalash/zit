@@ -63,11 +63,13 @@ pub const ToastManager = struct {
         };
         self.toasts.appendAssumeCapacity(toast);
         self.trimOverflow();
+        self.widget.markDirty();
     }
 
     /// Advance lifetimes and drop expired toasts.
     pub fn tick(self: *ToastManager, ticks: u32) void {
         var i: usize = 0;
+        var removed_any = false;
         while (i < self.toasts.items.len) {
             var entry = &self.toasts.items[i];
             if (entry.remaining_ticks > ticks) {
@@ -76,8 +78,10 @@ pub const ToastManager = struct {
             } else {
                 self.allocator.free(entry.message);
                 _ = self.toasts.orderedRemove(i);
+                removed_any = true;
             }
         }
+        if (removed_any) self.widget.markDirty();
     }
 
     fn levelColors(self: *ToastManager, level: ToastLevel) struct { fg: render.Color, bg: render.Color } {
@@ -163,6 +167,32 @@ test "toast manager drops expired messages" {
     try std.testing.expectEqualStrings("one", manager.toasts.items[0].message);
 
     manager.tick(2);
+    try std.testing.expectEqual(@as(usize, 0), manager.toasts.items.len);
+}
+
+test "toast manager marks dirty when visible stack changes" {
+    const alloc = std.testing.allocator;
+    var manager = try ToastManager.init(alloc);
+    defer manager.deinit();
+
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    var renderer = try render.Renderer.init(alloc, 20, 6);
+    defer renderer.deinit();
+
+    try manager.widget.draw(&renderer);
+    try std.testing.expect(!manager.widget.dirty);
+
+    try manager.push("one", .info, 2);
+    try std.testing.expect(manager.widget.dirty);
+
+    try manager.widget.draw(&renderer);
+    try std.testing.expect(!manager.widget.dirty);
+
+    manager.tick(1);
+    try std.testing.expect(!manager.widget.dirty);
+
+    manager.tick(1);
+    try std.testing.expect(manager.widget.dirty);
     try std.testing.expectEqual(@as(usize, 0), manager.toasts.items.len);
 }
 
