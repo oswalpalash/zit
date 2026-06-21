@@ -51,37 +51,55 @@ pub const Block = struct {
     }
 
     pub fn setBorder(self: *Block, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     pub fn setColors(self: *Block, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     pub fn setTitle(self: *Block, title: []const u8) !void {
+        if (self.title) |current| {
+            if (std.mem.eql(u8, current, title)) return;
+        }
         const next = try self.allocator.dupe(u8, title);
         if (self.title) |t| self.allocator.free(t);
         self.title = next;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), self.title.?, "");
+        self.widget.markDirty();
     }
 
     pub fn setTitleStyle(self: *Block, color: render.Color, style: render.Style) void {
+        if (std.meta.eql(self.title_color, color) and std.meta.eql(self.title_style, style)) return;
         self.title_color = color;
         self.title_style = style;
+        self.widget.markDirty();
     }
 
     pub fn setPadding(self: *Block, padding: Padding) void {
+        if (std.meta.eql(self.padding, padding)) return;
         self.padding = padding;
+        self.widget.markDirty();
     }
 
     /// Attach a child widget. Ownership stays with the caller.
     pub fn setChild(self: *Block, child: ?*base.Widget) void {
+        var changed = false;
         if (self.child != child) {
             self.detachChild();
+            changed = true;
+        }
+        if (child) |c| {
+            if (c.parent != &self.widget) changed = true;
+            c.parent = &self.widget;
         }
         self.child = child;
-        if (child) |c| c.parent = &self.widget;
+        if (changed) self.widget.markDirty();
     }
 
     fn detachChild(self: *Block) void {
@@ -269,6 +287,77 @@ test "block draws title inside border" {
 
     const cell = renderer.back.getCell(1, 0).*;
     try std.testing.expectEqual('S', cell.codepoint());
+}
+
+test "block marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+
+    var child = try @import("label.zig").Label.init(alloc, "child");
+    defer child.deinit();
+    var replacement = try @import("label.zig").Label.init(alloc, "replacement");
+    defer replacement.deinit();
+
+    try block.setTitle("Panel");
+    block.setChild(&child.widget);
+    try block.widget.layout(layout_module.Rect.init(0, 0, 16, 4));
+    var renderer = try render.Renderer.init(alloc, 16, 4);
+    defer renderer.deinit();
+
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setBorder(.double);
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    block.setBorder(.double);
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+    );
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    block.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+    );
+    try std.testing.expect(!block.widget.dirty);
+
+    try block.setTitle("Status");
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    try block.setTitle("Status");
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setTitleStyle(render.Color.named(render.NamedColor.cyan), render.Style{ .underline = true });
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    block.setTitleStyle(render.Color.named(render.NamedColor.cyan), render.Style{ .underline = true });
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setPadding(.{ .left = 2, .right = 1, .top = 1, .bottom = 0 });
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    block.setPadding(.{ .left = 2, .right = 1, .top = 1, .bottom = 0 });
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setChild(&replacement.widget);
+    try std.testing.expect(block.widget.dirty);
+    try block.widget.draw(&renderer);
+    try std.testing.expect(!block.widget.dirty);
+    block.setChild(&replacement.widget);
+    try std.testing.expect(!block.widget.dirty);
+
+    block.setChild(null);
+    try std.testing.expect(block.widget.dirty);
 }
 
 test "block clamps edge title draw coordinates" {
