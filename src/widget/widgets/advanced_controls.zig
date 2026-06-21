@@ -1421,6 +1421,7 @@ pub const NotificationCenter = struct {
             .level = level,
         };
         self.notifications.appendAssumeCapacity(duped);
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -2232,6 +2233,27 @@ test "notification center draws narrow edge rectangles" {
 
     try center.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 1, 1, 2));
     try center.widget.draw(&renderer);
+}
+
+test "notification center marks dirty when notification is pushed" {
+    const alloc = std.testing.allocator;
+    var center = try NotificationCenter.init(alloc);
+    defer center.deinit();
+
+    try center.widget.layout(layout_module.Rect.init(0, 0, 24, 2));
+    var renderer = try render.Renderer.init(alloc, 24, 2);
+    defer renderer.deinit();
+
+    try center.widget.draw(&renderer);
+    try std.testing.expect(!center.widget.dirty);
+
+    try center.push("Build", "Started", .info);
+    try std.testing.expect(center.widget.dirty);
+    try center.widget.draw(&renderer);
+    try std.testing.expect(!center.widget.dirty);
+
+    try center.push("Deploy", "Finished", .success);
+    try std.testing.expect(center.widget.dirty);
 }
 
 test "pagination advances pages" {
