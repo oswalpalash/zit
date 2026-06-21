@@ -273,6 +273,7 @@ pub const RadioGroup = struct {
     pub fn setSelected(self: *RadioGroup, idx: usize) void {
         if (idx < self.options.items.len and self.selected != idx) {
             self.selected = idx;
+            self.widget.markDirty();
             if (self.on_change) |cb| cb(idx, self.options.items[idx]);
         }
     }
@@ -1814,6 +1815,30 @@ test "radio group updates selection" {
     var snap = try testing.renderWidget(alloc, &radio.widget, layout_module.Size.init(6, 3));
     defer snap.deinit(alloc);
     try snap.expectEqual("( ) A \n( ) B \n(*) C \n");
+}
+
+test "radio group marks dirty when selection changes" {
+    const alloc = std.testing.allocator;
+
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{ "A", "B", "C" });
+    defer radio.deinit();
+
+    try radio.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+
+    try radio.widget.draw(&renderer);
+    try std.testing.expect(!radio.widget.dirty);
+
+    radio.setSelected(2);
+    try std.testing.expect(radio.widget.dirty);
+    try radio.widget.draw(&renderer);
+    try std.testing.expect(!radio.widget.dirty);
+
+    radio.setSelected(2);
+    try std.testing.expect(!radio.widget.dirty);
+    radio.setSelected(99);
+    try std.testing.expect(!radio.widget.dirty);
 }
 
 test "radio group mouse selects rendered option rows" {
