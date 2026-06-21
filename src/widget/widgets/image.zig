@@ -62,21 +62,34 @@ pub const ImageWidget = struct {
     pub fn setPixel(self: *ImageWidget, x: u16, y: u16, color: render.Color) void {
         if (x >= self.width or y >= self.height) return;
         const idx = @as(usize, y) * @as(usize, self.width) + @as(usize, x);
+        if (colorsEqual(self.pixels[idx], color)) return;
         self.pixels[idx] = color;
+        self.widget.markDirty();
     }
 
     pub fn setRenderMode(self: *ImageWidget, mode: RenderMode) void {
+        if (self.mode == mode) return;
         self.mode = mode;
+        self.widget.markDirty();
     }
 
     pub fn fill(self: *ImageWidget, color: render.Color) void {
-        for (self.pixels) |*p| p.* = color;
+        var changed = false;
+        for (self.pixels) |*p| {
+            if (!colorsEqual(p.*, color)) {
+                p.* = color;
+                changed = true;
+            }
+        }
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setData(self: *ImageWidget, data: []const render.Color) !void {
         const expected = try std.math.mul(usize, self.width, self.height);
         if (data.len != expected) return error.InvalidPixelCount;
+        if (pixelDataEqual(self.pixels, data)) return;
         @memcpy(self.pixels, data);
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -279,6 +292,14 @@ pub const ImageWidget = struct {
 
     fn colorsEqual(a: render.Color, b: render.Color) bool {
         return std.meta.eql(a, b);
+    }
+
+    fn pixelDataEqual(a: []const render.Color, b: []const render.Color) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |lhs, rhs| {
+            if (!colorsEqual(lhs, rhs)) return false;
+        }
+        return true;
     }
 
     fn toRgb(color: render.Color) [3]u8 {
@@ -492,4 +513,63 @@ test "image widget clipped drawing respects renderer viewport offsets" {
     try std.testing.expect(std.meta.eql(renderer.back.getCell(1, 0).bg, render.Color.named(render.NamedColor.blue)));
     try std.testing.expect(std.meta.eql(renderer.back.getCell(0, 1).bg, render.Color.named(render.NamedColor.green)));
     try std.testing.expect(std.meta.eql(renderer.back.getCell(1, 1).bg, render.Color.named(render.NamedColor.white)));
+}
+
+test "image widget marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    const pixels = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.white),
+    };
+    const replacement = [_]render.Color{
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.white),
+    };
+
+    var image = try ImageWidget.fromData(alloc, 2, 2, &pixels);
+    defer image.deinit();
+    try image.widget.layout(layout_module.Rect.init(0, 0, 2, 2));
+
+    var renderer = try render.Renderer.init(alloc, 2, 2);
+    defer renderer.deinit();
+
+    try image.widget.draw(&renderer);
+    try std.testing.expect(!image.widget.dirty);
+
+    image.setPixel(0, 0, render.Color.named(render.NamedColor.yellow));
+    try std.testing.expect(image.widget.dirty);
+    try image.widget.draw(&renderer);
+    try std.testing.expect(!image.widget.dirty);
+    image.setPixel(0, 0, render.Color.named(render.NamedColor.yellow));
+    try std.testing.expect(!image.widget.dirty);
+    image.setPixel(4, 4, render.Color.named(render.NamedColor.red));
+    try std.testing.expect(!image.widget.dirty);
+
+    image.setRenderMode(.block);
+    try std.testing.expect(image.widget.dirty);
+    try image.widget.draw(&renderer);
+    try std.testing.expect(!image.widget.dirty);
+    image.setRenderMode(.block);
+    try std.testing.expect(!image.widget.dirty);
+
+    image.fill(render.Color.named(render.NamedColor.black));
+    try std.testing.expect(image.widget.dirty);
+    try image.widget.draw(&renderer);
+    try std.testing.expect(!image.widget.dirty);
+    image.fill(render.Color.named(render.NamedColor.black));
+    try std.testing.expect(!image.widget.dirty);
+
+    try image.setData(&replacement);
+    try std.testing.expect(image.widget.dirty);
+    try image.widget.draw(&renderer);
+    try std.testing.expect(!image.widget.dirty);
+    try image.setData(&replacement);
+    try std.testing.expect(!image.widget.dirty);
+
+    try std.testing.expectError(error.InvalidPixelCount, image.setData(replacement[0..3]));
+    try std.testing.expect(!image.widget.dirty);
 }
