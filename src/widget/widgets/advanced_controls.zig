@@ -655,9 +655,13 @@ pub const StatusBar = struct {
     }
 
     pub fn setSegments(self: *StatusBar, left: []const u8, center: []const u8, right: []const u8) void {
+        const changed = !std.mem.eql(u8, self.left, left) or
+            !std.mem.eql(u8, self.center, center) or
+            !std.mem.eql(u8, self.right, right);
         self.left = left;
         self.center = center;
         self.right = right;
+        if (changed) self.widget.markDirty();
     }
 
     fn xOffset(rect_x: u16, offset: usize) u16 {
@@ -788,7 +792,10 @@ pub const Toolbar = struct {
     }
 
     pub fn setActive(self: *Toolbar, idx: usize) void {
-        if (idx < self.items.items.len) self.active = idx;
+        if (idx < self.items.items.len and self.active != idx) {
+            self.active = idx;
+            self.widget.markDirty();
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -822,11 +829,11 @@ pub const Toolbar = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        if (self.active > 0) self.active -= 1;
+                        if (self.active > 0) self.setActive(self.active - 1);
                         return true;
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        if (self.active + 1 < self.items.items.len) self.active += 1;
+                        if (self.active + 1 < self.items.items.len) self.setActive(self.active + 1);
                         return true;
                     },
                     else => {},
@@ -841,7 +848,7 @@ pub const Toolbar = struct {
                         const width: u16 = @intCast(@min(item.len +| 2, @as(usize, std.math.maxInt(u16))));
                         const end = offsetCoord(cursor, width);
                         if (mouse.x >= cursor and mouse.x < end) {
-                            self.active = idx;
+                            self.setActive(idx);
                             return true;
                         }
                         cursor = offsetCoord(cursor, @as(usize, width) + 1);
@@ -2150,6 +2157,30 @@ test "status bar renders long segments in narrow rects" {
     try std.testing.expectEqual(@as(u16, 1), snap.height);
 }
 
+test "status bar marks dirty when segments change" {
+    const alloc = std.testing.allocator;
+    var status = try StatusBar.init(alloc);
+    defer status.deinit();
+
+    try status.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+
+    try status.widget.draw(&renderer);
+    try std.testing.expect(!status.widget.dirty);
+
+    status.setSegments("left", "center", "right");
+    try std.testing.expect(status.widget.dirty);
+    try status.widget.draw(&renderer);
+    try std.testing.expect(!status.widget.dirty);
+
+    status.setSegments("left", "center", "right");
+    try std.testing.expect(!status.widget.dirty);
+
+    status.setSegments("left", "center", "");
+    try std.testing.expect(status.widget.dirty);
+}
+
 test "status bar clamps far right draw offsets" {
     const alloc = std.testing.allocator;
     var status = try StatusBar.init(alloc);
@@ -2318,6 +2349,46 @@ test "toolbar mouse selects rendered item row" {
 
     try std.testing.expect(try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 14, 8, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), toolbar.active);
+}
+
+test "toolbar marks dirty when active item changes" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{ "Open", "Save", "Close" });
+    defer toolbar.deinit();
+
+    try toolbar.widget.layout(layout_module.Rect.init(0, 0, 30, 1));
+    var renderer = try render.Renderer.init(alloc, 30, 1);
+    defer renderer.deinit();
+
+    try toolbar.widget.draw(&renderer);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    toolbar.setActive(1);
+    try std.testing.expect(toolbar.widget.dirty);
+    try toolbar.widget.draw(&renderer);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    toolbar.setActive(1);
+    try std.testing.expect(!toolbar.widget.dirty);
+    toolbar.setActive(99);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    toolbar.widget.focused = true;
+    try std.testing.expect(try toolbar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), toolbar.active);
+    try std.testing.expect(toolbar.widget.dirty);
+    try toolbar.widget.draw(&renderer);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    try std.testing.expect(try toolbar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), toolbar.active);
+    try std.testing.expect(toolbar.widget.dirty);
+    try toolbar.widget.draw(&renderer);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    try std.testing.expect(try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 0, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), toolbar.active);
+    try std.testing.expect(toolbar.widget.dirty);
 }
 
 test "toolbar clamps far-edge render coordinates" {
