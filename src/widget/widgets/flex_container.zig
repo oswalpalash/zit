@@ -67,6 +67,7 @@ pub const FlexContainer = struct {
         self.layout.cache.valid = false;
         self.children.appendAssumeCapacity(child);
         child.parent = &self.widget;
+        self.widget.markDirty();
     }
 
     fn childIndex(self: *const FlexContainer, child: *const base.Widget) ?usize {
@@ -85,10 +86,12 @@ pub const FlexContainer = struct {
     }
 
     pub fn removeChild(self: *FlexContainer, child: *base.Widget) void {
+        var changed = false;
         for (self.children.items, 0..) |entry, idx| {
             if (entry == child) {
                 _ = self.children.orderedRemove(idx);
                 child.parent = null;
+                changed = true;
                 break;
             }
         }
@@ -98,43 +101,59 @@ pub const FlexContainer = struct {
             if (entry.element.ctx == child_ctx) {
                 _ = self.layout.children.orderedRemove(idx);
                 self.layout.cache.valid = false;
+                changed = true;
                 break;
             }
         }
+        if (changed) self.widget.markDirty();
     }
 
     pub fn clearChildren(self: *FlexContainer) void {
+        const changed = self.children.items.len != 0 or self.layout.children.items.len != 0;
         for (self.children.items) |child| {
             child.parent = null;
         }
         self.children.clearRetainingCapacity();
         self.layout.children.clearRetainingCapacity();
         self.layout.cache.valid = false;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setDirection(self: *FlexContainer, direction: layout_module.FlexDirection) void {
+        if (self.layout.direction == direction) return;
         self.layout.direction = direction;
         self.layout.cache.valid = false;
+        self.widget.markDirty();
     }
 
     pub fn setLayoutDirection(self: *FlexContainer, direction: layout_module.LayoutDirection) void {
+        if (self.layout.layout_direction == direction) return;
         _ = self.layout.layoutDirection(direction);
+        self.widget.markDirty();
     }
 
     pub fn setMainAlignment(self: *FlexContainer, alignment: layout_module.FlexAlignment) void {
+        if (self.layout.main_alignment == alignment) return;
         _ = self.layout.mainAlignment(alignment);
+        self.widget.markDirty();
     }
 
     pub fn setCrossAlignment(self: *FlexContainer, alignment: layout_module.FlexAlignment) void {
+        if (self.layout.cross_alignment == alignment) return;
         _ = self.layout.crossAlignment(alignment);
+        self.widget.markDirty();
     }
 
     pub fn setPadding(self: *FlexContainer, padding_value: layout_module.EdgeInsets) void {
+        if (std.meta.eql(self.layout.padding_insets, padding_value)) return;
         _ = self.layout.padding(padding_value);
+        self.widget.markDirty();
     }
 
     pub fn setGap(self: *FlexContainer, gap_value: u16) void {
+        if (self.layout.gap_size == gap_value) return;
         _ = self.layout.gap(gap_value);
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -262,6 +281,92 @@ test "flex container lays out children and forwards events" {
     try std.testing.expect(try flex.widget.handleEvent(event));
     try std.testing.expect(!left.handled);
     try std.testing.expect(right.handled);
+}
+
+test "flex container direct layout mutations mark dirty" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var flex = try FlexContainer.init(alloc, .row);
+    defer flex.deinit();
+
+    try flex.widget.layout(layout_module.Rect.init(0, 0, 10, 2));
+    var renderer = try render.Renderer.init(alloc, 10, 2);
+    defer renderer.deinit();
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    var child = Dummy{};
+    try flex.addChild(&child.widget, 1);
+    try std.testing.expect(flex.widget.dirty);
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.setGap(1);
+    try std.testing.expect(flex.widget.dirty);
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.setGap(1);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.setDirection(.column);
+    try std.testing.expect(flex.widget.dirty);
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.setDirection(.column);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.removeChild(&child.widget);
+    try std.testing.expect(flex.widget.dirty);
+    try std.testing.expect(child.widget.parent == null);
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.removeChild(&child.widget);
+    try std.testing.expect(!flex.widget.dirty);
+
+    try flex.addChild(&child.widget, 1);
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.clearChildren();
+    try std.testing.expect(flex.widget.dirty);
+    try std.testing.expect(child.widget.parent == null);
+
+    try flex.widget.draw(&renderer);
+    try std.testing.expect(!flex.widget.dirty);
+
+    flex.clearChildren();
+    try std.testing.expect(!flex.widget.dirty);
 }
 
 test "flex container add child preserves state when child list allocation fails" {
