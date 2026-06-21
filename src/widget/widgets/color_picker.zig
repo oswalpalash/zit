@@ -53,9 +53,7 @@ pub const ColorPicker = struct {
 
         self.palette.deinit(self.allocator);
         self.palette = next_palette;
-        if (self.selected_index >= self.palette.items.len) {
-            self.selected_index = if (self.palette.items.len > 0) 0 else 0;
-        }
+        self.clampSelection();
     }
 
     pub fn setColumns(self: *ColorPicker, columns: u16) void {
@@ -83,6 +81,14 @@ pub const ColorPicker = struct {
         }
     }
 
+    fn clampSelection(self: *ColorPicker) void {
+        if (self.palette.items.len == 0) {
+            self.selected_index = 0;
+        } else if (self.selected_index >= self.palette.items.len) {
+            self.selected_index = self.palette.items.len - 1;
+        }
+    }
+
     fn checkedCoord(value: u64) ?u16 {
         if (value > std.math.maxInt(u16)) return null;
         return @intCast(value);
@@ -105,6 +111,7 @@ pub const ColorPicker = struct {
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color.named(render.NamedColor.default), render.Color.named(render.NamedColor.black), render.Style{});
 
+        self.clampSelection();
         if (self.palette.items.len == 0 or rect.width == 0 or rect.height == 0 or self.columns == 0) return;
 
         const cols: usize = @intCast(self.columns);
@@ -184,8 +191,8 @@ pub const ColorPicker = struct {
             .key => |key| {
                 if (!self.widget.focused) return false;
                 const max_index = self.palette.items.len - 1;
+                self.clampSelection();
                 const current = @min(self.selected_index, max_index);
-                if (current != self.selected_index) self.selected_index = current;
                 const cols_step: usize = if (self.columns == 0) 1 else self.columns;
 
                 switch (key.key) {
@@ -292,6 +299,30 @@ test "color picker handles mouse and keyboard selection" {
     try std.testing.expect(change_called);
 }
 
+test "color picker clamps selection when palette shrinks" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.yellow),
+    };
+    const shorter_palette = [_]render.Color{
+        render.Color.named(render.NamedColor.magenta),
+        render.Color.named(render.NamedColor.cyan),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.selectIndex(3);
+    try picker.setPalette(&shorter_palette);
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+
+    try picker.setPalette(&.{});
+    try std.testing.expectEqual(@as(usize, 0), picker.selected_index);
+}
+
 test "color picker preferred size saturates large products" {
     const allocator = std.testing.allocator;
     const palette = [_]render.Color{
@@ -361,6 +392,31 @@ test "color picker renders clipped partial swatches" {
 
     const clipped_cell = renderer.back.getCell(0, 0).*;
     try std.testing.expect(std.meta.eql(clipped_cell.bg, render.Color.named(render.NamedColor.red)));
+}
+
+test "color picker clamps stale selection during draw" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.setColumns(2);
+    picker.swatch_width = 2;
+    picker.swatch_height = 2;
+    picker.selected_index = std.math.maxInt(usize);
+    try picker.widget.layout(layout.Rect.init(0, 0, 4, 2));
+
+    var renderer = try render.Renderer.init(allocator, 4, 2);
+    defer renderer.deinit();
+    try picker.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    const marker_cell = renderer.back.getCell(2, 0).*;
+    try std.testing.expectEqual(@as(u21, 'X'), marker_cell.codepoint());
 }
 
 test "color picker clamps invalid selected index during keyboard handling" {
