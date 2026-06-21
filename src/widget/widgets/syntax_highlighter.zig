@@ -49,26 +49,34 @@ pub const SyntaxHighlighter = struct {
     }
 
     pub fn setCode(self: *SyntaxHighlighter, code: []const u8) !void {
+        if (std.mem.eql(u8, self.code, code)) return;
         const next: []u8 = if (code.len == 0) &[_]u8{} else try self.allocator.dupe(u8, code);
         self.freeCode();
         self.code = next;
+        self.widget.markDirty();
     }
 
     pub fn setLanguage(self: *SyntaxHighlighter, language: Language) void {
+        if (self.language == language) return;
         self.language = language;
+        self.widget.markDirty();
     }
 
     pub fn setWrap(self: *SyntaxHighlighter, wrap: bool) void {
+        if (self.wrap == wrap) return;
         self.wrap = wrap;
+        self.widget.markDirty();
     }
 
     pub fn setColors(self: *SyntaxHighlighter, fg: render.Color, bg: render.Color, keyword: render.Color, string: render.Color, comment: render.Color, number: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg) and std.meta.eql(self.keyword_color, keyword) and std.meta.eql(self.string_color, string) and std.meta.eql(self.comment_color, comment) and std.meta.eql(self.number_color, number)) return;
         self.fg = fg;
         self.bg = bg;
         self.keyword_color = keyword;
         self.string_color = string;
         self.comment_color = comment;
         self.number_color = number;
+        self.widget.markDirty();
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -412,6 +420,79 @@ test "syntax highlighter treats zero tab width as one column" {
     defer renderer.deinit();
 
     try highlighter.widget.draw(&renderer);
+}
+
+test "syntax highlighter marks dirty when code changes" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    try highlighter.widget.layout(layout_module.Rect.init(0, 0, 24, 3));
+    var renderer = try render.Renderer.init(alloc, 24, 3);
+    defer renderer.deinit();
+
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    try highlighter.setCode("const value = 1;");
+    try std.testing.expect(highlighter.widget.dirty);
+
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    try highlighter.setCode("const value = 1;");
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    try highlighter.setCode("");
+    try std.testing.expect(highlighter.widget.dirty);
+}
+
+test "syntax highlighter marks dirty when rendering options change" {
+    const alloc = std.testing.allocator;
+    var highlighter = try SyntaxHighlighter.init(alloc);
+    defer highlighter.deinit();
+
+    try highlighter.setCode("true");
+    try highlighter.widget.layout(layout_module.Rect.init(0, 0, 24, 3));
+    var renderer = try render.Renderer.init(alloc, 24, 3);
+    defer renderer.deinit();
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    highlighter.setLanguage(.json);
+    try std.testing.expect(highlighter.widget.dirty);
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+    highlighter.setLanguage(.json);
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    highlighter.setWrap(false);
+    try std.testing.expect(highlighter.widget.dirty);
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+    highlighter.setWrap(false);
+    try std.testing.expect(!highlighter.widget.dirty);
+
+    highlighter.setColors(
+        render.Color{ .named_color = render.NamedColor.white },
+        render.Color{ .named_color = render.NamedColor.black },
+        render.Color{ .named_color = render.NamedColor.green },
+        render.Color{ .named_color = render.NamedColor.yellow },
+        render.Color{ .named_color = render.NamedColor.bright_black },
+        render.Color{ .named_color = render.NamedColor.magenta },
+    );
+    try std.testing.expect(highlighter.widget.dirty);
+    try highlighter.widget.draw(&renderer);
+    try std.testing.expect(!highlighter.widget.dirty);
+    highlighter.setColors(
+        render.Color{ .named_color = render.NamedColor.white },
+        render.Color{ .named_color = render.NamedColor.black },
+        render.Color{ .named_color = render.NamedColor.green },
+        render.Color{ .named_color = render.NamedColor.yellow },
+        render.Color{ .named_color = render.NamedColor.bright_black },
+        render.Color{ .named_color = render.NamedColor.magenta },
+    );
+    try std.testing.expect(!highlighter.widget.dirty);
 }
 
 test "syntax highlighter setCode preserves code on allocation failure" {
