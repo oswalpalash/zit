@@ -52,15 +52,22 @@ pub const BatteryIndicator = struct {
     }
 
     pub fn setTheme(self: *BatteryIndicator, t: theme.Theme) void {
+        if (std.meta.eql(self.theme_value, t)) return;
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     pub fn setLevel(self: *BatteryIndicator, level: f32) void {
-        self.level = normalizedUnit(level);
+        const next = normalizedUnit(level);
+        if (self.level == next) return;
+        self.level = next;
+        self.widget.markDirty();
     }
 
     pub fn setCharging(self: *BatteryIndicator, charging: bool) void {
+        if (self.charging == charging) return;
         self.charging = charging;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -157,11 +164,16 @@ pub const SignalStrength = struct {
     }
 
     pub fn setTheme(self: *SignalStrength, t: theme.Theme) void {
+        if (std.meta.eql(self.theme_value, t)) return;
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     pub fn setStrength(self: *SignalStrength, value: f32) void {
-        self.strength = normalizedUnit(value);
+        const next = normalizedUnit(value);
+        if (self.strength == next) return;
+        self.strength = next;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -251,6 +263,7 @@ pub const ResourceMeter = struct {
     }
 
     pub fn setLabel(self: *ResourceMeter, label: []const u8) !void {
+        if (std.mem.eql(u8, self.label, label)) return;
         const next = try self.allocator.dupe(u8, label);
         if (self.owns_label and self.label.len > 0) {
             self.allocator.free(self.label);
@@ -258,16 +271,25 @@ pub const ResourceMeter = struct {
         self.label = next;
         self.owns_label = true;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), self.label, "");
+        self.widget.markDirty();
     }
 
     pub fn setValue(self: *ResourceMeter, value: f32) void {
-        self.value = normalizedUnit(value);
+        const next = normalizedUnit(value);
+        if (self.value == next) return;
+        self.value = next;
+        self.widget.markDirty();
     }
 
     pub fn setTheme(self: *ResourceMeter, t: theme.Theme) void {
-        self.fg = t.color(.text);
-        self.bg = t.color(.surface);
-        self.fill = t.color(.accent);
+        const fg = t.color(.text);
+        const bg = t.color(.surface);
+        const fill = t.color(.accent);
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg) and std.meta.eql(self.fill, fill)) return;
+        self.fg = fg;
+        self.bg = bg;
+        self.fill = fill;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -345,11 +367,15 @@ pub const TrafficLight = struct {
     }
 
     pub fn setTheme(self: *TrafficLight, t: theme.Theme) void {
+        if (std.meta.eql(self.theme_value, t)) return;
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     pub fn setState(self: *TrafficLight, state: State) void {
+        if (self.state == state) return;
         self.state = state;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -504,6 +530,65 @@ test "indicator value setters normalize non-finite input" {
     try std.testing.expectEqual(@as(f32, 1), meter.value);
     meter.setValue(-std.math.inf(f32));
     try std.testing.expectEqual(@as(f32, 0), meter.value);
+}
+
+test "indicator widgets mark dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+
+    var renderer = try render.Renderer.init(alloc, 18, 4);
+    defer renderer.deinit();
+
+    var battery = try BatteryIndicator.init(alloc);
+    defer battery.deinit();
+    try battery.widget.layout(layout_module.Rect.init(0, 0, 14, 4));
+    try battery.widget.draw(&renderer);
+    try std.testing.expect(!battery.widget.dirty);
+    battery.setLevel(0.8);
+    try std.testing.expect(battery.widget.dirty);
+    try battery.widget.draw(&renderer);
+    try std.testing.expect(!battery.widget.dirty);
+    battery.setLevel(0.8);
+    try std.testing.expect(!battery.widget.dirty);
+    battery.setCharging(true);
+    try std.testing.expect(battery.widget.dirty);
+
+    var signal = try SignalStrength.init(alloc);
+    defer signal.deinit();
+    try signal.widget.layout(layout_module.Rect.init(0, 0, 12, 4));
+    try signal.widget.draw(&renderer);
+    try std.testing.expect(!signal.widget.dirty);
+    signal.setStrength(0.75);
+    try std.testing.expect(signal.widget.dirty);
+    try signal.widget.draw(&renderer);
+    try std.testing.expect(!signal.widget.dirty);
+    signal.setStrength(0.75);
+    try std.testing.expect(!signal.widget.dirty);
+
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+    try meter.widget.layout(layout_module.Rect.init(0, 0, 18, 3));
+    try meter.widget.draw(&renderer);
+    try std.testing.expect(!meter.widget.dirty);
+    meter.setValue(0.9);
+    try std.testing.expect(meter.widget.dirty);
+    try meter.widget.draw(&renderer);
+    try std.testing.expect(!meter.widget.dirty);
+    meter.setValue(0.9);
+    try std.testing.expect(!meter.widget.dirty);
+    try meter.setLabel("CPU");
+    try std.testing.expect(meter.widget.dirty);
+
+    var light = try TrafficLight.init(alloc);
+    defer light.deinit();
+    try light.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
+    try light.widget.draw(&renderer);
+    try std.testing.expect(!light.widget.dirty);
+    light.setState(.yellow);
+    try std.testing.expect(light.widget.dirty);
+    try light.widget.draw(&renderer);
+    try std.testing.expect(!light.widget.dirty);
+    light.setState(.yellow);
+    try std.testing.expect(!light.widget.dirty);
 }
 
 test "indicator widgets draw with non-finite internal state" {
