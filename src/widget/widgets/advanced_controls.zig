@@ -1287,12 +1287,21 @@ pub const CommandPalette = struct {
         if (changed) self.widget.markDirty();
     }
 
-    fn clampSelection(self: *CommandPalette) void {
+    fn clampSelection(self: *CommandPalette) bool {
+        const previous = self.selected;
         if (self.commands.items.len == 0) {
             self.selected = 0;
         } else if (self.selected >= self.commands.items.len) {
             self.selected = self.commands.items.len - 1;
         }
+        return previous != self.selected;
+    }
+
+    fn setSelectedIndex(self: *CommandPalette, index: usize) bool {
+        if (index >= self.commands.items.len or self.selected == index) return false;
+        self.selected = index;
+        self.widget.markDirty();
+        return true;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1304,7 +1313,7 @@ pub const CommandPalette = struct {
         const bg = render.Color.named(.black);
         if (rect.width == 0 or rect.height == 0) return;
 
-        self.clampSelection();
+        _ = self.clampSelection();
         renderer.drawBox(rect.x, rect.y, rect.width, rect.height, .rounded, fg, bg, render.Style{ .bold = true });
         if (rect.height < 3) return;
 
@@ -1334,15 +1343,13 @@ pub const CommandPalette = struct {
         switch (event) {
             .key => |key| {
                 if (!self.widget.focused) return false;
-                self.clampSelection();
+                if (self.clampSelection()) self.widget.markDirty();
                 switch (key.key) {
                     'k', 'K', input.KeyCode.UP => {
-                        if (self.selected > 0) self.selected -= 1;
-                        return true;
+                        return if (self.selected > 0) self.setSelectedIndex(self.selected - 1) else false;
                     },
                     'j', 'J', input.KeyCode.DOWN => {
-                        if (self.selected + 1 < self.commands.items.len) self.selected += 1;
-                        return true;
+                        return self.setSelectedIndex(self.selected + 1);
                     },
                     '\n' => {
                         if (self.commands.items.len == 0) return false;
@@ -2377,6 +2384,36 @@ test "command palette clamps stale selection before execution" {
     try std.testing.expect(try palette.widget.handleEvent(.{ .key = input.KeyEvent.init('\n', .{}) }));
     try std.testing.expectEqual(@as(usize, 1), palette.selected);
     try std.testing.expectEqual(@as(?usize, 1), command_palette_executed_index);
+}
+
+test "command palette ignores saturated keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{ "Open file", "Run tests" });
+    defer palette.deinit();
+
+    palette.widget.focused = true;
+    try palette.widget.layout(layout_module.Rect.init(0, 0, 24, 6));
+
+    var renderer = try render.Renderer.init(alloc, 24, 6);
+    defer renderer.deinit();
+    try palette.widget.draw(&renderer);
+    try std.testing.expect(!palette.widget.dirty);
+
+    const up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) };
+    try std.testing.expect(!try palette.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 0), palette.selected);
+    try std.testing.expect(!palette.widget.dirty);
+
+    const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
+    try std.testing.expect(try palette.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), palette.selected);
+    try std.testing.expect(palette.widget.dirty);
+    try palette.widget.draw(&renderer);
+    try std.testing.expect(!palette.widget.dirty);
+
+    try std.testing.expect(!try palette.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), palette.selected);
+    try std.testing.expect(!palette.widget.dirty);
 }
 
 test "command palette draw clamps stale selection" {
