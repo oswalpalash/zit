@@ -102,6 +102,12 @@ pub const LogView = struct {
         return @intCast(self.widget.rect.height);
     }
 
+    fn maxScrollOffset(self: *const LogView) usize {
+        const visible = self.visibleLines();
+        if (visible == 0) return 0;
+        return if (self.entries.items.len > visible) self.entries.items.len - visible else 0;
+    }
+
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
         const value = @as(u32, origin) + @as(u32, offset);
         return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
@@ -171,12 +177,10 @@ pub const LogView = struct {
             .mouse => |mouse| {
                 switch (mouse.action) {
                     .scroll_up => {
-                        self.scrollLines(1);
-                        return true;
+                        return self.scrollLines(1);
                     },
                     .scroll_down => {
-                        self.scrollLines(-1);
-                        return true;
+                        return self.scrollLines(-1);
                     },
                     else => {},
                 }
@@ -185,22 +189,17 @@ pub const LogView = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     input.KeyCode.PAGE_UP => {
-                        self.scrollLines(@intCast(self.widget.rect.height));
-                        return true;
+                        return self.scrollLines(@intCast(self.widget.rect.height));
                     },
                     input.KeyCode.PAGE_DOWN => {
-                        self.scrollLines(-@as(isize, @intCast(self.widget.rect.height)));
-                        return true;
+                        return self.scrollLines(-@as(isize, @intCast(self.widget.rect.height)));
                     },
                     input.KeyCode.HOME => {
-                        self.scroll_offset = self.entries.items.len;
-                        self.auto_scroll = false;
-                        return true;
+                        const max_offset = self.maxScrollOffset();
+                        return self.setScrollOffset(max_offset, max_offset == 0);
                     },
                     input.KeyCode.END => {
-                        self.scroll_offset = 0;
-                        self.auto_scroll = true;
-                        return true;
+                        return self.setScrollOffset(0, true);
                     },
                     else => {},
                 }
@@ -249,11 +248,19 @@ pub const LogView = struct {
         return total - visible - clamped_offset;
     }
 
-    fn scrollLines(self: *LogView, delta: isize) void {
-        const visible = self.visibleLines();
-        const max_offset: usize = if (self.entries.items.len > visible) self.entries.items.len - visible else 0;
-        self.scroll_offset = applyScrollDelta(self.scroll_offset, delta, max_offset);
-        self.auto_scroll = self.scroll_offset == 0;
+    fn setScrollOffset(self: *LogView, offset: usize, auto_scroll: bool) bool {
+        const clamped = @min(offset, self.maxScrollOffset());
+        if (self.scroll_offset == clamped and self.auto_scroll == auto_scroll) return false;
+        self.scroll_offset = clamped;
+        self.auto_scroll = auto_scroll;
+        self.widget.markDirty();
+        return true;
+    }
+
+    fn scrollLines(self: *LogView, delta: isize) bool {
+        const max_offset = self.maxScrollOffset();
+        const next_offset = applyScrollDelta(self.scroll_offset, delta, max_offset);
+        return self.setScrollOffset(next_offset, next_offset == 0);
     }
 };
 
@@ -292,6 +299,71 @@ test "log view mouse wheel scrolls rendered viewport" {
     try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
     try std.testing.expect(try log.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 4, 2, 0, -1) }));
     try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
+}
+
+test "log view scroll input invalidates only changed viewports" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("first");
+    try log.appendText("second");
+    try log.appendText("third");
+    try log.appendText("fourth");
+    try log.widget.layout(layout_module.Rect.init(0, 0, 18, 2));
+    log.widget.focused = true;
+
+    var renderer = try render.Renderer.init(alloc, 18, 2);
+    defer renderer.deinit();
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+
+    const page_up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.PAGE_UP, .{}) };
+    try std.testing.expect(try log.widget.handleEvent(page_up));
+    try std.testing.expectEqual(@as(usize, 2), log.scroll_offset);
+    try std.testing.expect(!log.auto_scroll);
+    try std.testing.expect(log.widget.dirty);
+
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+    try std.testing.expect(!try log.widget.handleEvent(page_up));
+    try std.testing.expectEqual(@as(usize, 2), log.scroll_offset);
+    try std.testing.expect(!log.widget.dirty);
+
+    const end = input.Event{ .key = input.KeyEvent.init(input.KeyCode.END, .{}) };
+    try std.testing.expect(try log.widget.handleEvent(end));
+    try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
+    try std.testing.expect(log.auto_scroll);
+    try std.testing.expect(log.widget.dirty);
+
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+    try std.testing.expect(!try log.widget.handleEvent(end));
+    try std.testing.expect(!log.widget.dirty);
+}
+
+test "log view ignores zero-height page scrolls" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("first");
+    try log.appendText("second");
+    try log.widget.layout(layout_module.Rect.init(0, 0, 18, 0));
+    log.widget.focused = true;
+    log.widget.clearDirty();
+
+    const page_up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.PAGE_UP, .{}) };
+    try std.testing.expect(!try log.widget.handleEvent(page_up));
+    try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
+    try std.testing.expect(log.auto_scroll);
+    try std.testing.expect(!log.widget.dirty);
+
+    const home = input.Event{ .key = input.KeyEvent.init(input.KeyCode.HOME, .{}) };
+    try std.testing.expect(!try log.widget.handleEvent(home));
+    try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
+    try std.testing.expect(log.auto_scroll);
+    try std.testing.expect(!log.widget.dirty);
 }
 
 test "log view marks dirty when visible content changes" {
@@ -351,7 +423,7 @@ test "log view clear restores auto scroll mode" {
     try log.appendText("two");
     try log.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
 
-    log.scrollLines(1);
+    _ = log.scrollLines(1);
     try std.testing.expect(!log.auto_scroll);
 
     log.clear();
@@ -388,12 +460,12 @@ test "log view saturates oversized scroll offsets" {
     try log.widget.layout(layout_module.Rect.init(0, 0, 10, 2));
 
     log.scroll_offset = std.math.maxInt(usize);
-    log.scrollLines(1);
+    _ = log.scrollLines(1);
     try std.testing.expectEqual(@as(usize, 2), log.scroll_offset);
     try std.testing.expect(!log.auto_scroll);
 
     log.scroll_offset = std.math.maxInt(usize);
-    log.scrollLines(-1);
+    _ = log.scrollLines(-1);
     try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
 }
 
