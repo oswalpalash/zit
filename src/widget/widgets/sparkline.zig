@@ -45,9 +45,16 @@ pub const Sparkline = struct {
     }
 
     pub fn setTheme(self: *Sparkline, theme_value: theme.Theme) !void {
+        const next_fg = theme_value.color(.accent);
+        const next_bg = theme_value.color(.surface);
+        if (std.meta.eql(self.fg, next_fg) and std.meta.eql(self.bg, next_bg)) {
+            self.theme_value = theme_value;
+            return;
+        }
+
         self.theme_value = theme_value;
-        self.fg = theme_value.color(.accent);
-        self.bg = theme_value.color(.surface);
+        self.fg = next_fg;
+        self.bg = next_bg;
         self.widget.markDirty();
     }
 
@@ -74,6 +81,8 @@ pub const Sparkline = struct {
 
     pub fn setValues(self: *Sparkline, data: []const f32) !void {
         const count = @min(data.len, self.max_samples);
+        if (samplesEqual(self.values.items, data[0..count])) return;
+
         var next_values = std.ArrayList(f32).empty;
         errdefer next_values.deinit(self.allocator);
 
@@ -82,6 +91,16 @@ pub const Sparkline = struct {
         self.values.deinit(self.allocator);
         self.values = next_values;
         self.widget.markDirty();
+    }
+
+    fn samplesEqual(lhs: []const f32, rhs: []const f32) bool {
+        if (lhs.len != rhs.len) return false;
+        for (lhs, rhs) |l, r| {
+            if (l == r) continue;
+            if (std.math.isNan(l) and std.math.isNan(r)) continue;
+            return false;
+        }
+        return true;
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -258,6 +277,50 @@ test "sparkline marks dirty when samples change" {
 
     const samples = [_]f32{ 2.0, 3.0, 4.0 };
     try spark.setValues(&samples);
+    try std.testing.expect(spark.widget.dirty);
+}
+
+test "sparkline skips unchanged values without allocating or dirtying" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    const samples = [_]f32{ 1.0, std.math.nan(f32), 3.0 };
+    try spark.setValues(&samples);
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    var renderer = try render.Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = spark.allocator;
+    spark.allocator = failing.allocator();
+    defer spark.allocator = original_allocator;
+
+    try spark.setValues(&samples);
+    try std.testing.expect(!spark.widget.dirty);
+    try std.testing.expectEqual(@as(usize, samples.len), spark.values.items.len);
+    try std.testing.expectEqual(samples[0], spark.values.items[0]);
+    try std.testing.expect(std.math.isNan(spark.values.items[1]));
+    try std.testing.expectEqual(samples[2], spark.values.items[2]);
+}
+
+test "sparkline setTheme marks dirty only when rendered colors change" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    var renderer = try render.Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    try spark.setTheme(theme.Theme.dark());
+    try std.testing.expect(!spark.widget.dirty);
+
+    try spark.setTheme(theme.Theme.light());
     try std.testing.expect(spark.widget.dirty);
 }
 
