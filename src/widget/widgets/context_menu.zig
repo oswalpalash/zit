@@ -97,7 +97,7 @@ pub const ContextMenu = struct {
         const previous_selected = self.selected;
         const changed = self.max_visible != next;
         self.max_visible = next;
-        self.clampSelection();
+        _ = self.clampSelection();
         if (self.open) self.widget.rect.height = self.computedHeight();
         if (changed or previous_selected != self.selected or (self.open and previous_height != self.widget.rect.height)) self.widget.markDirty();
     }
@@ -179,17 +179,16 @@ pub const ContextMenu = struct {
         switch (event) {
             .key => |key_event| {
                 if (!self.widget.focused) return false;
-                self.clampSelection();
+                const selection_was_clamped = self.clampSelection();
+                if (selection_was_clamped) self.widget.markDirty();
                 switch (key_event.key) {
                     input.KeyCode.UP => {
-                        if (self.selected > 0) self.selected -= 1;
-                        return true;
+                        const changed = if (self.selected > 0) self.setSelectedVisibleIndex(self.selected - 1) else false;
+                        return changed or selection_was_clamped;
                     },
                     input.KeyCode.DOWN => {
-                        if (self.selected + 1 < self.items.items.len and self.selected + 1 < self.max_visible) {
-                            self.selected += 1;
-                        }
-                        return true;
+                        const changed = self.setSelectedVisibleIndex(self.selected + 1);
+                        return changed or selection_was_clamped;
                     },
                     input.KeyCode.ENTER, input.KeyCode.SPACE => {
                         return self.activateSelected();
@@ -215,7 +214,7 @@ pub const ContextMenu = struct {
                     if (mouse_y >= inner_top and mouse_y < inner_bottom) {
                         const idx: usize = @intCast(mouse_y - inner_top);
                         if (idx < self.items.items.len and idx < self.max_visible) {
-                            self.selected = idx;
+                            _ = self.setSelectedVisibleIndex(idx);
                             if (mouse_event.action == .press and mouse_event.button == 1) {
                                 return self.activateSelected();
                             }
@@ -270,13 +269,23 @@ pub const ContextMenu = struct {
         return @intCast(@min(visible_rows +| 2, @as(usize, std.math.maxInt(u16))));
     }
 
-    fn clampSelection(self: *ContextMenu) void {
+    fn clampSelection(self: *ContextMenu) bool {
+        const previous = self.selected;
         const visible_items = @min(self.items.items.len, self.max_visible);
         if (visible_items == 0) {
             self.selected = 0;
         } else if (self.selected >= visible_items) {
             self.selected = visible_items - 1;
         }
+        return previous != self.selected;
+    }
+
+    fn setSelectedVisibleIndex(self: *ContextMenu, index: usize) bool {
+        const visible_items = @min(self.items.items.len, self.max_visible);
+        if (index >= visible_items or self.selected == index) return false;
+        self.selected = index;
+        self.widget.markDirty();
+        return true;
     }
 
     fn activateSelected(self: *ContextMenu) !bool {
@@ -363,6 +372,39 @@ test "context menu clamps stale selection before keyboard navigation" {
     try std.testing.expectEqual(@as(usize, 0), menu.selected);
 }
 
+test "context menu ignores saturated keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+
+    var renderer = try render.Renderer.init(alloc, 16, 4);
+    defer renderer.deinit();
+
+    menu.openAt(0, 0);
+    try menu.widget.layout(layout_module.Rect.init(0, 0, 16, 4));
+    menu.widget.setFocus(true);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    const up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) };
+    try std.testing.expect(!try menu.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+    try std.testing.expect(!menu.widget.dirty);
+
+    const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
+    try std.testing.expect(try menu.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), menu.selected);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    try std.testing.expect(!try menu.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), menu.selected);
+    try std.testing.expect(!menu.widget.dirty);
+}
+
 test "context menu keyboard handles empty items" {
     const alloc = std.testing.allocator;
     var menu = try ContextMenu.init(alloc);
@@ -373,6 +415,9 @@ test "context menu keyboard handles empty items" {
 
     const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) };
     try std.testing.expect(try menu.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+
+    try std.testing.expect(!try menu.widget.handleEvent(down));
     try std.testing.expectEqual(@as(usize, 0), menu.selected);
 
     const enter = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) };
