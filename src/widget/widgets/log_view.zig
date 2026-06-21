@@ -63,6 +63,7 @@ pub const LogView = struct {
             const max_offset: usize = if (self.entries.items.len > visible) self.entries.items.len - visible else 0;
             if (self.scroll_offset > max_offset) self.scroll_offset = max_offset;
         }
+        self.widget.markDirty();
     }
 
     pub fn appendText(self: *LogView, message: []const u8) !void {
@@ -71,6 +72,9 @@ pub const LogView = struct {
 
     pub fn setMaxEntries(self: *LogView, max_entries: usize) void {
         self.max_entries = @max(max_entries, 1);
+        const previous_len = self.entries.items.len;
+        const previous_scroll_offset = self.scroll_offset;
+        const previous_auto_scroll = self.auto_scroll;
         while (self.entries.items.len > self.max_entries) {
             const removed = self.entries.orderedRemove(0);
             self.allocator.free(removed.text);
@@ -79,12 +83,18 @@ pub const LogView = struct {
         const max_offset: usize = if (self.entries.items.len > visible) self.entries.items.len - visible else 0;
         if (self.scroll_offset > max_offset) self.scroll_offset = max_offset;
         self.auto_scroll = self.scroll_offset == 0;
+        if (self.entries.items.len != previous_len or self.scroll_offset != previous_scroll_offset or self.auto_scroll != previous_auto_scroll) {
+            self.widget.markDirty();
+        }
     }
 
     pub fn clear(self: *LogView) void {
+        const had_visible_state = self.entries.items.len > 0 or self.scroll_offset != 0 or !self.auto_scroll;
         for (self.entries.items) |entry| self.allocator.free(entry.text);
         self.entries.clearRetainingCapacity();
         self.scroll_offset = 0;
+        self.auto_scroll = true;
+        if (had_visible_state) self.widget.markDirty();
     }
 
     fn visibleLines(self: *const LogView) usize {
@@ -282,6 +292,71 @@ test "log view mouse wheel scrolls rendered viewport" {
     try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
     try std.testing.expect(try log.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 4, 2, 0, -1) }));
     try std.testing.expectEqual(@as(usize, 1), log.scroll_offset);
+}
+
+test "log view marks dirty when visible content changes" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.widget.layout(layout_module.Rect.init(0, 0, 18, 2));
+    var renderer = try render.Renderer.init(alloc, 18, 2);
+    defer renderer.deinit();
+
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+
+    try log.appendText("first");
+    try std.testing.expect(log.widget.dirty);
+
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+
+    log.clear();
+    try std.testing.expect(log.widget.dirty);
+
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+    log.clear();
+    try std.testing.expect(!log.widget.dirty);
+}
+
+test "log view set max entries invalidates trimmed visible rows" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.widget.layout(layout_module.Rect.init(0, 0, 18, 3));
+    try log.appendText("one");
+    try log.appendText("two");
+    try log.appendText("three");
+
+    var renderer = try render.Renderer.init(alloc, 18, 3);
+    defer renderer.deinit();
+    try log.widget.draw(&renderer);
+    try std.testing.expect(!log.widget.dirty);
+
+    log.setMaxEntries(2);
+    try std.testing.expect(log.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), log.entries.items.len);
+    try std.testing.expectEqualStrings("two", log.entries.items[0].text);
+}
+
+test "log view clear restores auto scroll mode" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+
+    try log.appendText("one");
+    try log.appendText("two");
+    try log.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
+
+    log.scrollLines(1);
+    try std.testing.expect(!log.auto_scroll);
+
+    log.clear();
+    try std.testing.expect(log.auto_scroll);
+    try std.testing.expectEqual(@as(usize, 0), log.scroll_offset);
 }
 
 test "log view clamps edge draw coordinates" {
