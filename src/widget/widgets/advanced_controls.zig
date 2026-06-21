@@ -418,7 +418,10 @@ pub const Slider = struct {
 
     pub fn setValue(self: *Slider, value: f32) void {
         const clamped = normalizedRangeValue(value, self.min, self.max);
-        if (clamped != self.value) self.value = clamped;
+        if (clamped != self.value) {
+            self.value = clamped;
+            self.widget.markDirty();
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -545,7 +548,11 @@ pub const RatingStars = struct {
     }
 
     pub fn setValue(self: *RatingStars, value: f32) void {
-        self.value = normalizedRatingValue(value, self.max_stars);
+        const normalized = normalizedRatingValue(value, self.max_stars);
+        if (normalized != self.value) {
+            self.value = normalized;
+            self.widget.markDirty();
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1941,6 +1948,38 @@ test "slider normalizes non-finite values and ranges" {
     try std.testing.expectEqual(@as(f32, 0), slider.value);
 }
 
+test "slider marks dirty when normalized value changes" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    try slider.widget.layout(layout_module.Rect.init(0, 0, 12, 1));
+    var renderer = try render.Renderer.init(alloc, 12, 1);
+    defer renderer.deinit();
+
+    try slider.widget.draw(&renderer);
+    try std.testing.expect(!slider.widget.dirty);
+
+    slider.setValue(5);
+    try std.testing.expect(slider.widget.dirty);
+    try slider.widget.draw(&renderer);
+    try std.testing.expect(!slider.widget.dirty);
+
+    slider.setValue(5);
+    try std.testing.expect(!slider.widget.dirty);
+
+    slider.setValue(15);
+    try std.testing.expect(slider.widget.dirty);
+    try slider.widget.draw(&renderer);
+    try std.testing.expect(!slider.widget.dirty);
+
+    slider.setValue(std.math.inf(f32));
+    try std.testing.expect(!slider.widget.dirty);
+
+    slider.setValue(std.math.nan(f32));
+    try std.testing.expect(slider.widget.dirty);
+}
+
 test "slider mouse maps rendered track to value" {
     const alloc = std.testing.allocator;
     var slider = try Slider.init(alloc, 0, 10);
@@ -2020,6 +2059,38 @@ test "rating stars normalize non-finite values" {
 
     stars.setValue(-std.math.inf(f32));
     try std.testing.expectEqual(@as(f32, 0), stars.value);
+}
+
+test "rating stars marks dirty when normalized value changes" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 5);
+    defer stars.deinit();
+
+    try stars.widget.layout(layout_module.Rect.init(0, 0, 5, 1));
+    var renderer = try render.Renderer.init(alloc, 5, 1);
+    defer renderer.deinit();
+
+    try stars.widget.draw(&renderer);
+    try std.testing.expect(!stars.widget.dirty);
+
+    stars.setValue(3);
+    try std.testing.expect(stars.widget.dirty);
+    try stars.widget.draw(&renderer);
+    try std.testing.expect(!stars.widget.dirty);
+
+    stars.setValue(3);
+    try std.testing.expect(!stars.widget.dirty);
+
+    stars.setValue(99);
+    try std.testing.expect(stars.widget.dirty);
+    try stars.widget.draw(&renderer);
+    try std.testing.expect(!stars.widget.dirty);
+
+    stars.setValue(std.math.inf(f32));
+    try std.testing.expect(!stars.widget.dirty);
+
+    stars.setValue(std.math.nan(f32));
+    try std.testing.expect(stars.widget.dirty);
 }
 
 test "rating stars mouse maps rendered columns to values" {
