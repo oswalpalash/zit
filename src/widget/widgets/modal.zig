@@ -82,9 +82,13 @@ pub const Modal = struct {
 
     /// Set the modal content
     pub fn setContent(self: *Modal, content: *Widget) void {
+        const previous = self.content;
         self.detachContent();
         self.content = content;
         content.parent = &self.widget;
+        if (previous != content) {
+            self.widget.markDirty();
+        }
     }
 
     fn detachContent(self: *Modal) void {
@@ -98,6 +102,8 @@ pub const Modal = struct {
 
     /// Set the modal title
     pub fn setTitle(self: *Modal, title: []const u8) !void {
+        if (std.mem.eql(u8, self.title, title)) return;
+
         const title_copy = if (title.len == 0) "" else try self.allocator.dupe(u8, title);
 
         if (self.title.len > 0) {
@@ -106,6 +112,7 @@ pub const Modal = struct {
 
         self.title = title_copy;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.popup), self.accessibilityLabel(), "");
+        self.widget.markDirty();
     }
 
     fn accessibilityLabel(self: *Modal) []const u8 {
@@ -124,40 +131,57 @@ pub const Modal = struct {
 
     /// Set the modal colors
     pub fn setColors(self: *Modal, fg: render.Color, bg: render.Color, border_fg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg) and std.meta.eql(self.border_fg, border_fg)) return;
         self.fg = fg;
         self.bg = bg;
         self.border_fg = border_fg;
+        self.widget.markDirty();
     }
 
     /// Set the title colors
     pub fn setTitleColors(self: *Modal, title_fg: render.Color, title_bg: render.Color) void {
+        if (std.meta.eql(self.title_fg, title_fg) and std.meta.eql(self.title_bg, title_bg)) return;
         self.title_fg = title_fg;
         self.title_bg = title_bg;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for modal colors.
     pub fn setTheme(self: *Modal, theme_value: theme.Theme) void {
         const colors = theme.modalColors(theme_value);
+        if (std.meta.eql(self.title_fg, colors.title_fg) and
+            std.meta.eql(self.title_bg, colors.title_bg) and
+            std.meta.eql(self.fg, colors.fg) and
+            std.meta.eql(self.bg, colors.bg) and
+            std.meta.eql(self.border_fg, colors.border_fg)) return;
+
         self.title_fg = colors.title_fg;
         self.title_bg = colors.title_bg;
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.border_fg = colors.border_fg;
+        self.widget.markDirty();
     }
 
     /// Set whether to show the title
     pub fn setShowTitle(self: *Modal, show_title: bool) void {
+        if (self.show_title == show_title) return;
         self.show_title = show_title;
+        self.widget.markDirty();
     }
 
     /// Set whether to show the border
     pub fn setShowBorder(self: *Modal, show_border: bool) void {
+        if (self.show_border == show_border) return;
         self.show_border = show_border;
+        self.widget.markDirty();
     }
 
     /// Set whether the modal is centered
     pub fn setCentered(self: *Modal, centered: bool) void {
+        if (self.centered == centered) return;
         self.centered = centered;
+        self.widget.markDirty();
     }
 
     /// Set whether to close on escape key
@@ -172,7 +196,11 @@ pub const Modal = struct {
 
     /// Close the modal
     pub fn close(self: *Modal) void {
+        const was_visible = self.widget.visible;
         self.widget.visible = false;
+        if (was_visible) {
+            self.widget.markDirty();
+        }
 
         if (self.on_close != null) {
             self.on_close.?();
@@ -270,8 +298,13 @@ pub const Modal = struct {
         const pref_size = try self.getPreferredSize();
         modal_rect.width = @min(pref_size.width, rect.width);
         modal_rect.height = @min(pref_size.height, rect.height);
-        modal_rect.x = addOffsetClamped(rect.x, @divTrunc(rect.width - modal_rect.width, 2));
-        modal_rect.y = addOffsetClamped(rect.y, @divTrunc(rect.height - modal_rect.height, 2));
+        if (self.centered) {
+            modal_rect.x = addOffsetClamped(rect.x, @divTrunc(rect.width - modal_rect.width, 2));
+            modal_rect.y = addOffsetClamped(rect.y, @divTrunc(rect.height - modal_rect.height, 2));
+        } else {
+            modal_rect.x = rect.x;
+            modal_rect.y = rect.y;
+        }
 
         self.widget.rect = modal_rect;
 
@@ -362,6 +395,69 @@ test "modal setTitle preserves title on allocation failure" {
     try std.testing.expectEqualStrings("Stable", modal.widget.accessibility_name);
 }
 
+test "modal visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    var content = try @import("block.zig").Block.init(alloc);
+    defer content.deinit();
+    defer modal.deinit();
+
+    modal.widget.clearDirty();
+    modal.setContent(&content.widget);
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setContent(&content.widget);
+    try std.testing.expect(!modal.widget.dirty);
+
+    try modal.setTitle("Confirm");
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    try modal.setTitle("Confirm");
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setColors(render.Color.named(.green), render.Color.named(.black), render.Color.named(.yellow));
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setColors(render.Color.named(.green), render.Color.named(.black), render.Color.named(.yellow));
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setTitleColors(render.Color.named(.white), render.Color.named(.red));
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setTitleColors(render.Color.named(.white), render.Color.named(.red));
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setTheme(theme.Theme.light());
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setTheme(theme.Theme.light());
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setShowTitle(false);
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setShowTitle(false);
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setShowBorder(false);
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setShowBorder(false);
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.setCentered(false);
+    try std.testing.expect(modal.widget.dirty);
+    modal.widget.clearDirty();
+    modal.setCentered(false);
+    try std.testing.expect(!modal.widget.dirty);
+
+    modal.widget.visible = true;
+    modal.widget.clearDirty();
+    modal.close();
+    try std.testing.expect(modal.widget.dirty);
+    try std.testing.expect(!modal.widget.visible);
+}
+
 test "modal closes on escape and fires callback" {
     const alloc = std.testing.allocator;
     var modal = try Modal.init(alloc);
@@ -390,6 +486,23 @@ test "modal clamps to available bounds when empty" {
     try modal.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
     try std.testing.expectEqual(@as(u16, 8), modal.widget.rect.width);
     try std.testing.expectEqual(@as(u16, 4), modal.widget.rect.height);
+}
+
+test "modal respects non-centered layout" {
+    const alloc = std.testing.allocator;
+    var modal = try Modal.init(alloc);
+    defer modal.deinit();
+
+    modal.width = 8;
+    modal.height = 4;
+    try modal.widget.layout(layout_module.Rect.init(5, 7, 20, 10));
+    try std.testing.expectEqual(@as(u16, 11), modal.widget.rect.x);
+    try std.testing.expectEqual(@as(u16, 10), modal.widget.rect.y);
+
+    modal.setCentered(false);
+    try modal.widget.layout(layout_module.Rect.init(5, 7, 20, 10));
+    try std.testing.expectEqual(@as(u16, 5), modal.widget.rect.x);
+    try std.testing.expectEqual(@as(u16, 7), modal.widget.rect.y);
 }
 
 test "modal renders rounded border and respects no-border mode" {
