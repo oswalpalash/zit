@@ -846,11 +846,15 @@ pub const Toolbar = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        if (self.active > 0) self.setActive(self.active - 1);
+                        if (self.active == 0) return false;
+                        const target = self.active - 1;
+                        if (target >= self.items.items.len) return false;
+                        self.setActive(target);
                         return true;
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        if (self.active + 1 < self.items.items.len) self.setActive(self.active + 1);
+                        if (self.items.items.len == 0 or self.active >= self.items.items.len - 1) return false;
+                        self.setActive(self.active + 1);
                         return true;
                     },
                     else => {},
@@ -2566,10 +2570,14 @@ test "toolbar marks dirty when active item changes" {
     try toolbar.widget.draw(&renderer);
     try std.testing.expect(!toolbar.widget.dirty);
 
-    try std.testing.expect(try toolbar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(!try toolbar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
     try std.testing.expectEqual(@as(usize, 2), toolbar.active);
-    try std.testing.expect(toolbar.widget.dirty);
-    try toolbar.widget.draw(&renderer);
+    try std.testing.expect(!toolbar.widget.dirty);
+
+    toolbar.setActive(0);
+    toolbar.widget.clearDirty();
+    try std.testing.expect(!try toolbar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), toolbar.active);
     try std.testing.expect(!toolbar.widget.dirty);
 
     try std.testing.expect(try toolbar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 0, 1, 0) }));
