@@ -174,6 +174,7 @@ pub const List = struct {
         try self.items.ensureUnusedCapacity(self.allocator, 1);
         const item_copy = try self.allocator.dupe(u8, item);
         self.items.appendAssumeCapacity(item_copy);
+        self.widget.markDirty();
     }
 
     /// Remove an item from the list
@@ -207,10 +208,12 @@ pub const List = struct {
         } else {
             self.clampScroll();
         }
+        self.widget.markDirty();
     }
 
     /// Clear all items from the list
     pub fn clear(self: *List) void {
+        const had_items = self.items.items.len > 0;
         self.clearDragPayload();
         // Free all items
         for (self.items.items) |item| {
@@ -219,12 +222,18 @@ pub const List = struct {
         self.items.clearRetainingCapacity();
         self.setSelectedIndex(0);
         self.resetTypeahead();
+        if (had_items) self.widget.markDirty();
     }
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *List, index: usize) void {
         const count = self.itemCount();
         if (count == 0) {
+            if (self.selected_index != 0) {
+                self.selected_index = 0;
+                self.widget.markDirty();
+                return;
+            }
             self.selected_index = 0;
             return;
         }
@@ -240,6 +249,7 @@ pub const List = struct {
 
         // Ensure the selected item is visible
         self.ensureItemVisible(self.selected_index);
+        self.widget.markDirty();
 
         // Call the selection changed callback
         if (old_index != self.selected_index and self.on_select != null) {
@@ -272,22 +282,36 @@ pub const List = struct {
 
     /// Set the list colors
     pub fn setColors(self: *List, fg: render.Color, bg: render.Color, selected_fg: render.Color, selected_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.selected_fg, selected_fg) and
+            std.meta.eql(self.selected_bg, selected_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.selected_fg = selected_fg;
         self.selected_bg = selected_bg;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for list colors.
     pub fn setTheme(self: *List, theme_value: theme.Theme) void {
         const surface = theme.surfaceColors(theme_value);
         const selected = theme.selectionColors(theme_value);
+        if (std.meta.eql(self.fg, surface.fg) and
+            std.meta.eql(self.bg, surface.bg) and
+            std.meta.eql(self.selected_fg, selected.fg) and
+            std.meta.eql(self.selected_bg, selected.bg) and
+            std.meta.eql(self.focused_fg, selected.focused_fg) and
+            std.meta.eql(self.focused_bg, selected.focused_bg)) return;
+
         self.fg = surface.fg;
         self.bg = surface.bg;
         self.selected_fg = selected.fg;
         self.selected_bg = selected.bg;
         self.focused_fg = selected.focused_fg;
         self.focused_bg = selected.focused_bg;
+        self.widget.markDirty();
     }
 
     /// Set the on-select callback
@@ -302,7 +326,9 @@ pub const List = struct {
 
     /// Set the border style
     pub fn setBorder(self: *List, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     /// Configure how long to keep accumulating typeahead search input.
@@ -333,12 +359,15 @@ pub const List = struct {
         self.items.clearRetainingCapacity();
         self.item_provider = provider;
         self.syncScrollFromDriver();
+        self.widget.markDirty();
     }
 
     /// Return to the owned item storage model.
     pub fn clearItemProvider(self: *List) void {
+        if (self.item_provider == null) return;
         self.item_provider = null;
         self.syncScrollFromDriver();
+        self.widget.markDirty();
     }
 
     /// Enable or disable drag-to-reorder behavior.
@@ -421,6 +450,7 @@ pub const List = struct {
                     const list = @as(*List, @ptrCast(@alignCast(ctx.?)));
                     list.scroll_driver.current = value;
                     list.syncScrollFromDriver();
+                    list.widget.markDirty();
                 }
             }.apply;
 
@@ -435,10 +465,13 @@ pub const List = struct {
             ) catch {
                 self.scroll_driver.snap(clamped);
                 self.syncScrollFromDriver();
+                if (clamped != start) self.widget.markDirty();
             };
+            if (clamped != start) self.widget.markDirty();
         } else {
             self.scroll_driver.snap(clamped);
             self.syncScrollFromDriver();
+            if (clamped != start) self.widget.markDirty();
         }
     }
 
@@ -974,6 +1007,100 @@ test "list typeahead search cycles through matches" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try list.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), list.selected_index); // Zzz
+}
+
+test "list visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.widget.clearDirty();
+    try list.addItem("one");
+    try std.testing.expect(list.widget.dirty);
+
+    try list.addItem("two");
+    try list.addItem("three");
+    try list.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+
+    list.widget.clearDirty();
+    list.setSelectedIndex(1);
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.setSelectedIndex(1);
+    try std.testing.expect(!list.widget.dirty);
+
+    list.first_visible_index = 0;
+    list.scroll_driver.snap(0);
+    list.visible_items_count = 1;
+    list.selected_index = 2;
+    list.widget.clearDirty();
+    list.setSelectedIndex(2);
+    try std.testing.expect(list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), list.first_visible_index);
+
+    list.widget.clearDirty();
+    list.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!list.widget.dirty);
+
+    list.setTheme(theme.Theme.light());
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.setTheme(theme.Theme.light());
+    try std.testing.expect(!list.widget.dirty);
+
+    list.setBorder(.rounded);
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.setBorder(.rounded);
+    try std.testing.expect(!list.widget.dirty);
+
+    list.removeItem(1);
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.removeItem(99);
+    try std.testing.expect(!list.widget.dirty);
+
+    list.clear();
+    try std.testing.expect(list.widget.dirty);
+    list.widget.clearDirty();
+    list.clear();
+    try std.testing.expect(!list.widget.dirty);
+}
+
+test "list provider switches mark dirty" {
+    const Provider = struct {
+        fn count(_: ?*anyopaque) usize {
+            return 2;
+        }
+
+        fn itemAt(index: usize, _: ?*anyopaque) []const u8 {
+            return if (index == 0) "virtual one" else "virtual two";
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.widget.clearDirty();
+    list.useItemProvider(.{
+        .count = Provider.count,
+        .item_at = Provider.itemAt,
+    });
+    try std.testing.expect(list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), list.itemCount());
+
+    list.widget.clearDirty();
+    list.clearItemProvider();
+    try std.testing.expect(list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), list.itemCount());
+
+    list.widget.clearDirty();
+    list.clearItemProvider();
+    try std.testing.expect(!list.widget.dirty);
 }
 
 test "list clamps stale selection before keyboard navigation" {
