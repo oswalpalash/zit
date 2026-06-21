@@ -1096,6 +1096,14 @@ pub const Pagination = struct {
         }
     }
 
+    fn previousPage(self: *Pagination) void {
+        self.setPage(self.current -| 1);
+    }
+
+    fn nextPage(self: *Pagination) void {
+        self.setPage(addUsizeClamped(self.current, 1));
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Pagination = @fieldParentPtr("widget", widget_ref);
@@ -1139,11 +1147,11 @@ pub const Pagination = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        self.setPage(self.current - 1);
+                        self.previousPage();
                         return true;
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        self.setPage(self.current + 1);
+                        self.nextPage();
                         return true;
                     },
                     else => {},
@@ -1154,13 +1162,13 @@ pub const Pagination = struct {
                     const rect = self.widget.rect;
                     const prev_end = if (rect.width > 1) offsetCoord(rect.x, 1) else rect.x;
                     if (mouse.x <= prev_end) {
-                        self.setPage(self.current - 1);
+                        self.previousPage();
                         return true;
                     }
                     const next_offset = if (rect.width > 2) rect.width - 2 else if (rect.width > 1) rect.width - 1 else 0;
                     const next_start = offsetCoord(rect.x, next_offset);
                     if (mouse.x >= next_start) {
-                        self.setPage(self.current + 1);
+                        self.nextPage();
                         return true;
                     }
                 }
@@ -2191,6 +2199,30 @@ test "pagination mouse activates rendered arrows" {
 
     try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 2), pager.current);
+}
+
+test "pagination navigation saturates stale current state" {
+    const alloc = std.testing.allocator;
+    var pager = try Pagination.init(alloc, 5);
+    defer pager.deinit();
+
+    pager.widget.focused = true;
+    pager.current = 0;
+    try std.testing.expect(try pager.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), pager.current);
+
+    pager.current = std.math.maxInt(usize);
+    try std.testing.expect(try pager.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 5), pager.current);
+
+    pager.widget.rect = layout_module.Rect.init(4, 6, 20, 1);
+    pager.current = 0;
+    try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), pager.current);
+
+    pager.current = std.math.maxInt(usize);
+    try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 5), pager.current);
 }
 
 test "accordion mouse toggles rendered section rows" {
