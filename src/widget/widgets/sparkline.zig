@@ -48,6 +48,7 @@ pub const Sparkline = struct {
         self.theme_value = theme_value;
         self.fg = theme_value.color(.accent);
         self.bg = theme_value.color(.surface);
+        self.widget.markDirty();
     }
 
     pub fn setMaxSamples(self: *Sparkline, max_samples: usize) void {
@@ -56,6 +57,7 @@ pub const Sparkline = struct {
             const trim = self.values.items.len - self.max_samples;
             std.mem.copyForwards(f32, self.values.items[0 .. self.values.items.len - trim], self.values.items[trim..]);
             self.values.shrinkRetainingCapacity(self.max_samples);
+            self.widget.markDirty();
         }
     }
 
@@ -67,6 +69,7 @@ pub const Sparkline = struct {
         } else {
             try self.values.append(self.allocator, value);
         }
+        self.widget.markDirty();
     }
 
     pub fn setValues(self: *Sparkline, data: []const f32) !void {
@@ -78,6 +81,7 @@ pub const Sparkline = struct {
 
         self.values.deinit(self.allocator);
         self.values = next_values;
+        self.widget.markDirty();
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -232,6 +236,65 @@ test "sparkline renders non-finite samples deterministically" {
     try std.testing.expectEqual(@as(u21, '█'), renderer.back.getCell(1, 0).*.codepoint());
     try std.testing.expectEqual(@as(u21, '▁'), renderer.back.getCell(2, 0).*.codepoint());
     try std.testing.expectEqual(@as(u21, '▁'), renderer.back.getCell(3, 0).*.codepoint());
+}
+
+test "sparkline marks dirty when samples change" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    var renderer = try render.Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    try spark.push(1.0);
+    try std.testing.expect(spark.widget.dirty);
+
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    const samples = [_]f32{ 2.0, 3.0, 4.0 };
+    try spark.setValues(&samples);
+    try std.testing.expect(spark.widget.dirty);
+}
+
+test "sparkline marks dirty when max samples trims visible data" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    const samples = [_]f32{ 1.0, 2.0, 3.0, 4.0 };
+    try spark.setValues(&samples);
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+
+    var renderer = try render.Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    spark.setMaxSamples(2);
+    try std.testing.expect(spark.widget.dirty);
+    try std.testing.expectEqualSlices(f32, samples[2..], spark.values.items);
+}
+
+test "sparkline leaves dirty state unchanged when max samples does not trim" {
+    const alloc = std.testing.allocator;
+    var spark = try Sparkline.init(alloc);
+    defer spark.deinit();
+
+    try spark.push(1.0);
+    try spark.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    var renderer = try render.Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+    try spark.widget.draw(&renderer);
+    try std.testing.expect(!spark.widget.dirty);
+
+    spark.setMaxSamples(16);
+    try std.testing.expect(!spark.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 16), spark.max_samples);
 }
 
 test "sparkline setValues preserves samples on allocation failure" {
