@@ -145,6 +145,7 @@ pub const TreeView = struct {
             self.scroll_offset = 0;
             return;
         }
+        if (height == 0) return;
         if (self.selected < self.scroll_offset) {
             self.scroll_offset = self.selected;
         }
@@ -456,6 +457,30 @@ test "tree view ignores saturated keyboard navigation" {
     try std.testing.expect(!try tree.widget.handleEvent(down));
     try std.testing.expectEqual(@as(usize, 2), tree.selected);
     try std.testing.expect(!tree.widget.dirty);
+}
+
+test "tree view zero-height navigation does not corrupt scroll offset" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    _ = try tree.addRoot("first");
+    _ = try tree.addRoot("second");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 0));
+    try tree.syncVisible();
+    tree.widget.clearDirty();
+
+    const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), tree.selected);
+    try std.testing.expectEqual(@as(usize, 0), tree.scroll_offset);
+    try std.testing.expect(tree.widget.dirty);
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    try tree.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 1), tree.scroll_offset);
 }
 
 test "tree view key toggles mark dirty" {
