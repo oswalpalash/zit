@@ -80,8 +80,8 @@ pub const DateTimePicker = struct {
         self.normalizeValue();
         if (!std.meta.eql(previous, self.value)) {
             self.widget.markDirty();
+            self.notifyChange();
         }
-        self.notifyChange();
     }
 
     pub fn setOnChange(self: *DateTimePicker, callback: *const fn (DateTime) void) void {
@@ -149,8 +149,8 @@ pub const DateTimePicker = struct {
         self.normalizeValue();
         if (!std.meta.eql(previous, self.value)) {
             self.widget.markDirty();
+            self.notifyChange();
         }
-        self.notifyChange();
     }
 
     fn adjustYear(self: *DateTimePicker, delta: i32) void {
@@ -391,6 +391,9 @@ pub const DateTimePicker = struct {
     }
 };
 
+var test_date_time_picker_change_calls: usize = 0;
+var test_date_time_picker_last_value: ?DateTimePicker.DateTime = null;
+
 test "date time picker rolls over time correctly" {
     const alloc = std.testing.allocator;
     var picker = try DateTimePicker.init(alloc);
@@ -425,6 +428,44 @@ test "date time picker normalizes invalid setDateTime values" {
 
     picker.setDateTime(.{ .year = 2024, .month = 2, .day = 31, .hour = 12, .minute = 30 });
     try std.testing.expectEqual(@as(u8, 29), picker.value.day);
+}
+
+test "date time picker notifies only when normalized value changes" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    test_date_time_picker_change_calls = 0;
+    test_date_time_picker_last_value = null;
+    const callback = struct {
+        fn call(value: DateTimePicker.DateTime) void {
+            test_date_time_picker_change_calls += 1;
+            test_date_time_picker_last_value = value;
+        }
+    }.call;
+    picker.setOnChange(callback);
+
+    picker.setDateTime(.{});
+    try std.testing.expectEqual(@as(usize, 0), test_date_time_picker_change_calls);
+
+    picker.setDateTime(.{ .year = 0, .month = 0, .day = 0, .hour = 99, .minute = 99 });
+    try std.testing.expectEqual(@as(usize, 1), test_date_time_picker_change_calls);
+    try std.testing.expectEqual(DateTimePicker.DateTime{ .year = 1, .month = 1, .day = 1, .hour = 23, .minute = 59 }, test_date_time_picker_last_value.?);
+
+    picker.setDateTime(.{ .year = 1, .month = 1, .day = 1, .hour = 23, .minute = 59 });
+    try std.testing.expectEqual(@as(usize, 1), test_date_time_picker_change_calls);
+
+    picker.selected_field = .minute;
+    picker.adjust(1);
+    try std.testing.expectEqual(@as(usize, 2), test_date_time_picker_change_calls);
+    try std.testing.expectEqual(DateTimePicker.DateTime{ .year = 1, .month = 1, .day = 2, .hour = 0, .minute = 0 }, test_date_time_picker_last_value.?);
+
+    picker.setDateTime(.{ .year = std.math.maxInt(u16), .month = 12, .day = 31, .hour = 23, .minute = 59 });
+    test_date_time_picker_change_calls = 0;
+    test_date_time_picker_last_value = null;
+    picker.adjust(1);
+    try std.testing.expectEqual(@as(usize, 0), test_date_time_picker_change_calls);
+    try std.testing.expectEqual(@as(?DateTimePicker.DateTime, null), test_date_time_picker_last_value);
 }
 
 test "date time picker normalizes stale public value before draw and input" {
