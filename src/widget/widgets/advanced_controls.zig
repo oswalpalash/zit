@@ -99,6 +99,10 @@ fn addPaddedLenClamped(width: usize, content_len: usize, padding: usize) usize {
     return addUsizeClamped(width, addUsizeClamped(content_len, padding));
 }
 
+fn accordionPreferredHeight(section_count: usize) u16 {
+    return clampUsizeToU16(addUsizeClamped(section_count, section_count));
+}
+
 /// Toggle switch renders a compact on/off control with keyboard and mouse support.
 pub const ToggleSwitch = struct {
     widget: base.Widget,
@@ -1515,8 +1519,8 @@ pub const Accordion = struct {
         switch (event) {
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1 and self.widget.rect.contains(mouse.x, mouse.y)) {
-                    const offset = mouse.y - self.widget.rect.y;
-                    var y: u16 = 0;
+                    const offset: usize = mouse.y - self.widget.rect.y;
+                    var y: usize = 0;
                     for (self.sections.items, 0..) |*section, idx| {
                         if (y == offset) {
                             section.expanded = !section.expanded;
@@ -1554,7 +1558,7 @@ pub const Accordion = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Accordion = @fieldParentPtr("widget", widget_ref);
-        const height = @as(u16, @intCast(self.sections.items.len * 2));
+        const height = accordionPreferredHeight(self.sections.items.len);
         return layout_module.Size.init(20, height);
     }
 
@@ -1690,6 +1694,8 @@ pub const WizardStepper = struct {
 test "advanced control preferred sizing saturates before capping" {
     try std.testing.expectEqual(@as(u16, 60), cappedPaddedWidth(std.math.maxInt(usize), 8, 60));
     try std.testing.expectEqual(@as(u16, 80), cappedPaddedWidth(std.math.maxInt(usize) - 1, 5, 80));
+    try std.testing.expectEqual(@as(u16, 6), accordionPreferredHeight(3));
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), accordionPreferredHeight(std.math.maxInt(usize)));
 
     var width = addPaddedLenClamped(std.math.maxInt(usize) - 1, std.math.maxInt(usize) - 2, 4);
     try std.testing.expectEqual(std.math.maxInt(usize), width);
@@ -2205,6 +2211,27 @@ test "accordion mouse toggles rendered section rows" {
 
     try std.testing.expect(!try accordion.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 8, 1, 0) }));
     try std.testing.expect(accordion.sections.items[0].expanded);
+}
+
+test "accordion mouse walk does not wrap large expanded section counts" {
+    const alloc = std.testing.allocator;
+    var accordion = try Accordion.init(alloc, &[_]Accordion.Section{});
+    defer accordion.deinit();
+
+    const fake_sections = try alloc.alloc(Accordion.Section, @as(usize, std.math.maxInt(u16)) / 2 + 4);
+    defer alloc.free(fake_sections);
+    for (fake_sections) |*section| {
+        section.* = .{ .title = "", .body = "", .expanded = true };
+    }
+
+    const original_sections = accordion.sections.items;
+    accordion.sections.items = fake_sections;
+    defer accordion.sections.items = original_sections;
+
+    accordion.widget.rect = layout_module.Rect.init(0, 0, 1, std.math.maxInt(u16));
+
+    const skipped_body_row = input.MouseEvent.init(.press, 0, std.math.maxInt(u16) - 2, 1, 0);
+    try std.testing.expect(!try accordion.widget.handleEvent(.{ .mouse = skipped_body_row }));
 }
 
 test "accordion draws narrow edge rectangles" {
