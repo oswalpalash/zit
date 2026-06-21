@@ -54,6 +54,8 @@ pub const Paragraph = struct {
     }
 
     pub fn setText(self: *Paragraph, text: []const u8) !void {
+        if (std.mem.eql(u8, self.text, text)) return;
+
         const next = try self.allocator.dupe(u8, text);
         self.allocator.free(self.text);
         self.text = next;
@@ -86,12 +88,16 @@ pub const Paragraph = struct {
     }
 
     pub fn setColors(self: *Paragraph, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.widget.markDirty();
     }
 
     pub fn setStyle(self: *Paragraph, style: render.Style) void {
+        if (std.meta.eql(self.style, style)) return;
+
         self.style = style;
         self.widget.markDirty();
     }
@@ -337,4 +343,76 @@ test "paragraph setText preserves text on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, p.setText("replacement paragraph"));
     try std.testing.expectEqualStrings("stable paragraph", p.text);
+}
+
+test "paragraph visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var p = try Paragraph.init(alloc, "stable paragraph");
+    defer p.deinit();
+
+    p.widget.clearDirty();
+    try p.setText("stable paragraph");
+    try std.testing.expect(!p.widget.dirty);
+    p.widget.clearDirty();
+    try p.setText("changed paragraph");
+    try std.testing.expect(p.widget.dirty);
+    try std.testing.expectEqualStrings("changed paragraph", p.text);
+
+    p.widget.clearDirty();
+    p.setWrap(false);
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setWrap(false);
+    try std.testing.expect(!p.widget.dirty);
+
+    p.widget.clearDirty();
+    p.setScroll(2);
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setScroll(2);
+    try std.testing.expect(!p.widget.dirty);
+
+    p.widget.clearDirty();
+    p.setAlignment(.center);
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setAlignment(.center);
+    try std.testing.expect(!p.widget.dirty);
+
+    p.widget.clearDirty();
+    p.setPadding(.{ .left = 1, .right = 2, .top = 3, .bottom = 4 });
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setPadding(.{ .left = 1, .right = 2, .top = 3, .bottom = 4 });
+    try std.testing.expect(!p.widget.dirty);
+
+    p.widget.clearDirty();
+    p.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(!p.widget.dirty);
+
+    p.widget.clearDirty();
+    p.setStyle(render.Style{ .bold = true });
+    try std.testing.expect(p.widget.dirty);
+    p.widget.clearDirty();
+    p.setStyle(render.Style{ .bold = true });
+    try std.testing.expect(!p.widget.dirty);
+}
+
+test "paragraph setText no-op does not allocate" {
+    const alloc = std.testing.allocator;
+    var p = try Paragraph.init(alloc, "stable paragraph");
+    defer p.deinit();
+
+    p.widget.clearDirty();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = p.allocator;
+    p.allocator = failing.allocator();
+    defer p.allocator = original_allocator;
+
+    try p.setText("stable paragraph");
+    try std.testing.expectEqualStrings("stable paragraph", p.text);
+    try std.testing.expect(!p.widget.dirty);
 }
