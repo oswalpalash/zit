@@ -604,6 +604,20 @@ pub const Table = struct {
         }
     }
 
+    fn moveSelectedColumnLeft(self: *Table, column_clamped: bool) bool {
+        if (self.columns.items.len == 0) return column_clamped;
+        if (self.selected_column == 0) return column_clamped;
+        self.selected_column -= 1;
+        return true;
+    }
+
+    fn moveSelectedColumnRight(self: *Table, column_clamped: bool) bool {
+        if (self.columns.items.len == 0) return column_clamped;
+        if (self.selected_column + 1 >= self.columns.items.len) return column_clamped;
+        self.selected_column += 1;
+        return true;
+    }
+
     /// Ensure a row is visible by adjusting first_visible_row
     fn ensureRowVisible(self: *Table, row: usize) void {
         self.ensureView();
@@ -1310,7 +1324,9 @@ pub const Table = struct {
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = fromWidgetPtr(widget_ptr);
         self.ensureView();
+        const previous_selected_column = self.selected_column;
         self.clampSelection();
+        const column_clamped = previous_selected_column != self.selected_column;
         const total_rows = self.dataRowCount();
 
         if (!self.widget.visible or !self.widget.enabled) {
@@ -1538,11 +1554,9 @@ pub const Table = struct {
                 try self.beginEdit();
                 return true;
             } else if (key_event.key == input.KeyCode.LEFT) {
-                if (self.selected_column > 0) self.selected_column -= 1;
-                return true;
+                return self.moveSelectedColumnLeft(column_clamped);
             } else if (key_event.key == input.KeyCode.RIGHT) {
-                if (self.selected_column + 1 < self.columns.items.len) self.selected_column += 1;
-                return true;
+                return self.moveSelectedColumnRight(column_clamped);
             } else if (key_event.isPrintable() and !key_event.modifiers.ctrl and !key_event.modifiers.alt) {
                 if (self.handleTypeaheadKey(@as(u8, @intCast(key_event.key)))) {
                     return true;
@@ -1995,6 +2009,58 @@ test "table ignores input when empty" {
     try table.widget.layout(layout_module.Rect.init(0, 0, 10, 5));
     const handled = try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } });
     try std.testing.expectEqual(false, handled);
+}
+
+test "table ignores saturated column keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "api", "ready" });
+
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+    table.widget.clearDirty();
+
+    try std.testing.expect(!try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 0), table.selected_column);
+    try std.testing.expect(!table.widget.dirty);
+
+    try std.testing.expect(try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), table.selected_column);
+    try std.testing.expect(table.widget.dirty);
+
+    table.widget.clearDirty();
+    try std.testing.expect(!try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), table.selected_column);
+    try std.testing.expect(!table.widget.dirty);
+}
+
+test "table column keyboard navigation repairs stale selection" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "api", "ready" });
+
+    table.widget.focused = true;
+    table.setSelectedRow(0);
+    table.selected_column = std.math.maxInt(usize);
+    table.widget.clearDirty();
+
+    try std.testing.expect(try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), table.selected_column);
+    try std.testing.expect(table.widget.dirty);
+
+    table.selected_column = std.math.maxInt(usize);
+    table.widget.clearDirty();
+    try std.testing.expect(try table.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 0), table.selected_column);
+    try std.testing.expect(table.widget.dirty);
 }
 
 test "table sorts and groups rows" {
