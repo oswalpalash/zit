@@ -284,6 +284,19 @@ pub const FileBrowser = struct {
         }
     }
 
+    fn selectionStateChanged(self: *const FileBrowser, previous_selected: usize, previous_scroll: usize) bool {
+        return previous_selected != self.selected or previous_scroll != self.scroll;
+    }
+
+    fn finishNavigation(self: *FileBrowser, previous_selected: usize, previous_scroll: usize, repaired: bool) bool {
+        const changed = self.selectionStateChanged(previous_selected, previous_scroll);
+        if (changed or repaired) {
+            self.resetTypeahead();
+            return true;
+        }
+        return false;
+    }
+
     fn hasDrawableBorder(self: *const FileBrowser) bool {
         const rect = self.widget.rect;
         return self.border != .none and rect.width >= 2 and rect.height >= 2;
@@ -463,24 +476,31 @@ pub const FileBrowser = struct {
             },
             .key => |key_event| {
                 if (!self.widget.focused) return false;
+                const before_clamp_selected = self.selected;
+                const before_clamp_scroll = self.scroll;
                 self.clampSelection();
+                const repaired = self.selectionStateChanged(before_clamp_selected, before_clamp_scroll);
 
                 const key = key_event.key;
                 if (key == input.KeyCode.UP or key == 'k') {
+                    const previous_selected = self.selected;
+                    const previous_scroll = self.scroll;
                     if (self.selected > 0) {
                         self.selected -= 1;
                         self.ensureVisible();
                     }
-                    self.resetTypeahead();
-                    return true;
+                    return self.finishNavigation(previous_selected, previous_scroll, repaired);
                 } else if (key == input.KeyCode.DOWN or key == 'j') {
+                    const previous_selected = self.selected;
+                    const previous_scroll = self.scroll;
                     if (self.selected + 1 < self.entries.items.len) {
                         self.selected += 1;
                         self.ensureVisible();
                     }
-                    self.resetTypeahead();
-                    return true;
+                    return self.finishNavigation(previous_selected, previous_scroll, repaired);
                 } else if (key == input.KeyCode.PAGE_UP) {
+                    const previous_selected = self.selected;
+                    const previous_scroll = self.scroll;
                     if (self.visible_items > 0) {
                         if (self.selected >= self.visible_items) {
                             self.selected -= self.visible_items;
@@ -489,16 +509,16 @@ pub const FileBrowser = struct {
                         }
                         self.ensureVisible();
                     }
-                    self.resetTypeahead();
-                    return true;
+                    return self.finishNavigation(previous_selected, previous_scroll, repaired);
                 } else if (key == input.KeyCode.PAGE_DOWN) {
+                    const previous_selected = self.selected;
+                    const previous_scroll = self.scroll;
                     if (self.visible_items > 0) {
                         const next = std.math.add(usize, self.selected, self.visible_items) catch std.math.maxInt(usize);
                         self.selected = @min(next, self.entries.items.len - 1);
                         self.ensureVisible();
                     }
-                    self.resetTypeahead();
-                    return true;
+                    return self.finishNavigation(previous_selected, previous_scroll, repaired);
                 } else if (key == input.KeyCode.LEFT or key == input.KeyCode.BACKSPACE) {
                     if (std.fs.path.dirname(self.current_path) != null) {
                         const parent = try self.parentPath();
@@ -708,6 +728,61 @@ test "file browser clamps stale selection before keyboard navigation" {
     try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
     try std.testing.expectEqual(@as(usize, 0), browser.selected);
     try std.testing.expectEqual(@as(usize, 0), browser.scroll);
+}
+
+test "file browser ignores saturated keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "alpha.txt"),
+        .is_dir = false,
+    });
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "beta.txt"),
+        .is_dir = false,
+    });
+
+    browser.widget.focused = true;
+    browser.visible_items = 1;
+    browser.selected = 0;
+    browser.scroll = 0;
+    browser.search_len = 1;
+    browser.widget.clearDirty();
+
+    try std.testing.expect(!try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+    try std.testing.expectEqual(@as(usize, 0), browser.scroll);
+    try std.testing.expectEqual(@as(usize, 1), browser.search_len);
+    try std.testing.expect(!browser.widget.dirty);
+
+    try std.testing.expect(!try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.PAGE_UP, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+    try std.testing.expectEqual(@as(usize, 0), browser.scroll);
+    try std.testing.expectEqual(@as(usize, 1), browser.search_len);
+    try std.testing.expect(!browser.widget.dirty);
+
+    try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
+    try std.testing.expectEqual(@as(usize, 1), browser.scroll);
+    try std.testing.expectEqual(@as(usize, 0), browser.search_len);
+    try std.testing.expect(browser.widget.dirty);
+
+    browser.search_len = 1;
+    browser.widget.clearDirty();
+    try std.testing.expect(!try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
+    try std.testing.expectEqual(@as(usize, 1), browser.scroll);
+    try std.testing.expectEqual(@as(usize, 1), browser.search_len);
+    try std.testing.expect(!browser.widget.dirty);
+
+    try std.testing.expect(!try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.PAGE_DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
+    try std.testing.expectEqual(@as(usize, 1), browser.scroll);
+    try std.testing.expectEqual(@as(usize, 1), browser.search_len);
+    try std.testing.expect(!browser.widget.dirty);
 }
 
 test "file browser clamps stale selection before typeahead and activation" {
