@@ -191,9 +191,13 @@ pub const ScreenManager = struct {
 
     /// Clear all screens.
     pub fn reset(self: *ScreenManager) void {
+        const changed = self.screens.items.len != 0 or
+            self.active_transition != null or
+            self.animator.animations.items.len != 0;
         for (self.screens.items) |*entry| self.deinitEntry(entry);
         self.screens.clearRetainingCapacity();
         self.active_transition = null;
+        if (changed) self.widget.markDirty();
     }
 
     /// Drive animations from the app loop.
@@ -691,6 +695,26 @@ test "screen manager reset cancels active transition handles" {
     try std.testing.expect(block_b.widget.visibility_transition.handle == null);
     try std.testing.expect(block_a.widget.parent == null);
     try std.testing.expect(block_b.widget.parent == null);
+}
+
+test "screen manager reset marks visible state dirty" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block = try @import("block.zig").Block.init(alloc);
+    defer block.deinit();
+
+    try manager.push(.{ .widget = &block.widget, .label = "visible" });
+    manager.widget.clearDirty();
+
+    manager.reset();
+    try std.testing.expect(manager.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
+
+    manager.widget.clearDirty();
+    manager.reset();
+    try std.testing.expect(!manager.widget.dirty);
 }
 
 test "screen manager layout propagates child layout failure" {
