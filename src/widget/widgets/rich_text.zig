@@ -56,29 +56,39 @@ pub const RichText = struct {
             .bg = bg,
             .style = style,
         });
+        self.widget.markDirty();
     }
 
     pub fn clear(self: *RichText) void {
+        const had_spans = self.spans.items.len > 0;
         for (self.spans.items) |span| {
             self.allocator.free(span.text);
         }
         self.spans.clearRetainingCapacity();
+        if (had_spans) self.widget.markDirty();
     }
 
     pub fn setWrap(self: *RichText, wrap: bool) void {
+        if (self.wrap == wrap) return;
         self.wrap = wrap;
+        self.widget.markDirty();
     }
 
     pub fn setBorder(self: *RichText, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     pub fn setBackground(self: *RichText, color: render.Color) void {
+        if (std.meta.eql(self.background, color)) return;
         self.background = color;
+        self.widget.markDirty();
     }
 
     pub fn setBoxStyle(self: *RichText, style: render.BoxStyle) void {
         self.box_style = style;
+        self.widget.markDirty();
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -226,6 +236,71 @@ test "rich text applies span styles" {
     const world_cell = renderer.back.getCell(6, 0).*;
     try std.testing.expect(world_cell.style.italic);
     try std.testing.expect(std.meta.eql(world_cell.fg, render.Color{ .named_color = render.NamedColor.blue }));
+}
+
+test "rich text marks dirty when content changes" {
+    const alloc = std.testing.allocator;
+    var text = try RichText.init(alloc);
+    defer text.deinit();
+
+    try text.widget.layout(layout_module.Rect.init(0, 0, 12, 2));
+    var renderer = try render.Renderer.init(alloc, 12, 2);
+    defer renderer.deinit();
+
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+
+    try text.addSpan("Hello", render.Color{ .named_color = render.NamedColor.green }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    try std.testing.expect(text.widget.dirty);
+
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+
+    text.clear();
+    try std.testing.expect(text.widget.dirty);
+
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+    text.clear();
+    try std.testing.expect(!text.widget.dirty);
+}
+
+test "rich text marks dirty when rendering options change" {
+    const alloc = std.testing.allocator;
+    var text = try RichText.init(alloc);
+    defer text.deinit();
+
+    try text.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+
+    try text.addSpan("wrapped text", render.Color{ .named_color = render.NamedColor.white }, render.Color{ .named_color = render.NamedColor.default }, render.Style{});
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+
+    text.setWrap(false);
+    try std.testing.expect(text.widget.dirty);
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+    text.setWrap(false);
+    try std.testing.expect(!text.widget.dirty);
+
+    text.setBorder(.single);
+    try std.testing.expect(text.widget.dirty);
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+    text.setBorder(.single);
+    try std.testing.expect(!text.widget.dirty);
+
+    text.setBackground(render.Color{ .named_color = render.NamedColor.blue });
+    try std.testing.expect(text.widget.dirty);
+    try text.widget.draw(&renderer);
+    try std.testing.expect(!text.widget.dirty);
+    text.setBackground(render.Color{ .named_color = render.NamedColor.blue });
+    try std.testing.expect(!text.widget.dirty);
+
+    text.setBoxStyle(render.BoxStyle{ .border = .rounded, .background = render.Color{ .named_color = render.NamedColor.black } });
+    try std.testing.expect(text.widget.dirty);
 }
 
 test "rich text clamps far-edge render coordinates" {
