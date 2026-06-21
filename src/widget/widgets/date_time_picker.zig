@@ -53,19 +53,34 @@ pub const DateTimePicker = struct {
     }
 
     pub fn setColors(self: *DateTimePicker, fg: render.Color, bg: render.Color, accent_fg: render.Color, accent_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.accent_fg, accent_fg) and
+            std.meta.eql(self.accent_bg, accent_bg))
+        {
+            return;
+        }
+
         self.fg = fg;
         self.bg = bg;
         self.accent_fg = accent_fg;
         self.accent_bg = accent_bg;
+        self.widget.markDirty();
     }
 
     pub fn setBorder(self: *DateTimePicker, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
+        self.widget.markDirty();
     }
 
     pub fn setDateTime(self: *DateTimePicker, value: DateTime) void {
+        const previous = self.value;
         self.value = value;
         self.normalizeValue();
+        if (!std.meta.eql(previous, self.value)) {
+            self.widget.markDirty();
+        }
         self.notifyChange();
     }
 
@@ -108,6 +123,7 @@ pub const DateTimePicker = struct {
     }
 
     fn moveField(self: *DateTimePicker, forward: bool) void {
+        const previous = self.selected_field;
         self.selected_field = switch (self.selected_field) {
             .year => if (forward) .month else .minute,
             .month => if (forward) .day else .year,
@@ -115,10 +131,14 @@ pub const DateTimePicker = struct {
             .hour => if (forward) .minute else .day,
             .minute => if (forward) .year else .hour,
         };
+        if (previous != self.selected_field) {
+            self.widget.markDirty();
+        }
     }
 
     fn adjust(self: *DateTimePicker, delta: i32) void {
         self.normalizeValue();
+        const previous = self.value;
         switch (self.selected_field) {
             .year => self.adjustYear(delta),
             .month => self.adjustMonth(delta),
@@ -127,6 +147,9 @@ pub const DateTimePicker = struct {
             .minute => self.adjustMinute(delta),
         }
         self.normalizeValue();
+        if (!std.meta.eql(previous, self.value)) {
+            self.widget.markDirty();
+        }
         self.notifyChange();
     }
 
@@ -509,4 +532,66 @@ test "date time picker clamps edge draw coordinates" {
 
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 1).codepoint());
+}
+
+test "date time picker marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    try picker.widget.layout(layout_module.Rect.init(0, 0, 26, 3));
+    var renderer = try render.Renderer.init(alloc, 26, 3);
+    defer renderer.deinit();
+
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.blue),
+    );
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.blue),
+    );
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.setBorder(.none);
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.setBorder(.none);
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.setDateTime(.{ .year = 2024, .month = 6, .day = 15, .hour = 10, .minute = 30 });
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.setDateTime(.{ .year = 2024, .month = 6, .day = 15, .hour = 10, .minute = 30 });
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.widget.setFocus(true);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    try std.testing.expect(try picker.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expect(picker.widget.dirty);
+
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    try std.testing.expect(try picker.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
+    try std.testing.expect(picker.widget.dirty);
+
+    picker.setDateTime(.{ .year = 1, .month = 1, .day = 1, .hour = 0, .minute = 0 });
+    picker.selected_field = .year;
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.adjust(-1);
+    try std.testing.expect(!picker.widget.dirty);
 }
