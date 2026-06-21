@@ -65,13 +65,15 @@ pub const ContextMenu = struct {
     }
 
     pub fn clear(self: *ContextMenu) void {
+        const previous_height = self.widget.rect.height;
         const changed = self.items.items.len != 0 or self.selected != 0;
         for (self.items.items) |item| {
             self.allocator.free(item.label);
         }
         self.items.clearRetainingCapacity();
         self.selected = 0;
-        if (changed) self.widget.markDirty();
+        if (self.open) self.widget.rect.height = self.computedHeight();
+        if (changed or (self.open and previous_height != self.widget.rect.height)) self.widget.markDirty();
     }
 
     pub fn setTheme(self: *ContextMenu, t: theme.Theme) !void {
@@ -513,11 +515,32 @@ test "context menu direct state changes mark dirty" {
     menu.clear();
     try std.testing.expect(menu.widget.dirty);
     try std.testing.expectEqual(@as(usize, 0), menu.items.items.len);
+    try std.testing.expectEqual(@as(u16, 0), menu.widget.rect.height);
     try menu.widget.draw(&renderer);
     try std.testing.expect(!menu.widget.dirty);
 
     menu.clear();
     try std.testing.expect(!menu.widget.dirty);
+}
+
+test "context menu clear collapses open hit area" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.openAt(4, 3);
+    try menu.widget.layout(layout_module.Rect.init(4, 3, 12, 4));
+    try std.testing.expectEqual(@as(u16, 4), menu.widget.rect.height);
+
+    menu.clear();
+    try std.testing.expect(menu.open);
+    try std.testing.expectEqual(@as(u16, 0), menu.widget.rect.height);
+
+    const old_inside_click = input.Event{ .mouse = input.MouseEvent.init(.press, 5, 4, 1, 0) };
+    try std.testing.expect(!try menu.widget.handleEvent(old_inside_click));
+    try std.testing.expect(!menu.open);
 }
 
 test "context menu tolerates tiny and edge render rectangles" {
