@@ -80,6 +80,8 @@ pub const Markdown = struct {
     }
 
     pub fn setText(self: *Markdown, text: []const u8) !void {
+        if (std.mem.eql(u8, self.content, text)) return;
+
         const next_content = try self.allocator.dupe(u8, text);
         const old_content = self.content;
         var old_lines = self.lines;
@@ -372,4 +374,48 @@ test "markdown setText preserves parsed content on allocation failure" {
     try std.testing.expectError(error.OutOfMemory, md.setText("## Replacement\n- next"));
     try std.testing.expectEqualStrings("# Stable\n- item", md.content);
     try std.testing.expect(md.lines.items.len > 0);
+}
+
+test "markdown visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var md = try Markdown.init(alloc, "# Stable\n- item");
+    defer md.deinit();
+
+    md.widget.clearDirty();
+    try md.setText("# Stable\n- item");
+    try std.testing.expect(!md.widget.dirty);
+    try std.testing.expectEqualStrings("# Stable\n- item", md.content);
+
+    md.widget.clearDirty();
+    try md.setText("## Changed\n- next");
+    try std.testing.expect(md.widget.dirty);
+    try std.testing.expectEqualStrings("## Changed\n- next", md.content);
+
+    md.widget.clearDirty();
+    try md.setTheme(theme_mod.Theme.light());
+    try std.testing.expect(md.widget.dirty);
+    md.widget.clearDirty();
+    try md.setTheme(theme_mod.Theme.light());
+    try std.testing.expect(!md.widget.dirty);
+}
+
+test "markdown setText no-op does not allocate or rebuild lines" {
+    const alloc = std.testing.allocator;
+    var md = try Markdown.init(alloc, "# Stable\n- item");
+    defer md.deinit();
+
+    const line_count = md.lines.items.len;
+    const first_line_segments = md.lines.items[0].segments.items.len;
+
+    md.widget.clearDirty();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = md.allocator;
+    md.allocator = failing.allocator();
+    defer md.allocator = original_allocator;
+
+    try md.setText("# Stable\n- item");
+    try std.testing.expectEqualStrings("# Stable\n- item", md.content);
+    try std.testing.expectEqual(line_count, md.lines.items.len);
+    try std.testing.expectEqual(first_line_segments, md.lines.items[0].segments.items.len);
+    try std.testing.expect(!md.widget.dirty);
 }
