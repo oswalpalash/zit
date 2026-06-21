@@ -145,13 +145,17 @@ pub const DropdownMenu = struct {
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *DropdownMenu, index: usize) void {
+        _ = self.trySetSelectedIndex(index);
+    }
+
+    fn trySetSelectedIndex(self: *DropdownMenu, index: usize) bool {
         if (self.items.items.len == 0) {
             self.selected_index = 0;
-            return;
+            return false;
         }
 
         const clamped_index = @min(index, self.items.items.len - 1);
-        if (clamped_index == self.selected_index) return;
+        if (clamped_index == self.selected_index) return false;
 
         const old_index = self.selected_index;
         self.selected_index = clamped_index;
@@ -161,6 +165,7 @@ pub const DropdownMenu = struct {
             self.on_select.?(self.selected_index);
         }
         self.widget.markDirty();
+        return true;
     }
 
     /// Apply theme defaults for dropdown colors.
@@ -456,7 +461,10 @@ pub const DropdownMenu = struct {
         // Handle key events
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            const previous_selected_index = self.selected_index;
             self.clampSelection();
+            const selection_was_clamped = previous_selected_index != self.selected_index;
+            if (selection_was_clamped) self.widget.markDirty();
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -469,25 +477,27 @@ pub const DropdownMenu = struct {
                     switch (action) {
                         .cursor_down => {
                             var index = self.selected_index;
+                            var changed = false;
                             while (index < self.items.items.len - 1) {
                                 index += 1;
                                 if (self.items.items[index].enabled) {
-                                    self.setSelectedIndex(index);
+                                    changed = self.trySetSelectedIndex(index);
                                     break;
                                 }
                             }
-                            return true;
+                            return changed or selection_was_clamped;
                         },
                         .cursor_up => {
                             var index = self.selected_index;
+                            var changed = false;
                             while (index > 0) {
                                 index -= 1;
                                 if (self.items.items[index].enabled) {
-                                    self.setSelectedIndex(index);
+                                    changed = self.trySetSelectedIndex(index);
                                     break;
                                 }
                             }
-                            return true;
+                            return changed or selection_was_clamped;
                         },
                         else => {},
                     }
@@ -715,6 +725,61 @@ test "dropdown menu clamps stale selection before keyboard navigation" {
 
     try std.testing.expect(try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
     try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+}
+
+test "dropdown menu saturated open navigation does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    try menu.addItem("Three", true, null);
+    menu.widget.focused = true;
+    menu.open();
+
+    test_dropdown_selection = null;
+    const callback = struct {
+        fn call(index: usize) void {
+            test_dropdown_selection = index;
+        }
+    }.call;
+    menu.setOnSelect(callback);
+
+    menu.widget.clearDirty();
+    try std.testing.expect(!try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
+    try std.testing.expect(!menu.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), menu.selected_index);
+    try std.testing.expectEqual(@as(?usize, null), test_dropdown_selection);
+
+    try std.testing.expect(try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(menu.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+    try std.testing.expectEqual(@as(?usize, 1), test_dropdown_selection);
+
+    menu.setSelectedIndex(2);
+    test_dropdown_selection = null;
+    menu.widget.clearDirty();
+    try std.testing.expect(!try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(!menu.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), menu.selected_index);
+    try std.testing.expectEqual(@as(?usize, null), test_dropdown_selection);
+}
+
+test "dropdown menu disabled-only direction does not consume unchanged navigation" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Disabled", false, null);
+    menu.widget.focused = true;
+    menu.open();
+
+    menu.widget.clearDirty();
+    try std.testing.expect(!try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(!menu.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), menu.selected_index);
 }
 
 test "dropdown menu ignores input when empty" {
