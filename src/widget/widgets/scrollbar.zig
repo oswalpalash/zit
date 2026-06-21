@@ -84,8 +84,11 @@ pub const Scrollbar = struct {
         const old_value = self.value;
         self.value = normalizedUnit(value);
 
-        if (old_value != self.value and self.on_value_change != null) {
-            self.on_value_change.?(self.value);
+        if (old_value != self.value) {
+            if (self.on_value_change) |callback| {
+                callback(self.value);
+            }
+            self.widget.markDirty();
         }
     }
 
@@ -96,14 +99,19 @@ pub const Scrollbar = struct {
 
     /// Set the thumb ratio (0-1)
     pub fn setThumbRatio(self: *Scrollbar, ratio: f32) void {
-        self.thumb_ratio = normalizedThumbRatio(ratio);
+        const next = normalizedThumbRatio(ratio);
+        if (self.thumb_ratio == next) return;
+        self.thumb_ratio = next;
+        self.widget.markDirty();
     }
 
     /// Set the scrollbar colors
     pub fn setColors(self: *Scrollbar, fg: render.Color, bg: render.Color, thumb_fg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg) and std.meta.eql(self.thumb_fg, thumb_fg)) return;
         self.fg = fg;
         self.bg = bg;
         self.thumb_fg = thumb_fg;
+        self.widget.markDirty();
     }
 
     /// Set the on-value-change callback
@@ -114,11 +122,13 @@ pub const Scrollbar = struct {
     /// Apply theme defaults for scrollbar colors.
     pub fn setTheme(self: *Scrollbar, theme_value: theme.Theme) void {
         const colors = theme.scrollbarColors(theme_value);
+        if (std.meta.eql(self.fg, colors.fg) and std.meta.eql(self.bg, colors.bg) and std.meta.eql(self.thumb_fg, colors.thumb_fg) and std.meta.eql(self.focused_fg, colors.focused_fg) and std.meta.eql(self.focused_bg, colors.focused_bg)) return;
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.thumb_fg = colors.thumb_fg;
         self.focused_fg = colors.focused_fg;
         self.focused_bg = colors.focused_bg;
+        self.widget.markDirty();
     }
 
     /// Draw implementation for Scrollbar
@@ -435,6 +445,62 @@ test "scrollbar normalizes non-finite value and thumb ratio" {
 
     bar.setThumbRatio(-std.math.inf(f32));
     try std.testing.expectEqual(@as(f32, 0.1), bar.thumb_ratio);
+}
+
+test "scrollbar marks dirty when value changes" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 1, 10));
+    var renderer = try render.Renderer.init(alloc, 2, 10);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.setValue(0.5);
+    try std.testing.expect(bar.widget.dirty);
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+    bar.setValue(0.5);
+    try std.testing.expect(!bar.widget.dirty);
+}
+
+test "scrollbar marks dirty when thumb or colors change" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .horizontal);
+    defer bar.deinit();
+
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
+    var renderer = try render.Renderer.init(alloc, 10, 1);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.setThumbRatio(0.5);
+    try std.testing.expect(bar.widget.dirty);
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+    bar.setThumbRatio(0.5);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.cyan),
+    );
+    try std.testing.expect(bar.widget.dirty);
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+    bar.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.cyan),
+    );
+    try std.testing.expect(!bar.widget.dirty);
 }
 
 test "scrollbar draws with non-finite internal state" {
