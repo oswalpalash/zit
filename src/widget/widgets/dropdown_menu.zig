@@ -123,6 +123,7 @@ pub const DropdownMenu = struct {
         } else if (self.selected_index >= self.items.items.len) {
             self.setSelectedIndex(self.items.items.len - 1);
         }
+        self.clampSelection();
     }
 
     /// Set the dropdown label/caption
@@ -139,12 +140,16 @@ pub const DropdownMenu = struct {
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *DropdownMenu, index: usize) void {
-        if (index == self.selected_index or self.items.items.len == 0) {
+        if (self.items.items.len == 0) {
+            self.selected_index = 0;
             return;
         }
 
+        const clamped_index = @min(index, self.items.items.len - 1);
+        if (clamped_index == self.selected_index) return;
+
         const old_index = self.selected_index;
-        self.selected_index = @min(index, self.items.items.len - 1);
+        self.selected_index = clamped_index;
 
         // Call the selection changed callback
         if (old_index != self.selected_index and self.on_select != null) {
@@ -176,6 +181,7 @@ pub const DropdownMenu = struct {
         if (self.items.items.len == 0) {
             return null;
         }
+        self.clampSelection();
         return self.items.items[self.selected_index].text;
     }
 
@@ -184,6 +190,7 @@ pub const DropdownMenu = struct {
         if (self.items.items.len == 0) {
             return null;
         }
+        self.clampSelection();
         return self.items.items[self.selected_index].data;
     }
 
@@ -215,6 +222,14 @@ pub const DropdownMenu = struct {
         self.on_select = callback;
     }
 
+    fn clampSelection(self: *DropdownMenu) void {
+        if (self.items.items.len == 0) {
+            self.selected_index = 0;
+        } else if (self.selected_index >= self.items.items.len) {
+            self.selected_index = self.items.items.len - 1;
+        }
+    }
+
     /// Draw implementation for DropdownMenu
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
@@ -225,6 +240,7 @@ pub const DropdownMenu = struct {
         }
 
         const rect = self.widget.rect;
+        self.clampSelection();
 
         // Choose colors based on state
         const base_bg = if (!self.widget.enabled)
@@ -407,6 +423,7 @@ pub const DropdownMenu = struct {
         // Handle key events
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            self.clampSelection();
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -626,6 +643,45 @@ test "dropdown menu selects item on click" {
     try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
     try std.testing.expectEqual(@as(?usize, 1), test_dropdown_selection);
     try std.testing.expect(!menu.is_open);
+}
+
+test "dropdown menu clamps stale selection for access and draw" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    menu.selected_index = std.math.maxInt(usize);
+
+    try std.testing.expectEqualStrings("Two", menu.getSelectedItemText().?);
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+
+    menu.selected_index = std.math.maxInt(usize);
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    menu.widget.rect = layout_module.Rect.init(0, 0, 8, 1);
+    try menu.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
+}
+
+test "dropdown menu clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+    try menu.addItem("Three", true, null);
+    menu.widget.focused = true;
+    menu.open();
+    menu.selected_index = std.math.maxInt(usize);
+
+    try std.testing.expect(try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), menu.selected_index);
+
+    try std.testing.expect(try menu.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), menu.selected_index);
 }
 
 test "dropdown menu ignores input when empty" {
