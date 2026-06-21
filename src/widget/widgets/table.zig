@@ -334,6 +334,7 @@ pub const Table = struct {
     /// Begin inline editing on the currently selected cell.
     pub fn beginEdit(self: *Table) !void {
         if (self.row_provider != null) return error.VirtualRowsActive;
+        self.clampSelection();
         if (self.selected_row == null or self.selected_column >= self.columns.items.len) return;
 
         const data_row = self.selected_row.?;
@@ -558,6 +559,27 @@ pub const Table = struct {
         // Call the row selected callback
         if (old_selected != self.selected_row and self.on_row_select != null and self.selected_row != null) {
             self.on_row_select.?(self.selected_row.?);
+        }
+    }
+
+    fn clampSelection(self: *Table) void {
+        const count = self.dataRowCount();
+        if (count == 0) {
+            self.selected_row = null;
+        } else if (self.selected_row) |row| {
+            if (row >= count) self.selected_row = count - 1;
+        }
+
+        if (self.columns.items.len == 0) {
+            self.selected_column = 0;
+        } else if (self.selected_column >= self.columns.items.len) {
+            self.selected_column = self.columns.items.len - 1;
+        }
+
+        if (self.isEditing()) {
+            if (self.editing_row.? >= count or self.editing_col.? >= self.columns.items.len) {
+                self.cancelEdit();
+            }
         }
     }
 
@@ -1023,6 +1045,7 @@ pub const Table = struct {
     /// Draw implementation for Table
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const self = fromWidgetPtr(widget_ptr);
+        self.clampSelection();
 
         if (!self.widget.visible or self.columns.items.len == 0) {
             return;
@@ -1236,6 +1259,7 @@ pub const Table = struct {
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
         const self = fromWidgetPtr(widget_ptr);
         self.ensureView();
+        self.clampSelection();
         const total_rows = self.dataRowCount();
 
         if (!self.widget.visible or !self.widget.enabled) {
@@ -1550,6 +1574,7 @@ pub const Table = struct {
         const self = fromWidgetPtr(widget_ptr);
         self.widget.rect = rect;
 
+        self.clampSelection();
         self.clampScroll();
         // Ensure selected row is still visible after layout
         if (self.selected_row != null) {
@@ -1900,6 +1925,27 @@ test "table begin edit propagates allocation failure" {
     try std.testing.expectEqual(@as(usize, 0), table.edit_buffer.items.len);
 }
 
+test "table begin edit clamps stale selection state" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "api", "ready" });
+    try table.addRow(&.{ "web", "idle" });
+
+    table.selected_row = std.math.maxInt(usize);
+    table.selected_column = std.math.maxInt(usize);
+    try table.beginEdit();
+
+    try std.testing.expectEqual(@as(?usize, 1), table.selected_row);
+    try std.testing.expectEqual(@as(usize, 1), table.selected_column);
+    try std.testing.expectEqual(@as(?usize, 1), table.editing_row);
+    try std.testing.expectEqual(@as(?usize, 1), table.editing_col);
+    try std.testing.expectEqualStrings("idle", table.edit_buffer.items);
+}
+
 test "table setCell preserves existing text on allocation failure" {
     const alloc = std.testing.allocator;
     var table = try Table.init(alloc);
@@ -1973,6 +2019,28 @@ test "table edit buffer append propagates allocation failure" {
     try std.testing.expect(table.isEditing());
     try std.testing.expectEqualStrings("cpu", table.edit_buffer.items);
     try std.testing.expectEqualStrings("cpu", table.cellView(0, 0).text);
+}
+
+test "table draw clamps stale selection state" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("Name", 8, true);
+    try table.addColumn("Status", 8, true);
+    try table.addRow(&.{ "api", "ready" });
+    try table.addRow(&.{ "web", "idle" });
+
+    table.selected_row = std.math.maxInt(usize);
+    table.selected_column = std.math.maxInt(usize);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 16, 4));
+
+    var renderer = try render.Renderer.init(alloc, 16, 4);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(?usize, 1), table.selected_row);
+    try std.testing.expectEqual(@as(usize, 1), table.selected_column);
 }
 
 test "table string interning migration is transactional on allocation failure" {
