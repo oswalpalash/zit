@@ -76,15 +76,21 @@ pub const TabBar = struct {
     }
 
     pub fn setTabs(self: *TabBar, tabs: []const TabItem) void {
+        const changed = self.tabs.ptr != tabs.ptr or self.tabs.len != tabs.len;
         self.tabs = tabs;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setActive(self: *TabBar, idx: usize) void {
         if (self.tabs.len == 0) {
+            if (self.active_tab != 0) self.widget.markDirty();
             self.active_tab = 0;
             return;
         }
-        self.active_tab = @min(idx, self.tabs.len - 1);
+        const next = @min(idx, self.tabs.len - 1);
+        if (self.active_tab == next) return;
+        self.active_tab = next;
+        self.widget.markDirty();
     }
 
     pub fn setCallbacks(
@@ -101,23 +107,26 @@ pub const TabBar = struct {
     }
 
     pub fn setTabColors(self: *TabBar, fg: render.Color, bg: render.Color, active_fg: render.Color, active_bg: render.Color, inactive_fg: render.Color, inactive_bg: render.Color) void {
+        const changed =
+            !std.meta.eql(self.fg, fg) or
+            !std.meta.eql(self.bg, bg) or
+            !std.meta.eql(self.active_fg, active_fg) or
+            !std.meta.eql(self.active_bg, active_bg) or
+            !std.meta.eql(self.inactive_fg, inactive_fg) or
+            !std.meta.eql(self.inactive_bg, inactive_bg);
         self.fg = fg;
         self.bg = bg;
         self.active_fg = active_fg;
         self.active_bg = active_bg;
         self.inactive_fg = inactive_fg;
         self.inactive_bg = inactive_bg;
+        if (changed) self.widget.markDirty();
     }
 
     /// Apply theme defaults for tab colors.
     pub fn setTheme(self: *TabBar, theme_value: theme.Theme) void {
         const colors = theme.tabColors(theme_value);
-        self.fg = colors.fg;
-        self.bg = colors.bg;
-        self.active_fg = colors.active_fg;
-        self.active_bg = colors.active_bg;
-        self.inactive_fg = colors.inactive_fg;
-        self.inactive_bg = colors.inactive_bg;
+        self.setTabColors(colors.fg, colors.bg, colors.active_fg, colors.active_bg, colors.inactive_fg, colors.inactive_bg);
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -452,6 +461,7 @@ pub const TabView = struct {
                 try self.setActiveTab(0);
             }
         }
+        self.widget.markDirty();
     }
 
     /// Remove a tab from the tab view
@@ -476,11 +486,20 @@ pub const TabView = struct {
         if (self.on_tab_select != null and selection_changed and self.tabs.items.len > 0) {
             self.on_tab_select.?(self.active_tab);
         }
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for tab view colors.
     pub fn setTheme(self: *TabView, theme_value: theme.Theme) void {
         const colors = theme.tabColors(theme_value);
+        const changed =
+            !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.active_fg, colors.active_fg) or
+            !std.meta.eql(self.active_bg, colors.active_bg) or
+            !std.meta.eql(self.inactive_fg, colors.inactive_fg) or
+            !std.meta.eql(self.inactive_bg, colors.inactive_bg) or
+            !std.meta.eql(self.border_fg, colors.border_fg);
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.active_fg = colors.active_fg;
@@ -489,6 +508,7 @@ pub const TabView = struct {
         self.inactive_bg = colors.inactive_bg;
         self.border_fg = colors.border_fg;
         self.tab_bar.setTabColors(self.fg, self.bg, self.active_fg, self.active_bg, self.inactive_fg, self.inactive_bg);
+        if (changed) self.widget.markDirty();
     }
 
     /// Move a tab to a new index for reordering.
@@ -507,31 +527,36 @@ pub const TabView = struct {
 
         self.syncHeader();
         self.syncVisibility();
+        self.widget.markDirty();
     }
 
     /// Set the active tab
     pub fn setActiveTab(self: *TabView, index: usize) !void {
         if (self.tabs.items.len == 0) {
+            const changed = self.active_tab != 0;
             self.active_tab = 0;
             self.tab_bar.setActive(0);
+            if (changed) self.widget.markDirty();
             return;
         }
 
         const clamped = @min(index, self.tabs.items.len - 1);
         if (clamped == self.active_tab) {
-            try self.ensureTabLoaded(clamped);
+            const loaded = try self.ensureTabLoaded(clamped);
             self.syncVisibility();
+            if (loaded) self.widget.markDirty();
             return;
         }
 
         self.active_tab = clamped;
-        try self.ensureTabLoaded(clamped);
+        _ = try self.ensureTabLoaded(clamped);
         self.syncVisibility();
         self.tab_bar.setActive(clamped);
 
         if (self.on_tab_select) |cb| {
             cb(self.active_tab);
         }
+        self.widget.markDirty();
     }
 
     /// Get the active tab index
@@ -542,12 +567,19 @@ pub const TabView = struct {
     /// Get the active tab content widget
     pub fn getActiveContent(self: *TabView) !?*base.Widget {
         if (self.tabs.items.len == 0) return null;
-        try self.ensureTabLoaded(self.active_tab);
+        _ = try self.ensureTabLoaded(self.active_tab);
         return self.tabs.items[self.active_tab].content;
     }
 
     /// Set the tab view colors
     pub fn setColors(self: *TabView, fg: render.Color, bg: render.Color, active_fg: render.Color, active_bg: render.Color, inactive_fg: render.Color, inactive_bg: render.Color) void {
+        const changed =
+            !std.meta.eql(self.fg, fg) or
+            !std.meta.eql(self.bg, bg) or
+            !std.meta.eql(self.active_fg, active_fg) or
+            !std.meta.eql(self.active_bg, active_bg) or
+            !std.meta.eql(self.inactive_fg, inactive_fg) or
+            !std.meta.eql(self.inactive_bg, inactive_bg);
         self.fg = fg;
         self.bg = bg;
         self.active_fg = active_fg;
@@ -555,12 +587,15 @@ pub const TabView = struct {
         self.inactive_fg = inactive_fg;
         self.inactive_bg = inactive_bg;
         self.configureHeader();
+        if (changed) self.widget.markDirty();
     }
 
     /// Set the border options
     pub fn setBorder(self: *TabView, show_border: bool, border_fg: render.Color) void {
+        if (self.show_border == show_border and std.meta.eql(self.border_fg, border_fg)) return;
         self.show_border = show_border;
         self.border_fg = border_fg;
+        self.widget.markDirty();
     }
 
     /// Set the on-tab-select callback
@@ -575,13 +610,16 @@ pub const TabView = struct {
 
     /// Enable close controls even for tabs not explicitly marked closable.
     pub fn setAllowClosing(self: *TabView, allow: bool) void {
+        if (self.tab_bar.allow_close == allow) return;
         self.tab_bar.allow_close = allow;
+        self.tab_bar.widget.markDirty();
+        self.widget.markDirty();
     }
 
-    fn ensureTabLoaded(self: *TabView, idx: usize) !void {
-        if (idx >= self.tabs.items.len) return;
+    fn ensureTabLoaded(self: *TabView, idx: usize) !bool {
+        if (idx >= self.tabs.items.len) return false;
         var tab = &self.tabs.items[idx];
-        if (tab.loaded or tab.loader == null) return;
+        if (tab.loaded or tab.loader == null) return false;
 
         const builder = tab.loader.?;
         const content = try builder(self.allocator);
@@ -594,6 +632,7 @@ pub const TabView = struct {
 
         tab.content = content;
         tab.loaded = true;
+        return true;
     }
 
     fn detachTabContent(self: *TabView, tab: *TabItem) void {
@@ -681,7 +720,7 @@ pub const TabView = struct {
         }
 
         if (self.tabs.items.len > 0) {
-            try self.ensureTabLoaded(self.active_tab);
+            _ = try self.ensureTabLoaded(self.active_tab);
             if (self.tabs.items[self.active_tab].content) |content| {
                 try content.draw(renderer);
             }
@@ -1241,6 +1280,65 @@ test "tab bar clips edge coordinates before u16 overflow" {
     try std.testing.expectEqual(@as(usize, 0), tab_bar.active_tab);
 }
 
+test "tab bar visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    var tab_bar = try TabBar.init(alloc);
+    defer tab_bar.deinit();
+
+    const tabs = [_]TabItem{
+        .{ .title = "one" },
+        .{ .title = "two" },
+    };
+
+    try tab_bar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+
+    try tab_bar.widget.draw(&renderer);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setTabs(&tabs);
+    try std.testing.expect(tab_bar.widget.dirty);
+
+    try tab_bar.widget.draw(&renderer);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setTabs(&tabs);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setActive(1);
+    try std.testing.expect(tab_bar.widget.dirty);
+
+    try tab_bar.widget.draw(&renderer);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setActive(1);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setTabColors(
+        render.Color.named(.red),
+        render.Color.named(.black),
+        render.Color.named(.white),
+        render.Color.named(.blue),
+        render.Color.named(.green),
+        render.Color.named(.black),
+    );
+    try std.testing.expect(tab_bar.widget.dirty);
+
+    try tab_bar.widget.draw(&renderer);
+    try std.testing.expect(!tab_bar.widget.dirty);
+
+    tab_bar.setTabColors(
+        render.Color.named(.red),
+        render.Color.named(.black),
+        render.Color.named(.white),
+        render.Color.named(.blue),
+        render.Color.named(.green),
+        render.Color.named(.black),
+    );
+    try std.testing.expect(!tab_bar.widget.dirty);
+}
+
 test "tab view clamps active tab index" {
     const alloc = std.testing.allocator;
     var tab_view = try TabView.init(alloc);
@@ -1257,4 +1355,125 @@ test "tab view clamps active tab index" {
     try tab_view.setActiveTab(9);
     try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
     try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
+}
+
+test "tab view visible mutations mark dirty" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(3, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 24, 6));
+    var renderer = try render.Renderer.init(alloc, 24, 6);
+    defer renderer.deinit();
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    var first = Dummy{};
+    try tab_view.addTab("one", &first.widget);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 24, 6));
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    var second = Dummy{};
+    try tab_view.addTab("two", &second.widget);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 24, 6));
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    try tab_view.setActiveTab(1);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    try tab_view.setActiveTab(1);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setColors(
+        render.Color.named(.red),
+        render.Color.named(.black),
+        render.Color.named(.white),
+        render.Color.named(.blue),
+        render.Color.named(.green),
+        render.Color.named(.black),
+    );
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setColors(
+        render.Color.named(.red),
+        render.Color.named(.black),
+        render.Color.named(.white),
+        render.Color.named(.blue),
+        render.Color.named(.green),
+        render.Color.named(.black),
+    );
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setBorder(false, render.Color.named(.white));
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setBorder(false, render.Color.named(.white));
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setAllowClosing(true);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.setAllowClosing(true);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.moveTab(1, 0);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.moveTab(0, 0);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.removeTab(0);
+    try std.testing.expect(tab_view.widget.dirty);
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expect(!tab_view.widget.dirty);
+
+    tab_view.removeTab(9);
+    try std.testing.expect(!tab_view.widget.dirty);
 }
