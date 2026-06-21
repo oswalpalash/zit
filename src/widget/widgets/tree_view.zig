@@ -151,6 +151,14 @@ pub const TreeView = struct {
         }
     }
 
+    fn clampSelection(self: *TreeView) void {
+        if (self.visible.items.len == 0) {
+            self.selected = 0;
+        } else if (self.selected >= self.visible.items.len) {
+            self.selected = self.visible.items.len - 1;
+        }
+    }
+
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
         const value = @as(u32, origin) + @as(u32, offset);
         return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
@@ -239,6 +247,7 @@ pub const TreeView = struct {
 
         try self.syncVisible();
         if (self.visible.items.len == 0) return false;
+        self.clampSelection();
 
         switch (event) {
             .key => |key| {
@@ -365,6 +374,46 @@ test "tree view expands and navigates" {
     const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
     _ = try tree.widget.handleEvent(down);
     try std.testing.expect(tree.selected == 1);
+}
+
+test "tree view clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    _ = try tree.addRoot("first");
+    _ = try tree.addRoot("second");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 2));
+    try tree.syncVisible();
+    try std.testing.expectEqual(@as(usize, 2), tree.visible.items.len);
+
+    tree.selected = std.math.maxInt(usize);
+    const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
+    try std.testing.expect(!try tree.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), tree.selected);
+
+    const up = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.UP, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 0), tree.selected);
+}
+
+test "tree view clamps stale selection before toggling node" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    const first = try tree.addRoot("first");
+    const second = try tree.addRoot("second");
+    _ = try tree.addChild(second, "child");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 3));
+    try tree.syncVisible();
+
+    tree.selected = std.math.maxInt(usize);
+    const enter = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.ENTER, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(enter));
+    try std.testing.expectEqual(@as(usize, 1), tree.selected);
+    try std.testing.expect(!tree.nodes.items[first].expanded);
+    try std.testing.expect(tree.nodes.items[second].expanded);
 }
 
 test "tree view lazily rebuilds visible cache" {
