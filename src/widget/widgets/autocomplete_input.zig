@@ -167,6 +167,7 @@ pub const AutocompleteInput = struct {
 
         if (event == .key and self.widget.focused and self.filtered.items.len > 0) {
             const key_event = event.key;
+            self.clampSelection();
             switch (key_event.key) {
                 input.KeyCode.UP => {
                     if (self.selected > 0) self.selected -= 1;
@@ -239,8 +240,11 @@ pub const AutocompleteInput = struct {
     }
 
     fn clampSelection(self: *AutocompleteInput) void {
-        if (self.selected >= self.filtered.items.len) {
-            self.selected = if (self.filtered.items.len == 0) 0 else 0;
+        const visible_items = @min(self.filtered.items.len, self.max_visible);
+        if (visible_items == 0) {
+            self.selected = 0;
+        } else if (self.selected >= visible_items) {
+            self.selected = visible_items - 1;
         }
     }
 
@@ -320,6 +324,44 @@ test "autocomplete selection commits suggestion" {
     const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(enter_event));
     try std.testing.expectEqualStrings("two", ac.input_field.getText());
+}
+
+test "autocomplete clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.widget.focused = true;
+    ac.setMaxVisible(2);
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    ac.selected = std.math.maxInt(usize);
+
+    const down_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, input.KeyModifiers{}) };
+    try std.testing.expect(try ac.widget.handleEvent(down_event));
+    try std.testing.expectEqual(@as(usize, 1), ac.selected);
+
+    const up_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, input.KeyModifiers{}) };
+    try std.testing.expect(try ac.widget.handleEvent(up_event));
+    try std.testing.expectEqual(@as(usize, 0), ac.selected);
+}
+
+test "autocomplete accepts clamped stale selection" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.widget.focused = true;
+    ac.setMaxVisible(2);
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    ac.selected = std.math.maxInt(usize);
+
+    const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
+    try std.testing.expect(try ac.widget.handleEvent(enter_event));
+    try std.testing.expectEqualStrings("alpine", ac.input_field.getText());
 }
 
 test "autocomplete clips popup edge coordinates before u16 overflow" {
