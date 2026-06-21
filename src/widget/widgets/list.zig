@@ -227,21 +227,32 @@ pub const List = struct {
 
     /// Set the selected item
     pub fn setSelectedIndex(self: *List, index: usize) void {
+        _ = self.trySetSelectedIndex(index);
+    }
+
+    fn trySetSelectedIndex(self: *List, index: usize) bool {
+        const previous_selected_index = self.selected_index;
+        const previous_first_visible_index = self.first_visible_index;
+        const previous_scroll_current = self.scroll_driver.current;
+        const previous_scroll_target = self.scroll_driver.target;
+
         const count = self.itemCount();
         if (count == 0) {
             if (self.selected_index != 0) {
                 self.selected_index = 0;
                 self.widget.markDirty();
-                return;
+                return true;
             }
             self.selected_index = 0;
-            return;
+            return false;
         }
 
         const clamped_index = @min(index, count - 1);
         if (clamped_index == self.selected_index) {
             self.ensureItemVisible(self.selected_index);
-            return;
+            return previous_first_visible_index != self.first_visible_index or
+                previous_scroll_current != self.scroll_driver.current or
+                previous_scroll_target != self.scroll_driver.target;
         }
 
         const old_index = self.selected_index;
@@ -255,6 +266,10 @@ pub const List = struct {
         if (old_index != self.selected_index and self.on_select != null) {
             self.on_select.?(self.selected_index, self.getSelectedItem() orelse "");
         }
+        return previous_selected_index != self.selected_index or
+            previous_first_visible_index != self.first_visible_index or
+            previous_scroll_current != self.scroll_driver.current or
+            previous_scroll_target != self.scroll_driver.target;
     }
 
     /// Get the selected item
@@ -801,7 +816,10 @@ pub const List = struct {
         // Handle key events
         if (event == .key and self.widget.focused and total_items > 0) {
             const key_event = event.key;
+            const previous_selected_index = self.selected_index;
             self.clampSelection();
+            const selection_was_clamped = previous_selected_index != self.selected_index;
+            if (selection_was_clamped) self.widget.markDirty();
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -811,44 +829,52 @@ pub const List = struct {
             if (input.editorActionForEvent(key_event, &profiles)) |action| {
                 switch (action) {
                     .cursor_down => {
-                        if (self.selected_index + 1 < total_items) {
-                            self.setSelectedIndex(self.selected_index + 1);
-                        }
-                        self.resetTypeahead();
-                        return true;
+                        const changed = if (self.selected_index + 1 < total_items)
+                            self.trySetSelectedIndex(self.selected_index + 1)
+                        else
+                            false;
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     .cursor_up => {
-                        if (self.selected_index > 0) {
-                            self.setSelectedIndex(self.selected_index - 1);
-                        }
-                        self.resetTypeahead();
-                        return true;
+                        const changed = if (self.selected_index > 0)
+                            self.trySetSelectedIndex(self.selected_index - 1)
+                        else
+                            false;
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     .page_down => {
                         const next = addUsizeSaturating(self.selected_index, self.visible_items_count);
                         const new_index = @min(next, total_items - 1);
-                        self.setSelectedIndex(new_index);
-                        self.resetTypeahead();
-                        return true;
+                        const changed = self.trySetSelectedIndex(new_index);
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     .page_up => {
                         const new_index = if (self.selected_index > self.visible_items_count)
                             self.selected_index - self.visible_items_count
                         else
                             0;
-                        self.setSelectedIndex(new_index);
-                        self.resetTypeahead();
-                        return true;
+                        const changed = self.trySetSelectedIndex(new_index);
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     .line_start => {
-                        self.setSelectedIndex(0);
-                        self.resetTypeahead();
-                        return true;
+                        const changed = self.trySetSelectedIndex(0);
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     .line_end => {
-                        self.setSelectedIndex(total_items - 1);
-                        self.resetTypeahead();
-                        return true;
+                        const changed = self.trySetSelectedIndex(total_items - 1);
+                        const handled = changed or selection_was_clamped;
+                        if (handled) self.resetTypeahead();
+                        return handled;
                     },
                     else => {},
                 }
@@ -1120,6 +1146,58 @@ test "list clamps stale selection before keyboard navigation" {
 
     try std.testing.expect(try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
     try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+}
+
+test "list saturated keyboard navigation does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    try list.addItem("Gamma");
+    list.widget.focused = true;
+    try list.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
+
+    list.widget.clearDirty();
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.HOME, .{}) }));
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.PAGE_UP, .{}) }));
+    try std.testing.expect(!list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), list.selected_index);
+
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(list.widget.dirty);
+
+    list.setSelectedIndex(2);
+    list.widget.clearDirty();
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.END, .{}) }));
+    try std.testing.expect(!try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.PAGE_DOWN, .{}) }));
+    try std.testing.expect(!list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), list.selected_index);
+}
+
+test "list unchanged selection still consumes keyboard when visibility changes" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    try list.addItem("Gamma");
+    list.widget.focused = true;
+    try list.widget.layout(layout_module.Rect.init(0, 0, 12, 1));
+
+    list.selected_index = 2;
+    list.first_visible_index = 0;
+    list.scroll_driver.snap(0);
+    list.widget.clearDirty();
+
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.END, .{}) }));
+    try std.testing.expect(list.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), list.selected_index);
+    try std.testing.expectEqual(@as(usize, 2), list.first_visible_index);
 }
 
 test "list clamps stale selection before typeahead and activation" {
