@@ -74,20 +74,33 @@ pub const FileBrowser = struct {
     }
 
     pub fn setColors(self: *FileBrowser, fg: render.Color, bg: render.Color, highlight_fg: render.Color, highlight_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.highlight_fg, highlight_fg) and
+            std.meta.eql(self.highlight_bg, highlight_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.highlight_fg = highlight_fg;
         self.highlight_bg = highlight_bg;
+        self.widget.markDirty();
     }
 
     pub fn setBorder(self: *FileBrowser, border: render.BorderStyle, border_color: render.Color) void {
+        if (self.border == border and std.meta.eql(self.border_color, border_color)) return;
         self.border = border;
         self.border_color = border_color;
+        self.widget.markDirty();
     }
 
     pub fn setShowHidden(self: *FileBrowser, show: bool) !void {
+        if (self.show_hidden == show) return;
+        const previous = self.show_hidden;
         self.show_hidden = show;
-        try self.refresh();
+        self.refresh() catch |err| {
+            self.show_hidden = previous;
+            return err;
+        };
     }
 
     pub fn setOnFileSelect(self: *FileBrowser, callback: *const fn ([]const u8, bool) void) void {
@@ -132,6 +145,7 @@ pub const FileBrowser = struct {
         if (self.on_directory_change) |cb| {
             cb(self.current_path);
         }
+        self.widget.markDirty();
     }
 
     pub fn refresh(self: *FileBrowser) !void {
@@ -146,6 +160,7 @@ pub const FileBrowser = struct {
 
         self.resetTypeahead();
         self.ensureVisible();
+        self.widget.markDirty();
     }
 
     fn buildEntries(self: *FileBrowser, path: []const u8) !std.ArrayList(Entry) {
@@ -616,6 +631,57 @@ test "file browser typeahead selects entries" {
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
 }
 
+test "file browser visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    try tmp.dir.createDirPath(io, "nested");
+    {
+        const file = try tmp.dir.createFile(io, "visible.txt", .{});
+        file.close(io);
+    }
+    {
+        const file = try tmp.dir.createFile(io, ".hidden.txt", .{});
+        file.close(io);
+    }
+
+    const root_path = try tmp.dir.realPathFileAlloc(io, ".", alloc);
+    defer alloc.free(root_path);
+    const nested_path = try tmp.dir.realPathFileAlloc(io, "nested", alloc);
+    defer alloc.free(nested_path);
+
+    var browser = try FileBrowser.init(alloc, root_path);
+    defer browser.deinit();
+
+    browser.widget.clearDirty();
+    browser.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(browser.widget.dirty);
+    browser.widget.clearDirty();
+    browser.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!browser.widget.dirty);
+
+    browser.setBorder(.rounded, render.Color.named(.yellow));
+    try std.testing.expect(browser.widget.dirty);
+    browser.widget.clearDirty();
+    browser.setBorder(.rounded, render.Color.named(.yellow));
+    try std.testing.expect(!browser.widget.dirty);
+
+    try browser.setShowHidden(true);
+    try std.testing.expect(browser.widget.dirty);
+    browser.widget.clearDirty();
+    try browser.setShowHidden(true);
+    try std.testing.expect(!browser.widget.dirty);
+
+    try browser.setPath(nested_path);
+    try std.testing.expect(browser.widget.dirty);
+    browser.widget.clearDirty();
+
+    try browser.refresh();
+    try std.testing.expect(browser.widget.dirty);
+}
+
 test "file browser clamps stale selection before keyboard navigation" {
     const alloc = std.testing.allocator;
     var browser = try FileBrowser.init(alloc, ".");
@@ -697,10 +763,12 @@ test "file browser setPath preserves state when target cannot refresh" {
     defer alloc.free(old_path);
     const old_len = browser.entries.items.len;
     try std.testing.expect(old_len > 0);
+    browser.widget.clearDirty();
 
     try std.testing.expectError(error.NotDir, browser.setPath(file_path));
     try std.testing.expectEqualStrings(old_path, browser.current_path);
     try std.testing.expectEqual(old_len, browser.entries.items.len);
+    try std.testing.expect(!browser.widget.dirty);
 }
 
 test "file browser refresh preserves entries on allocation failure" {
@@ -723,6 +791,7 @@ test "file browser refresh preserves entries on allocation failure" {
     const old_len = browser.entries.items.len;
     const old_first = try alloc.dupe(u8, browser.entries.items[0].name);
     defer alloc.free(old_first);
+    browser.widget.clearDirty();
 
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
     const original_allocator = browser.allocator;
@@ -732,6 +801,36 @@ test "file browser refresh preserves entries on allocation failure" {
     try std.testing.expectError(error.OutOfMemory, browser.refresh());
     try std.testing.expectEqual(old_len, browser.entries.items.len);
     try std.testing.expectEqualStrings(old_first, browser.entries.items[0].name);
+    try std.testing.expect(!browser.widget.dirty);
+}
+
+test "file browser setShowHidden preserves state when refresh fails" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    try tmp.dir.createDirPath(io, "doomed");
+    {
+        const file = try tmp.dir.createFile(io, "doomed/stable.txt", .{});
+        file.close(io);
+    }
+
+    const doomed_path = try tmp.dir.realPathFileAlloc(io, "doomed", alloc);
+    defer alloc.free(doomed_path);
+
+    var browser = try FileBrowser.init(alloc, doomed_path);
+    defer browser.deinit();
+
+    const old_len = browser.entries.items.len;
+    try std.testing.expect(!browser.show_hidden);
+    browser.widget.clearDirty();
+
+    try tmp.dir.deleteTree(io, "doomed");
+    try std.testing.expectError(error.FileNotFound, browser.setShowHidden(true));
+    try std.testing.expect(!browser.show_hidden);
+    try std.testing.expectEqual(old_len, browser.entries.items.len);
+    try std.testing.expect(!browser.widget.dirty);
 }
 
 test "file browser clips entry names without splitting wide utf8 glyphs" {
