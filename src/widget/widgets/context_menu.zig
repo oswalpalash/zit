@@ -65,15 +65,18 @@ pub const ContextMenu = struct {
     }
 
     pub fn clear(self: *ContextMenu) void {
+        const changed = self.items.items.len != 0 or self.selected != 0;
         for (self.items.items) |item| {
             self.allocator.free(item.label);
         }
         self.items.clearRetainingCapacity();
         self.selected = 0;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setTheme(self: *ContextMenu, t: theme.Theme) !void {
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     pub fn setOnSelect(self: *ContextMenu, callback: *const fn (usize, MenuItem) void) void {
@@ -89,20 +92,37 @@ pub const ContextMenu = struct {
     }
 
     pub fn setMaxVisible(self: *ContextMenu, count: usize) void {
-        self.max_visible = @max(@as(usize, 1), count);
+        const next = @max(@as(usize, 1), count);
+        const previous_height = self.widget.rect.height;
+        const previous_selected = self.selected;
+        const changed = self.max_visible != next;
+        self.max_visible = next;
         self.clampSelection();
+        if (self.open) self.widget.rect.height = self.computedHeight();
+        if (changed or previous_selected != self.selected or (self.open and previous_height != self.widget.rect.height)) self.widget.markDirty();
     }
 
     pub fn openAt(self: *ContextMenu, x: u16, y: u16) void {
+        const previous_rect = self.widget.rect;
+        const was_open = self.open;
+        const previous_selected = self.selected;
         self.open = true;
         self.selected = 0;
         self.widget.rect.x = x;
         self.widget.rect.y = y;
         self.widget.rect.height = self.computedHeight();
+        const changed = !was_open or
+            previous_selected != self.selected or
+            previous_rect.x != self.widget.rect.x or
+            previous_rect.y != self.widget.rect.y or
+            previous_rect.height != self.widget.rect.height;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn close(self: *ContextMenu) void {
+        if (!self.open) return;
         self.open = false;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -399,6 +419,60 @@ test "context menu closes on outside click" {
     const click = input.Event{ .mouse = input.MouseEvent.init(input.MouseAction.press, 20, 20, 1, 0) };
     _ = try menu.widget.handleEvent(click);
     try std.testing.expect(!menu.open);
+}
+
+test "context menu direct state changes mark dirty" {
+    const alloc = std.testing.allocator;
+    var menu = try ContextMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("One", true, null);
+    try menu.addItem("Two", true, null);
+
+    var renderer = try render.Renderer.init(alloc, 16, 4);
+    defer renderer.deinit();
+
+    menu.openAt(0, 0);
+    try menu.widget.layout(layout_module.Rect.init(0, 0, 16, 4));
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.close();
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.close();
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.openAt(0, 0);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.openAt(0, 0);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.setMaxVisible(1);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.setMaxVisible(1);
+    try std.testing.expect(!menu.widget.dirty);
+
+    try menu.setTheme(theme.Theme.light());
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.clear();
+    try std.testing.expect(menu.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), menu.items.items.len);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.clear();
+    try std.testing.expect(!menu.widget.dirty);
 }
 
 test "context menu tolerates tiny and edge render rectangles" {
