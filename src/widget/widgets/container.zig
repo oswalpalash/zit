@@ -49,19 +49,30 @@ pub const Container = struct {
 
     /// Clean up container resources
     pub fn deinit(self: *Container) void {
+        for (self.children.items) |child| {
+            if (child.parent == &self.widget) {
+                child.parent = null;
+            }
+        }
         self.children.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
     /// Add a child widget to the container
     pub fn addChild(self: *Container, child: *base.Widget) !void {
-        if (self.childIndex(child) == null) {
+        const existing_index = self.childIndex(child);
+        if (existing_index == null) {
             try self.children.ensureUnusedCapacity(self.allocator, 1);
         }
 
-        self.removeChild(child);
+        const was_last = if (existing_index) |idx| idx + 1 == self.children.items.len else false;
+        const parent_changed = child.parent != &self.widget;
+        if (existing_index) |idx| {
+            _ = self.children.orderedRemove(idx);
+        }
         self.children.appendAssumeCapacity(child);
         child.parent = &self.widget;
+        if (parent_changed or !was_last) self.widget.markDirty();
     }
 
     fn childIndex(self: *const Container, child: *const base.Widget) ?usize {
@@ -76,7 +87,10 @@ pub const Container = struct {
         for (self.children.items, 0..) |c, i| {
             if (c == child) {
                 _ = self.children.orderedRemove(i);
-                child.parent = null;
+                if (child.parent == &self.widget) {
+                    child.parent = null;
+                }
+                self.widget.markDirty();
                 break;
             }
         }
@@ -84,21 +98,27 @@ pub const Container = struct {
 
     /// Set the container colors
     pub fn setColors(self: *Container, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
         self.fg = fg;
         self.bg = bg;
+        self.widget.markDirty();
     }
 
     /// Set the border style
     pub fn setBorder(self: *Container, border: render.BorderStyle) void {
+        if (self.border == border and self.show_border == (border != .none)) return;
         self.border = border;
         self.show_border = border != .none;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for container colors.
     pub fn setTheme(self: *Container, theme_value: theme.Theme) void {
         const colors = theme.containerColors(theme_value);
+        if (std.meta.eql(self.fg, colors.fg) and std.meta.eql(self.bg, colors.bg)) return;
         self.fg = colors.fg;
         self.bg = colors.bg;
+        self.widget.markDirty();
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -294,6 +314,68 @@ test "container lays out child and forwards events" {
     try std.testing.expect(dummy.handled);
 }
 
+test "container marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    defer second.deinit();
+
+    try container.addChild(&first.widget);
+    try container.widget.layout(layout_module.Rect.init(0, 0, 20, 5));
+    var renderer = try render.Renderer.init(alloc, 20, 5);
+    defer renderer.deinit();
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setBorder(.single);
+    try std.testing.expect(container.widget.dirty);
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+    container.setBorder(.single);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+    );
+    try std.testing.expect(container.widget.dirty);
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+    container.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+    );
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setTheme(theme.Theme.dark());
+    try std.testing.expect(container.widget.dirty);
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+    container.setTheme(theme.Theme.dark());
+    try std.testing.expect(!container.widget.dirty);
+
+    try container.addChild(&first.widget);
+    try std.testing.expect(!container.widget.dirty);
+
+    try container.addChild(&second.widget);
+    try std.testing.expect(container.widget.dirty);
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    try container.addChild(&first.widget);
+    try std.testing.expect(container.widget.dirty);
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.removeChild(&first.widget);
+    try std.testing.expect(container.widget.dirty);
+}
+
 test "container preferred size is zero without children" {
     const alloc = std.testing.allocator;
     var container = try Container.init(alloc);
@@ -481,4 +563,17 @@ test "container add child preserves existing state when allocation fails" {
     try std.testing.expectEqual(&existing.widget, container.children.items[0]);
     try std.testing.expectEqual(&container.widget, existing.widget.parent.?);
     try std.testing.expect(new_child.widget.parent == null);
+}
+
+test "container deinit detaches child parent links" {
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+
+    var child = try @import("label.zig").Label.init(alloc, "child");
+    defer child.deinit();
+
+    try container.addChild(&child.widget);
+    container.deinit();
+
+    try std.testing.expect(child.widget.parent == null);
 }
