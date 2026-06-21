@@ -291,6 +291,7 @@ pub const RadioGroup = struct {
         const rect = self.widget.rect;
         const fg = render.Color.named(render.NamedColor.default);
         const bg = render.Color.named(render.NamedColor.default);
+        self.clampSelection();
 
         const max_visible = @min(clampUsizeToU16(self.options.items.len), rect.height);
         var y: u16 = 0;
@@ -1265,6 +1266,7 @@ pub const CommandPalette = struct {
         const bg = render.Color.named(.black);
         if (rect.width == 0 or rect.height == 0) return;
 
+        self.clampSelection();
         renderer.drawBox(rect.x, rect.y, rect.width, rect.height, .rounded, fg, bg, render.Style{ .bold = true });
         if (rect.height < 3) return;
 
@@ -1816,6 +1818,19 @@ test "radio group keyboard clamps stale selection" {
     try std.testing.expectEqual(@as(usize, 1), radio.selected);
 }
 
+test "radio group draw clamps stale selection" {
+    const alloc = std.testing.allocator;
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{ "A", "B", "C" });
+    defer radio.deinit();
+
+    radio.selected = std.math.maxInt(usize);
+
+    var snap = try testing.renderWidget(alloc, &radio.widget, layout_module.Size.init(6, 3));
+    defer snap.deinit(alloc);
+    try snap.expectEqual("( ) A \n( ) B \n(*) C \n");
+    try std.testing.expectEqual(@as(usize, 2), radio.selected);
+}
+
 test "radio group keyboard handles empty options" {
     const alloc = std.testing.allocator;
     var radio = try RadioGroup.init(alloc, &[_][]const u8{});
@@ -2109,6 +2124,19 @@ test "command palette clamps stale selection before execution" {
     try std.testing.expect(try palette.widget.handleEvent(.{ .key = input.KeyEvent.init('\n', .{}) }));
     try std.testing.expectEqual(@as(usize, 1), palette.selected);
     try std.testing.expectEqual(@as(?usize, 1), command_palette_executed_index);
+}
+
+test "command palette draw clamps stale selection" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{ "Open file", "Run tests" });
+    defer palette.deinit();
+
+    palette.selected = std.math.maxInt(usize);
+
+    var snap = try testing.renderWidget(alloc, &palette.widget, layout_module.Size.init(14, 6));
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try std.testing.expectEqual(@as(usize, 1), palette.selected);
 }
 
 test "command palette ignores execution without commands" {
