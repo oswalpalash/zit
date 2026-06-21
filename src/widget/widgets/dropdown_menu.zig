@@ -99,6 +99,7 @@ pub const DropdownMenu = struct {
             .enabled = enabled,
             .data = data,
         });
+        self.widget.markDirty();
     }
 
     /// Remove an item from the dropdown menu
@@ -124,10 +125,13 @@ pub const DropdownMenu = struct {
             self.setSelectedIndex(self.items.items.len - 1);
         }
         self.clampSelection();
+        self.widget.markDirty();
     }
 
     /// Set the dropdown label/caption
     pub fn setLabel(self: *DropdownMenu, label: []const u8) !void {
+        if (std.mem.eql(u8, self.label, label)) return;
+
         const label_copy = if (label.len == 0) "" else try self.allocator.dupe(u8, label);
 
         if (self.label.len > 0) {
@@ -136,6 +140,7 @@ pub const DropdownMenu = struct {
 
         self.label = label_copy;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.menu), self.label, "");
+        self.widget.markDirty();
     }
 
     /// Set the selected item
@@ -155,12 +160,25 @@ pub const DropdownMenu = struct {
         if (old_index != self.selected_index and self.on_select != null) {
             self.on_select.?(self.selected_index);
         }
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for dropdown colors.
     pub fn setTheme(self: *DropdownMenu, theme_value: theme.Theme) void {
         const base_colors = theme.controlColors(theme_value);
         const selected = theme.selectionColors(theme_value);
+        if (std.meta.eql(self.fg, base_colors.fg) and
+            std.meta.eql(self.bg, base_colors.bg) and
+            std.meta.eql(self.selected_fg, selected.fg) and
+            std.meta.eql(self.selected_bg, selected.bg) and
+            std.meta.eql(self.focused_fg, selected.focused_fg) and
+            std.meta.eql(self.focused_bg, selected.focused_bg) and
+            std.meta.eql(self.disabled_fg, base_colors.disabled_fg) and
+            std.meta.eql(self.disabled_bg, base_colors.disabled_bg))
+        {
+            return;
+        }
+
         self.fg = base_colors.fg;
         self.bg = base_colors.bg;
         self.selected_fg = selected.fg;
@@ -169,6 +187,7 @@ pub const DropdownMenu = struct {
         self.focused_bg = selected.focused_bg;
         self.disabled_fg = base_colors.disabled_fg;
         self.disabled_bg = base_colors.disabled_bg;
+        self.widget.markDirty();
     }
 
     /// Get the selected item index
@@ -196,25 +215,39 @@ pub const DropdownMenu = struct {
 
     /// Open the dropdown menu
     pub fn open(self: *DropdownMenu) void {
+        if (self.is_open) return;
         self.is_open = true;
+        self.widget.markDirty();
     }
 
     /// Close the dropdown menu
     pub fn close(self: *DropdownMenu) void {
+        if (!self.is_open) return;
         self.is_open = false;
+        self.widget.markDirty();
     }
 
     /// Toggle the dropdown menu state
     pub fn toggle(self: *DropdownMenu) void {
         self.is_open = !self.is_open;
+        self.widget.markDirty();
     }
 
     /// Set the dropdown menu colors
     pub fn setColors(self: *DropdownMenu, fg: render.Color, bg: render.Color, selected_fg: render.Color, selected_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.selected_fg, selected_fg) and
+            std.meta.eql(self.selected_bg, selected_bg))
+        {
+            return;
+        }
+
         self.fg = fg;
         self.bg = bg;
         self.selected_fg = selected_fg;
         self.selected_bg = selected_bg;
+        self.widget.markDirty();
     }
 
     /// Set the on-select callback
@@ -756,4 +789,90 @@ test "dropdown menu preferred width saturates long text" {
 
     try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), size.width);
     try std.testing.expectEqual(@as(u16, 1), size.height);
+}
+
+test "dropdown menu marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+
+    menu.widget.rect = layout_module.Rect.init(0, 0, 16, 4);
+    var renderer = try render.Renderer.init(alloc, 16, 4);
+    defer renderer.deinit();
+
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    try menu.setLabel("Choose");
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    try menu.setLabel("Choose");
+    try std.testing.expect(!menu.widget.dirty);
+
+    try menu.addItem("One", true, null);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    try menu.addItem("Two", true, null);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.setSelectedIndex(1);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.setSelectedIndex(1);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.open();
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.open();
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.close();
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.close();
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.toggle();
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.blue),
+    );
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.setColors(
+        render.Color.named(render.NamedColor.white),
+        render.Color.named(render.NamedColor.black),
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.blue),
+    );
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.setTheme(theme.Theme.solarizedLight());
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.setTheme(theme.Theme.solarizedLight());
+    try std.testing.expect(!menu.widget.dirty);
+
+    menu.removeItem(0);
+    try std.testing.expect(menu.widget.dirty);
+    try menu.widget.draw(&renderer);
+    try std.testing.expect(!menu.widget.dirty);
+    menu.removeItem(42);
+    try std.testing.expect(!menu.widget.dirty);
 }
