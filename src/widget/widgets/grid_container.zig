@@ -128,17 +128,17 @@ pub const GridContainer = struct {
     }
 
     pub fn setColumns(self: *GridContainer, tracks: []const layout_module.GridTrack) !void {
-        const changed = !tracksEqual(self.layout.column_tracks.items, tracks);
+        if (tracksEqual(self.layout.column_tracks.items, tracks)) return;
         self.clearChildren();
         _ = try self.layout.setColumns(tracks);
-        if (changed) self.widget.markDirty();
+        self.widget.markDirty();
     }
 
     pub fn setRows(self: *GridContainer, tracks: []const layout_module.GridTrack) !void {
-        const changed = !tracksEqual(self.layout.row_tracks.items, tracks);
+        if (tracksEqual(self.layout.row_tracks.items, tracks)) return;
         self.clearChildren();
         _ = try self.layout.setRows(tracks);
-        if (changed) self.widget.markDirty();
+        self.widget.markDirty();
     }
 
     pub fn setPadding(self: *GridContainer, padding_value: layout_module.EdgeInsets) void {
@@ -418,6 +418,58 @@ test "grid container direct layout mutations mark dirty" {
 
     try grid.setRows(&.{ .{ .fixed = 1 }, .{ .flex = 1 } });
     try std.testing.expect(grid.widget.dirty);
+}
+
+test "grid container unchanged tracks preserve children" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 2, 1);
+    defer grid.deinit();
+
+    var child = Dummy{};
+    try grid.addChild(&child.widget, 0, 0);
+    try grid.widget.layout(layout_module.Rect.init(0, 0, 10, 2));
+    var renderer = try render.Renderer.init(alloc, 10, 2);
+    defer renderer.deinit();
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.setColumns(&.{ .{ .flex = 1 }, .{ .flex = 1 } });
+    try std.testing.expect(!grid.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), grid.children.items.len);
+    try std.testing.expectEqual(&child.widget, grid.children.items[0].widget);
+    try std.testing.expectEqual(&grid.widget, child.widget.parent.?);
+    try std.testing.expect(grid.layout.cells.items[0].?.ctx == @as(*anyopaque, @ptrCast(&child.widget)));
+
+    try grid.setRows(&.{.{ .flex = 1 }});
+    try std.testing.expect(!grid.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), grid.children.items.len);
+    try std.testing.expectEqual(&child.widget, grid.children.items[0].widget);
+    try std.testing.expectEqual(&grid.widget, child.widget.parent.?);
+    try std.testing.expect(grid.layout.cells.items[0].?.ctx == @as(*anyopaque, @ptrCast(&child.widget)));
 }
 
 test "grid container add child preserves state when child list allocation fails" {
