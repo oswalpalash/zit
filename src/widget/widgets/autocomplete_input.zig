@@ -83,13 +83,19 @@ pub const AutocompleteInput = struct {
         self.filtered.deinit(self.allocator);
         self.suggestions = next_suggestions;
         self.filtered = next_filtered;
-        self.clampSelection();
+        _ = self.clampSelection();
         self.widget.markDirty();
     }
 
     pub fn setMaxVisible(self: *AutocompleteInput, count: usize) void {
-        self.max_visible = @max(count, @as(usize, 1));
-        self.clampSelection();
+        const next = @max(count, @as(usize, 1));
+        if (self.max_visible == next) {
+            if (self.clampSelection()) self.widget.markDirty();
+            return;
+        }
+
+        self.max_visible = next;
+        _ = self.clampSelection();
         self.widget.markDirty();
     }
 
@@ -101,7 +107,7 @@ pub const AutocompleteInput = struct {
         self.filtered.deinit(self.allocator);
         self.filtered = next_filtered;
         self.case_sensitive = enabled;
-        self.clampSelection();
+        _ = self.clampSelection();
         self.widget.markDirty();
     }
 
@@ -128,7 +134,7 @@ pub const AutocompleteInput = struct {
         try self.input_field.widget.layout(input_rect);
         try self.input_field.widget.draw(renderer);
 
-        self.clampSelection();
+        _ = self.clampSelection();
         const available_rows = if (rect.height > 1) rect.height - 1 else 0;
         const visible_rows: usize = @intCast(@min(@as(usize, @intCast(available_rows)), @min(self.filtered.items.len, self.max_visible)));
         if (visible_rows == 0) return;
@@ -172,7 +178,7 @@ pub const AutocompleteInput = struct {
 
         if (event == .key and self.widget.focused and self.filtered.items.len > 0) {
             const key_event = event.key;
-            self.clampSelection();
+            _ = self.clampSelection();
             switch (key_event.key) {
                 input.KeyCode.UP => {
                     if (self.selected > 0) self.selected -= 1;
@@ -220,7 +226,7 @@ pub const AutocompleteInput = struct {
 
         self.filtered.deinit(self.allocator);
         self.filtered = next_filtered;
-        self.clampSelection();
+        _ = self.clampSelection();
         self.widget.markDirty();
     }
 
@@ -244,13 +250,15 @@ pub const AutocompleteInput = struct {
         return next_filtered;
     }
 
-    fn clampSelection(self: *AutocompleteInput) void {
+    fn clampSelection(self: *AutocompleteInput) bool {
+        const previous = self.selected;
         const visible_items = @min(self.filtered.items.len, self.max_visible);
         if (visible_items == 0) {
             self.selected = 0;
         } else if (self.selected >= visible_items) {
             self.selected = visible_items - 1;
         }
+        return self.selected != previous;
     }
 
     fn freeSuggestionList(self: *AutocompleteInput, suggestions: *std.ArrayList([]u8)) void {
@@ -365,6 +373,30 @@ test "autocomplete setMaxVisible clamps stale visible selection" {
 
     ac.setMaxVisible(1);
     try std.testing.expectEqual(@as(usize, 0), ac.selected);
+}
+
+test "autocomplete setMaxVisible marks dirty only when visible state changes" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+
+    ac.widget.clearDirty();
+    ac.setMaxVisible(2);
+    try std.testing.expect(ac.widget.dirty);
+
+    ac.widget.clearDirty();
+    ac.setMaxVisible(2);
+    try std.testing.expect(!ac.widget.dirty);
+
+    ac.selected = std.math.maxInt(usize);
+    ac.widget.clearDirty();
+    ac.setMaxVisible(2);
+    try std.testing.expect(ac.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), ac.selected);
 }
 
 test "autocomplete draw clamps stale selection" {
