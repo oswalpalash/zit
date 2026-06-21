@@ -14,6 +14,10 @@ pub const ProgressDirection = enum {
     vertical,
 };
 
+fn floatEql(a: f32, b: f32) bool {
+    return @abs(a - b) <= 0.0001;
+}
+
 /// Progress bar widget
 pub const ProgressBar = struct {
     /// Base widget
@@ -108,6 +112,14 @@ pub const ProgressBar = struct {
     /// Set the progress value (0-100)
     pub fn setProgress(self: *ProgressBar, progress: u8) void {
         const clamped = @min(progress, 100);
+        const target: f32 = @floatFromInt(clamped);
+        if (self.progress == clamped and
+            floatEql(self.progress_driver.target, target) and
+            (self.animator != null or floatEql(self.progress_driver.current, target)))
+        {
+            return;
+        }
+
         self.progress = clamped;
         if (self.animator) |anim| {
             const update = struct {
@@ -120,16 +132,16 @@ pub const ProgressBar = struct {
             _ = self.progress_driver.animate(
                 anim,
                 self.progress_driver.current,
-                @floatFromInt(clamped),
+                target,
                 self.progress_duration_ms,
                 animation.Easing.easeInOutQuad,
                 update,
                 @ptrCast(self),
             ) catch {
-                self.progress_driver.snap(@floatFromInt(clamped));
+                self.progress_driver.snap(target);
             };
         } else {
-            self.progress_driver.snap(@floatFromInt(clamped));
+            self.progress_driver.snap(target);
         }
         self.widget.markDirty();
     }
@@ -155,6 +167,11 @@ pub const ProgressBar = struct {
 
     /// Set the progress bar colors
     pub fn setColors(self: *ProgressBar, fg: render.Color, bg: render.Color, fill_fg: render.Color, fill_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.fill_fg, fill_fg) and
+            std.meta.eql(self.fill_bg, fill_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.fill_fg = fill_fg;
@@ -166,6 +183,11 @@ pub const ProgressBar = struct {
 
     /// Smoothly transition fill colors when an animator is available.
     pub fn transitionFillColors(self: *ProgressBar, fill_fg: render.Color, fill_bg: render.Color, duration_ms: u64) !void {
+        if (std.meta.eql(self.fill_fg, fill_fg) and
+            std.meta.eql(self.fill_bg, fill_bg) and
+            std.meta.eql(self.fill_fg_transition.target, fill_fg) and
+            std.meta.eql(self.fill_bg_transition.target, fill_bg)) return;
+
         self.fill_fg = fill_fg;
         self.fill_bg = fill_bg;
         if (self.animator) |anim| {
@@ -339,6 +361,80 @@ test "progress bar updates progress and renders fill" {
     var snap = try testing.renderWidget(alloc, &bar.widget, layout_module.Size.init(10, 1));
     defer snap.deinit(alloc);
     try std.testing.expect(std.mem.indexOfScalar(u8, snap.text(), '%') != null);
+}
+
+test "progress bar visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    bar.widget.clearDirty();
+    bar.setProgress(50);
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setProgress(50);
+    try std.testing.expect(!bar.widget.dirty);
+    bar.setProgress(150);
+    try std.testing.expect(bar.widget.dirty);
+    try std.testing.expectEqual(@as(u8, 100), bar.progress);
+    bar.widget.clearDirty();
+    bar.setProgress(100);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    bar.setDirection(.vertical);
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setDirection(.vertical);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    bar.setShowPercentage(false);
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setShowPercentage(false);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    bar.setFillChar('#');
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setFillChar('#');
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    bar.setBorder(.rounded);
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setBorder(.rounded);
+    try std.testing.expect(!bar.widget.dirty);
+}
+
+test "progress bar colors and theme mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var bar = try ProgressBar.init(alloc);
+    defer bar.deinit();
+
+    bar.widget.clearDirty();
+    bar.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.green), render.Color.named(.blue));
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.green), render.Color.named(.blue));
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    try bar.transitionFillColors(render.Color.named(.red), render.Color.named(.yellow), 120);
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    try bar.transitionFillColors(render.Color.named(.red), render.Color.named(.yellow), 120);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.widget.clearDirty();
+    bar.setTheme(theme.Theme.light());
+    try std.testing.expect(bar.widget.dirty);
+    bar.widget.clearDirty();
+    bar.setTheme(theme.Theme.light());
+    try std.testing.expect(!bar.widget.dirty);
 }
 
 test "progress bar tolerates zero size" {
