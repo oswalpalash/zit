@@ -1692,6 +1692,37 @@ pub const WizardStepper = struct {
         }
     }
 
+    fn activeStepIndex(self: *WizardStepper) ?usize {
+        if (self.steps.items.len == 0) return null;
+        return @min(self.current, self.steps.items.len - 1);
+    }
+
+    fn previousStep(self: *WizardStepper) bool {
+        const active = self.activeStepIndex() orelse return false;
+        if (active == 0) {
+            if (self.current != active) {
+                self.setStep(active);
+                return true;
+            }
+            return false;
+        }
+        self.setStep(active - 1);
+        return true;
+    }
+
+    fn nextStep(self: *WizardStepper) bool {
+        const active = self.activeStepIndex() orelse return false;
+        if (active + 1 >= self.steps.items.len) {
+            if (self.current != active) {
+                self.setStep(active);
+                return true;
+            }
+            return false;
+        }
+        self.setStep(active + 1);
+        return true;
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *WizardStepper = @fieldParentPtr("widget", widget_ref);
@@ -1737,12 +1768,10 @@ pub const WizardStepper = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        if (self.current > 0) self.current -= 1;
-                        return true;
+                        return self.previousStep();
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        if (self.current + 1 < self.steps.items.len) self.current += 1;
-                        return true;
+                        return self.nextStep();
                     },
                     else => {},
                 }
@@ -2507,6 +2536,47 @@ test "wizard stepper marks dirty when current step changes" {
     try std.testing.expect(!wizard.widget.dirty);
     wizard.setStep(99);
     try std.testing.expect(!wizard.widget.dirty);
+}
+
+test "wizard stepper ignores saturated unchanged navigation" {
+    const alloc = std.testing.allocator;
+    var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+
+    wizard.widget.focused = true;
+    wizard.widget.clearDirty();
+    try std.testing.expect(!try wizard.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), wizard.current);
+    try std.testing.expect(!wizard.widget.dirty);
+
+    try std.testing.expect(try wizard.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), wizard.current);
+    try std.testing.expect(wizard.widget.dirty);
+
+    wizard.setStep(2);
+    wizard.widget.clearDirty();
+    try std.testing.expect(!try wizard.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), wizard.current);
+    try std.testing.expect(!wizard.widget.dirty);
+}
+
+test "wizard stepper keyboard navigation repairs stale current index" {
+    const alloc = std.testing.allocator;
+    var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "Account", "Billing", "Confirm" });
+    defer wizard.deinit();
+
+    wizard.widget.focused = true;
+    wizard.current = std.math.maxInt(usize);
+    wizard.widget.clearDirty();
+    try std.testing.expect(try wizard.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), wizard.current);
+    try std.testing.expect(wizard.widget.dirty);
+
+    wizard.current = std.math.maxInt(usize);
+    wizard.widget.clearDirty();
+    try std.testing.expect(try wizard.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), wizard.current);
+    try std.testing.expect(wizard.widget.dirty);
 }
 
 test "wizard stepper draws narrow edge rectangles" {
