@@ -229,12 +229,14 @@ pub const List = struct {
             return;
         }
 
-        if (index == self.selected_index) {
+        const clamped_index = @min(index, count - 1);
+        if (clamped_index == self.selected_index) {
+            self.ensureItemVisible(self.selected_index);
             return;
         }
 
         const old_index = self.selected_index;
-        self.selected_index = @min(index, count - 1);
+        self.selected_index = clamped_index;
 
         // Ensure the selected item is visible
         self.ensureItemVisible(self.selected_index);
@@ -255,6 +257,7 @@ pub const List = struct {
         if (self.itemCount() == 0) {
             return null;
         }
+        self.clampSelection();
         return self.itemAt(self.selected_index);
     }
 
@@ -392,6 +395,15 @@ pub const List = struct {
         const clamped = normalizedScrollValue(self.scroll_driver.current, max_offset);
         self.scroll_driver.current = clamped;
         self.first_visible_index = scrollIndexFromValue(clamped, max_offset);
+    }
+
+    fn clampSelection(self: *List) void {
+        const count = self.itemCount();
+        if (count == 0) {
+            self.selected_index = 0;
+        } else if (self.selected_index >= count) {
+            self.selected_index = count - 1;
+        }
     }
 
     fn syncScrollFromDriver(self: *List) void {
@@ -756,6 +768,7 @@ pub const List = struct {
         // Handle key events
         if (event == .key and self.widget.focused and total_items > 0) {
             const key_event = event.key;
+            self.clampSelection();
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -779,7 +792,8 @@ pub const List = struct {
                         return true;
                     },
                     .page_down => {
-                        const new_index = @min(self.selected_index + self.visible_items_count, total_items - 1);
+                        const next = addUsizeSaturating(self.selected_index, self.visible_items_count);
+                        const new_index = @min(next, total_items - 1);
                         self.setSelectedIndex(new_index);
                         self.resetTypeahead();
                         return true;
@@ -830,6 +844,7 @@ pub const List = struct {
         if (self.itemCount() == 0) {
             return false;
         }
+        self.clampSelection();
 
         const now = self.clock();
         if (self.last_search_ms) |last| {
@@ -921,6 +936,12 @@ pub const List = struct {
     }
 };
 
+var test_list_activated_index: ?usize = null;
+
+fn recordListActivation(index: usize) void {
+    test_list_activated_index = index;
+}
+
 test "list typeahead search cycles through matches" {
     const alloc = std.testing.allocator;
     var list = try List.init(alloc);
@@ -953,6 +974,59 @@ test "list typeahead search cycles through matches" {
     TestClock.now = 5_000; // Exceeds timeout, clears buffer.
     _ = try list.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expectEqual(@as(usize, 3), list.selected_index); // Zzz
+}
+
+test "list clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    try list.addItem("Gamma");
+    list.widget.focused = true;
+    try list.widget.layout(layout_module.Rect.init(0, 0, 12, 2));
+    list.selected_index = std.math.maxInt(usize);
+
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 2), list.selected_index);
+
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+}
+
+test "list clamps stale selection before typeahead and activation" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    list.widget.focused = true;
+    try list.widget.layout(layout_module.Rect.init(0, 0, 12, 2));
+    list.selected_index = std.math.maxInt(usize);
+
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = .{ .key = 'b', .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index);
+
+    test_list_activated_index = null;
+    list.setOnItemActivate(recordListActivation);
+    list.selected_index = std.math.maxInt(usize);
+    try std.testing.expect(try list.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(?usize, 1), test_list_activated_index);
+}
+
+test "list selected item clamps stale state" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    try list.addItem("Alpha");
+    try list.addItem("Beta");
+    list.selected_index = std.math.maxInt(usize);
+
+    try std.testing.expectEqualStrings("Beta", list.getSelectedItem().?);
+    try std.testing.expectEqual(@as(usize, 1), list.selected_index);
 }
 
 test "list clears selection and ignores events when empty" {
