@@ -82,6 +82,14 @@ pub const Checkbox = struct {
 
     /// Set the checkbox colors
     pub fn setColors(self: *Checkbox, fg: render.Color, bg: render.Color, focused_fg: render.Color, focused_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.focused_fg, focused_fg) and
+            std.meta.eql(self.focused_bg, focused_bg))
+        {
+            return;
+        }
+
         self.fg = fg;
         self.bg = bg;
         self.focused_fg = focused_fg;
@@ -97,6 +105,16 @@ pub const Checkbox = struct {
     /// Apply theme defaults for checkbox colors.
     pub fn setTheme(self: *Checkbox, theme_value: theme.Theme) void {
         const colors = theme.controlColors(theme_value);
+        if (std.meta.eql(self.fg, colors.fg) and
+            std.meta.eql(self.bg, colors.bg) and
+            std.meta.eql(self.focused_fg, colors.focused_fg) and
+            std.meta.eql(self.focused_bg, colors.focused_bg) and
+            std.meta.eql(self.disabled_fg, colors.disabled_fg) and
+            std.meta.eql(self.disabled_bg, colors.disabled_bg))
+        {
+            return;
+        }
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.focused_fg = colors.focused_fg;
@@ -261,6 +279,32 @@ test "checkbox toggles and fires callback" {
     try std.testing.expect(checkbox.checked);
     try std.testing.expectEqual(@as(usize, 1), test_checkbox_calls);
     try std.testing.expectEqual(true, test_checkbox_state.?);
+}
+
+test "checkbox setColors marks dirty only when visual colors change" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Agree");
+    defer checkbox.deinit();
+
+    checkbox.widget.clearDirty();
+    checkbox.setColors(checkbox.fg, checkbox.bg, checkbox.focused_fg, checkbox.focused_bg);
+    try std.testing.expect(!checkbox.widget.dirty);
+
+    checkbox.setColors(render.Color.named(.green), checkbox.bg, checkbox.focused_fg, checkbox.focused_bg);
+    try std.testing.expect(checkbox.widget.dirty);
+}
+
+test "checkbox setTheme marks dirty only when theme colors change" {
+    const alloc = std.testing.allocator;
+    var checkbox = try Checkbox.init(alloc, "Agree");
+    defer checkbox.deinit();
+
+    checkbox.widget.clearDirty();
+    checkbox.setTheme(theme.Theme.dark());
+    try std.testing.expect(!checkbox.widget.dirty);
+
+    checkbox.setTheme(theme.Theme.light());
+    try std.testing.expect(checkbox.widget.dirty);
 }
 
 test "checkbox handles decoded terminal mouse coordinates at rendered row" {
