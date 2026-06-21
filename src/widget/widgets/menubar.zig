@@ -70,6 +70,14 @@ pub const MenuBar = struct {
         }
     }
 
+    fn clampActive(self: *MenuBar) void {
+        if (self.items.items.len == 0) {
+            self.active_index = 0;
+        } else if (self.active_index >= self.items.items.len) {
+            self.active_index = self.items.items.len - 1;
+        }
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
@@ -99,6 +107,7 @@ pub const MenuBar = struct {
 
         switch (event) {
             .key => |key| {
+                self.clampActive();
                 if (key.key == input.KeyCode.LEFT and self.active_index > 0) {
                     self.active_index -= 1;
                     return true;
@@ -197,6 +206,36 @@ test "menubar navigates and triggers callbacks" {
     const enter = input.Event{ .key = input.KeyEvent.init('\n', input.KeyModifiers{}) };
     _ = try bar.widget.handleEvent(enter);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+test "menubar clamps stale active index before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", null);
+    bar.active_index = std.math.maxInt(usize);
+
+    const right = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, input.KeyModifiers{}) };
+    try std.testing.expect(!try bar.widget.handleEvent(right));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, input.KeyModifiers{}) };
+    try std.testing.expect(try bar.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
+}
+
+test "menubar ignores activation without items" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    bar.active_index = std.math.maxInt(usize);
+
+    const enter = input.Event{ .key = input.KeyEvent.init('\n', input.KeyModifiers{}) };
+    try std.testing.expect(!try bar.widget.handleEvent(enter));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
 }
 
 test "menubar mouse selects rendered item row" {
