@@ -81,6 +81,10 @@ pub const Scrollbar = struct {
 
     /// Set the scrollbar value (0-1)
     pub fn setValue(self: *Scrollbar, value: f32) void {
+        _ = self.trySetValue(value);
+    }
+
+    fn trySetValue(self: *Scrollbar, value: f32) bool {
         const old_value = self.value;
         self.value = normalizedUnit(value);
 
@@ -89,7 +93,9 @@ pub const Scrollbar = struct {
                 callback(self.value);
             }
             self.widget.markDirty();
+            return true;
         }
+        return false;
     }
 
     /// Get the current value
@@ -262,8 +268,7 @@ pub const Scrollbar = struct {
                     else
                         1;
                     const step: f32 = @floatFromInt(step_value);
-                    self.setValue(self.value + (0.1 * step));
-                    return true;
+                    return self.trySetValue(self.value + (0.1 * step));
                 }
             }
 
@@ -284,7 +289,7 @@ pub const Scrollbar = struct {
                     var new_value = self.drag_start_value + delta_value;
                     new_value = normalizedUnit(new_value);
 
-                    self.setValue(new_value);
+                    _ = self.trySetValue(new_value);
                 } else {
                     const track_width = @as(f32, @floatFromInt(rect.width));
                     const delta_i32: i32 = @as(i32, @intCast(mouse_event.x)) - @as(i32, self.drag_start_pos);
@@ -294,7 +299,7 @@ pub const Scrollbar = struct {
                     var new_value = self.drag_start_value + delta_value;
                     new_value = normalizedUnit(new_value);
 
-                    self.setValue(new_value);
+                    _ = self.trySetValue(new_value);
                 }
                 return true;
             }
@@ -306,43 +311,31 @@ pub const Scrollbar = struct {
 
             if (self.orientation == .vertical) {
                 if (key_event.key == 'j' or key_event.key == 'J' or key_event.key == input.KeyCode.DOWN) { // Down
-                    self.setValue(self.value + 0.1);
-                    return true;
+                    return self.trySetValue(self.value + 0.1);
                 } else if (key_event.key == 'k' or key_event.key == 'K' or key_event.key == input.KeyCode.UP) { // Up
-                    self.setValue(self.value - 0.1);
-                    return true;
+                    return self.trySetValue(self.value - 0.1);
                 } else if (key_event.key == input.KeyCode.PAGE_DOWN) { // Page down
-                    self.setValue(self.value + 0.25);
-                    return true;
+                    return self.trySetValue(self.value + 0.25);
                 } else if (key_event.key == input.KeyCode.PAGE_UP) { // Page up
-                    self.setValue(self.value - 0.25);
-                    return true;
+                    return self.trySetValue(self.value - 0.25);
                 } else if (key_event.key == input.KeyCode.HOME) { // Home
-                    self.setValue(0);
-                    return true;
+                    return self.trySetValue(0);
                 } else if (key_event.key == input.KeyCode.END) { // End
-                    self.setValue(1);
-                    return true;
+                    return self.trySetValue(1);
                 }
             } else {
                 if (key_event.key == 'l' or key_event.key == 'L' or key_event.key == input.KeyCode.RIGHT) { // Right
-                    self.setValue(self.value + 0.1);
-                    return true;
+                    return self.trySetValue(self.value + 0.1);
                 } else if (key_event.key == 'h' or key_event.key == 'H' or key_event.key == input.KeyCode.LEFT) { // Left
-                    self.setValue(self.value - 0.1);
-                    return true;
+                    return self.trySetValue(self.value - 0.1);
                 } else if (key_event.key == input.KeyCode.PAGE_DOWN) { // Page right
-                    self.setValue(self.value + 0.25);
-                    return true;
+                    return self.trySetValue(self.value + 0.25);
                 } else if (key_event.key == input.KeyCode.PAGE_UP) { // Page left
-                    self.setValue(self.value - 0.25);
-                    return true;
+                    return self.trySetValue(self.value - 0.25);
                 } else if (key_event.key == input.KeyCode.HOME) { // Home
-                    self.setValue(0);
-                    return true;
+                    return self.trySetValue(0);
                 } else if (key_event.key == input.KeyCode.END) { // End
-                    self.setValue(1);
-                    return true;
+                    return self.trySetValue(1);
                 }
             }
         }
@@ -466,6 +459,68 @@ test "scrollbar marks dirty when value changes" {
     try std.testing.expect(!bar.widget.dirty);
     bar.setValue(0.5);
     try std.testing.expect(!bar.widget.dirty);
+}
+
+test "scrollbar saturated vertical input does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .vertical);
+    defer bar.deinit();
+
+    bar.widget.rect = layout_module.Rect.init(0, 0, 1, 10);
+    bar.widget.focused = true;
+
+    test_scrollbar_calls = 0;
+    const callback = struct {
+        fn call(_: f32) void {
+            test_scrollbar_calls += 1;
+        }
+    }.call;
+    bar.setOnValueChange(callback);
+
+    bar.widget.clearDirty();
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.HOME, .{}) }));
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_up, 0, 0, 0, -1) }));
+    try std.testing.expect(!bar.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 0), bar.value);
+    try std.testing.expectEqual(@as(usize, 0), test_scrollbar_calls);
+
+    try std.testing.expect(try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(bar.widget.dirty);
+    try std.testing.expect(test_scrollbar_calls > 0);
+
+    bar.setValue(1);
+    test_scrollbar_calls = 0;
+    bar.widget.clearDirty();
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.END, .{}) }));
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.scroll_down, 0, 0, 0, 1) }));
+    try std.testing.expect(!bar.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 1), bar.value);
+    try std.testing.expectEqual(@as(usize, 0), test_scrollbar_calls);
+}
+
+test "scrollbar saturated horizontal key input does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var bar = try Scrollbar.init(alloc, .horizontal);
+    defer bar.deinit();
+
+    bar.widget.rect = layout_module.Rect.init(0, 0, 10, 1);
+    bar.widget.focused = true;
+    bar.widget.clearDirty();
+
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expect(!bar.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 0), bar.value);
+
+    try std.testing.expect(try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(bar.widget.dirty);
+
+    bar.setValue(1);
+    bar.widget.clearDirty();
+    try std.testing.expect(!try bar.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(!bar.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 1), bar.value);
 }
 
 test "scrollbar marks dirty when thumb or colors change" {
