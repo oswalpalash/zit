@@ -59,31 +59,55 @@ pub const Gauge = struct {
     }
 
     pub fn setTheme(self: *Gauge, theme_value: theme.Theme) !void {
-        self.fg = theme_value.color(.text);
-        self.bg = theme_value.color(.surface);
-        self.fill = theme_value.color(.accent);
+        const next_fg = theme_value.color(.text);
+        const next_bg = theme_value.color(.surface);
+        const next_fill = theme_value.color(.accent);
+        if (std.meta.eql(self.fg, next_fg) and std.meta.eql(self.bg, next_bg) and std.meta.eql(self.fill, next_fill)) return;
+
+        self.fg = next_fg;
+        self.bg = next_bg;
+        self.fill = next_fill;
+        self.widget.markDirty();
     }
 
     pub fn setValue(self: *Gauge, value: f32) void {
+        if (floatEql(self.value, value)) return;
+        const previous_ratio = self.currentRatio();
         self.value = value;
+        if (!floatEql(previous_ratio, self.currentRatio())) self.widget.markDirty();
     }
 
     pub fn setRange(self: *Gauge, min: f32, max: f32) void {
+        if (floatEql(self.min, min) and floatEql(self.max, max)) return;
+        const previous_ratio = self.currentRatio();
         self.min = min;
         self.max = max;
+        if (!floatEql(previous_ratio, self.currentRatio())) self.widget.markDirty();
     }
 
     pub fn setLabel(self: *Gauge, text: []const u8) !void {
+        if (std.mem.eql(u8, self.label, text)) return;
         const next = try self.allocator.dupe(u8, text);
         if (self.label.len > 0) {
             self.allocator.free(self.label);
         }
         self.label = next;
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.progressbar), self.label, "");
+        self.widget.markDirty();
     }
 
     pub fn setOrientation(self: *Gauge, orientation: GaugeOrientation) void {
+        if (self.orientation == orientation) return;
         self.orientation = orientation;
+        self.widget.markDirty();
+    }
+
+    fn currentRatio(self: *const Gauge) f32 {
+        return normalizedRatio(self.value, self.min, self.max);
+    }
+
+    fn floatEql(lhs: f32, rhs: f32) bool {
+        return lhs == rhs or (std.math.isNan(lhs) and std.math.isNan(rhs));
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -293,4 +317,63 @@ test "gauge setLabel preserves label on allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, gauge.setLabel("Replacement"));
     try std.testing.expectEqualStrings("Stable", gauge.label);
+}
+
+test "gauge marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var gauge = try Gauge.init(alloc);
+    defer gauge.deinit();
+
+    try gauge.widget.layout(layout_module.Rect.init(0, 0, 20, 3));
+    var renderer = try render.Renderer.init(alloc, 20, 3);
+    defer renderer.deinit();
+
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+
+    gauge.setValue(50);
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    gauge.setValue(50);
+    try std.testing.expect(!gauge.widget.dirty);
+
+    gauge.setValue(200);
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    gauge.setValue(300);
+    try std.testing.expect(!gauge.widget.dirty);
+
+    gauge.setValue(50);
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    gauge.setRange(0, 200);
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    gauge.setRange(0, 200);
+    try std.testing.expect(!gauge.widget.dirty);
+
+    try gauge.setLabel("CPU");
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    try gauge.setLabel("CPU");
+    try std.testing.expect(!gauge.widget.dirty);
+
+    gauge.setOrientation(.vertical);
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    gauge.setOrientation(.vertical);
+    try std.testing.expect(!gauge.widget.dirty);
+
+    try gauge.setTheme(theme.Theme.light());
+    try std.testing.expect(gauge.widget.dirty);
+    try gauge.widget.draw(&renderer);
+    try std.testing.expect(!gauge.widget.dirty);
+    try gauge.setTheme(theme.Theme.light());
+    try std.testing.expect(!gauge.widget.dirty);
 }
