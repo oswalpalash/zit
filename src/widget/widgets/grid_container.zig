@@ -70,6 +70,7 @@ pub const GridContainer = struct {
         try self.layout.addChild(child.asLayoutElement(), column, row);
         self.children.appendAssumeCapacity(Child{ .widget = child, .column = column, .row = row });
         child.parent = &self.widget;
+        self.widget.markDirty();
     }
 
     fn childIndex(self: *const GridContainer, child: *const base.Widget) ?usize {
@@ -91,24 +92,29 @@ pub const GridContainer = struct {
             if (entry.widget == child) {
                 _ = self.children.orderedRemove(idx);
                 child.parent = null;
-                self.clearCell(entry.column, entry.row);
+                _ = self.clearCell(entry.column, entry.row);
+                self.widget.markDirty();
                 break;
             }
         }
     }
 
     pub fn removeChildAt(self: *GridContainer, column: u16, row: u16) void {
+        var changed = false;
         for (self.children.items, 0..) |entry, idx| {
             if (entry.column == column and entry.row == row) {
                 entry.widget.parent = null;
                 _ = self.children.orderedRemove(idx);
+                changed = true;
                 break;
             }
         }
-        self.clearCell(column, row);
+        changed = self.clearCell(column, row) or changed;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn clearChildren(self: *GridContainer) void {
+        const changed = self.children.items.len != 0 or hasLayoutCells(self.layout);
         for (self.children.items) |entry| {
             entry.widget.parent = null;
         }
@@ -118,32 +124,58 @@ pub const GridContainer = struct {
             cell.* = null;
         }
         self.layout.cache.valid = false;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setColumns(self: *GridContainer, tracks: []const layout_module.GridTrack) !void {
+        const changed = !tracksEqual(self.layout.column_tracks.items, tracks);
         self.clearChildren();
         _ = try self.layout.setColumns(tracks);
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setRows(self: *GridContainer, tracks: []const layout_module.GridTrack) !void {
+        const changed = !tracksEqual(self.layout.row_tracks.items, tracks);
         self.clearChildren();
         _ = try self.layout.setRows(tracks);
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setPadding(self: *GridContainer, padding_value: layout_module.EdgeInsets) void {
+        if (std.meta.eql(self.layout.padding_insets, padding_value)) return;
         _ = self.layout.padding(padding_value);
+        self.widget.markDirty();
     }
 
     pub fn setGap(self: *GridContainer, gap_value: u16) void {
+        if (self.layout.gap_size == gap_value) return;
         _ = self.layout.gap(gap_value);
+        self.widget.markDirty();
     }
 
-    fn clearCell(self: *GridContainer, column: u16, row: u16) void {
-        if (column >= self.layout.columns or row >= self.layout.rows) return;
+    fn clearCell(self: *GridContainer, column: u16, row: u16) bool {
+        if (column >= self.layout.columns or row >= self.layout.rows) return false;
         const index = @as(usize, row) * @as(usize, self.layout.columns) + @as(usize, column);
-        if (index >= self.layout.cells.items.len) return;
+        if (index >= self.layout.cells.items.len) return false;
+        if (self.layout.cells.items[index] == null) return false;
         self.layout.cells.items[index] = null;
         self.layout.cache.valid = false;
+        return true;
+    }
+
+    fn hasLayoutCells(layout: *const layout_module.GridLayout) bool {
+        for (layout.cells.items) |cell| {
+            if (cell != null) return true;
+        }
+        return false;
+    }
+
+    fn tracksEqual(a: []const layout_module.GridTrack, b: []const layout_module.GridTrack) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |left, right| {
+            if (!std.meta.eql(left, right)) return false;
+        }
+        return true;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -271,6 +303,121 @@ test "grid container lays out children and forwards events" {
     try std.testing.expect(try grid.widget.handleEvent(event));
     try std.testing.expect(!left.handled);
     try std.testing.expect(right.handled);
+}
+
+test "grid container direct layout mutations mark dirty" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 2, 1);
+    defer grid.deinit();
+
+    try grid.widget.layout(layout_module.Rect.init(0, 0, 10, 2));
+    var renderer = try render.Renderer.init(alloc, 10, 2);
+    defer renderer.deinit();
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    var child = Dummy{};
+    try grid.addChild(&child.widget, 0, 0);
+    try std.testing.expect(grid.widget.dirty);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.setGap(1);
+    try std.testing.expect(grid.widget.dirty);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.setGap(1);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.setPadding(layout_module.EdgeInsets.all(1));
+    try std.testing.expect(grid.widget.dirty);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.setPadding(layout_module.EdgeInsets.all(1));
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.removeChild(&child.widget);
+    try std.testing.expect(grid.widget.dirty);
+    try std.testing.expect(child.widget.parent == null);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.removeChild(&child.widget);
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.addChild(&child.widget, 1, 0);
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.removeChildAt(1, 0);
+    try std.testing.expect(grid.widget.dirty);
+    try std.testing.expect(child.widget.parent == null);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.removeChildAt(1, 0);
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.addChild(&child.widget, 0, 0);
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.clearChildren();
+    try std.testing.expect(grid.widget.dirty);
+    try std.testing.expect(child.widget.parent == null);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    grid.clearChildren();
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.setColumns(&.{ .{ .flex = 1 }, .{ .flex = 1 } });
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.setColumns(&.{ .{ .fixed = 3 }, .{ .flex = 1 } });
+    try std.testing.expect(grid.widget.dirty);
+
+    try grid.widget.draw(&renderer);
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.setRows(&.{.{ .flex = 1 }});
+    try std.testing.expect(!grid.widget.dirty);
+
+    try grid.setRows(&.{ .{ .fixed = 1 }, .{ .flex = 1 } });
+    try std.testing.expect(grid.widget.dirty);
 }
 
 test "grid container add child preserves state when child list allocation fails" {
