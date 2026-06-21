@@ -51,30 +51,46 @@ pub const SplitPane = struct {
     }
 
     pub fn setTheme(self: *SplitPane, value: theme.Theme) !void {
+        if (std.meta.eql(self.palette, value) and std.meta.eql(self.divider_color, value.color(.border))) return;
         self.palette = value;
         self.divider_color = value.color(.border);
+        self.widget.markDirty();
     }
 
     pub fn setFirst(self: *SplitPane, widget: *base.Widget) void {
+        var changed = false;
         if (self.first != widget) {
             self.detachSlot(&self.first);
             self.first = widget;
+            changed = true;
         }
         if (self.second == widget) {
             self.second = null;
+            changed = true;
+        }
+        if (widget.parent != &self.widget) {
+            changed = true;
         }
         widget.parent = &self.widget;
+        if (changed) self.widget.markDirty();
     }
 
     pub fn setSecond(self: *SplitPane, widget: *base.Widget) void {
+        var changed = false;
         if (self.second != widget) {
             self.detachSlot(&self.second);
             self.second = widget;
+            changed = true;
         }
         if (self.first == widget) {
             self.first = null;
+            changed = true;
+        }
+        if (widget.parent != &self.widget) {
+            changed = true;
         }
         widget.parent = &self.widget;
+        if (changed) self.widget.markDirty();
     }
 
     fn detachChildren(self: *SplitPane) void {
@@ -92,11 +108,21 @@ pub const SplitPane = struct {
     }
 
     pub fn setRatio(self: *SplitPane, ratio: f32) void {
-        self.ratio = std.math.clamp(ratio, 0.05, 0.95);
+        const next = normalizedSetRatio(ratio);
+        if (self.ratio == next) return;
+        self.ratio = next;
+        self.widget.markDirty();
     }
 
     pub fn setOrientation(self: *SplitPane, orientation: SplitOrientation) void {
+        if (self.orientation == orientation) return;
         self.orientation = orientation;
+        self.widget.markDirty();
+    }
+
+    fn normalizedSetRatio(ratio: f32) f32 {
+        if (!std.math.isFinite(ratio)) return 0.5;
+        return std.math.clamp(ratio, 0.05, 0.95);
     }
 
     fn normalizedRatio(ratio: f32) f32 {
@@ -265,6 +291,64 @@ test "split pane lays out children" {
     try std.testing.expectEqual(@as(u16, 30), pane.widget.rect.width);
     try std.testing.expect(left.widget.rect.width > 0);
     try std.testing.expect(right.widget.rect.width > 0);
+}
+
+test "split pane marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    defer second.deinit();
+    var replacement = try @import("label.zig").Label.init(alloc, "replacement");
+    defer replacement.deinit();
+
+    pane.setFirst(&first.widget);
+    pane.setSecond(&second.widget);
+    try pane.widget.layout(layout_module.Rect.init(0, 0, 30, 6));
+    var renderer = try render.Renderer.init(alloc, 30, 6);
+    defer renderer.deinit();
+
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+
+    pane.setRatio(0.65);
+    try std.testing.expect(pane.widget.dirty);
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+    pane.setRatio(0.65);
+    try std.testing.expect(!pane.widget.dirty);
+
+    pane.setRatio(std.math.nan(f32));
+    try std.testing.expectEqual(@as(f32, 0.5), pane.ratio);
+    try std.testing.expect(pane.widget.dirty);
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+    pane.setRatio(std.math.nan(f32));
+    try std.testing.expect(!pane.widget.dirty);
+
+    pane.setOrientation(.vertical);
+    try std.testing.expect(pane.widget.dirty);
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+    pane.setOrientation(.vertical);
+    try std.testing.expect(!pane.widget.dirty);
+
+    try pane.setTheme(theme.Theme.dark());
+    try std.testing.expect(pane.widget.dirty);
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+    try pane.setTheme(theme.Theme.dark());
+    try std.testing.expect(!pane.widget.dirty);
+
+    pane.setFirst(&replacement.widget);
+    try std.testing.expect(pane.widget.dirty);
+    try pane.widget.draw(&renderer);
+    try std.testing.expect(!pane.widget.dirty);
+    pane.setFirst(&replacement.widget);
+    try std.testing.expect(!pane.widget.dirty);
 }
 
 test "split pane clamps horizontal edge layout and draw coordinates" {
