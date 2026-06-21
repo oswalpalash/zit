@@ -65,7 +65,7 @@ pub const DateTimePicker = struct {
 
     pub fn setDateTime(self: *DateTimePicker, value: DateTime) void {
         self.value = value;
-        self.value.day = clampDay(self.value.year, self.value.month, self.value.day);
+        self.normalizeValue();
         self.notifyChange();
     }
 
@@ -94,7 +94,17 @@ pub const DateTimePicker = struct {
 
     fn clampDay(year: u16, month: u8, day: u8) u8 {
         const max_day = daysInMonth(year, month);
-        return if (day > max_day) max_day else day;
+        return std.math.clamp(day, 1, max_day);
+    }
+
+    fn normalizeValue(self: *DateTimePicker) void {
+        if (self.value.year < min_year) {
+            self.value.year = min_year;
+        }
+        self.value.month = std.math.clamp(self.value.month, 1, 12);
+        self.value.day = clampDay(self.value.year, self.value.month, self.value.day);
+        self.value.hour = @min(self.value.hour, 23);
+        self.value.minute = @min(self.value.minute, 59);
     }
 
     fn moveField(self: *DateTimePicker, forward: bool) void {
@@ -108,6 +118,7 @@ pub const DateTimePicker = struct {
     }
 
     fn adjust(self: *DateTimePicker, delta: i32) void {
+        self.normalizeValue();
         switch (self.selected_field) {
             .year => self.adjustYear(delta),
             .month => self.adjustMonth(delta),
@@ -115,6 +126,7 @@ pub const DateTimePicker = struct {
             .hour => self.adjustHour(delta),
             .minute => self.adjustMinute(delta),
         }
+        self.normalizeValue();
         self.notifyChange();
     }
 
@@ -245,6 +257,7 @@ pub const DateTimePicker = struct {
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
+        self.normalizeValue();
         if (!self.widget.visible) return;
 
         const rect = self.widget.rect;
@@ -305,6 +318,7 @@ pub const DateTimePicker = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *DateTimePicker = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible or !self.widget.enabled) return false;
+        self.normalizeValue();
 
         switch (event) {
             .key => |key_event| {
@@ -372,6 +386,51 @@ test "date time picker rolls over time correctly" {
     try std.testing.expectEqual(@as(u8, 1), picker.value.day);
     try std.testing.expectEqual(@as(u8, 1), picker.value.month);
     try std.testing.expectEqual(@as(u16, 2025), picker.value.year);
+}
+
+test "date time picker normalizes invalid setDateTime values" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    picker.setDateTime(.{ .year = 0, .month = 0, .day = 0, .hour = 99, .minute = 99 });
+    try std.testing.expectEqual(@as(u16, 1), picker.value.year);
+    try std.testing.expectEqual(@as(u8, 1), picker.value.month);
+    try std.testing.expectEqual(@as(u8, 1), picker.value.day);
+    try std.testing.expectEqual(@as(u8, 23), picker.value.hour);
+    try std.testing.expectEqual(@as(u8, 59), picker.value.minute);
+
+    picker.setDateTime(.{ .year = 2024, .month = 2, .day = 31, .hour = 12, .minute = 30 });
+    try std.testing.expectEqual(@as(u8, 29), picker.value.day);
+}
+
+test "date time picker normalizes stale public value before draw and input" {
+    const alloc = std.testing.allocator;
+    var picker = try DateTimePicker.init(alloc);
+    defer picker.deinit();
+
+    picker.value = .{ .year = 0, .month = 99, .day = 0, .hour = 99, .minute = 99 };
+    try picker.widget.layout(layout_module.Rect.init(0, 0, 24, 3));
+
+    var renderer = try render.Renderer.init(alloc, 24, 3);
+    defer renderer.deinit();
+    try picker.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u16, 1), picker.value.year);
+    try std.testing.expectEqual(@as(u8, 12), picker.value.month);
+    try std.testing.expectEqual(@as(u8, 1), picker.value.day);
+    try std.testing.expectEqual(@as(u8, 23), picker.value.hour);
+    try std.testing.expectEqual(@as(u8, 59), picker.value.minute);
+
+    picker.value = .{ .year = 0, .month = 0, .day = 0, .hour = 99, .minute = 99 };
+    picker.selected_field = .minute;
+    picker.widget.focused = true;
+    try std.testing.expect(try picker.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(u16, 1), picker.value.year);
+    try std.testing.expectEqual(@as(u8, 1), picker.value.month);
+    try std.testing.expectEqual(@as(u8, 1), picker.value.day);
+    try std.testing.expectEqual(@as(u8, 23), picker.value.hour);
+    try std.testing.expectEqual(@as(u8, 58), picker.value.minute);
 }
 
 test "date time picker saturates upper date time adjustments" {
