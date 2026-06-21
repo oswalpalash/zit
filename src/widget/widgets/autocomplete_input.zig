@@ -89,6 +89,8 @@ pub const AutocompleteInput = struct {
 
     pub fn setMaxVisible(self: *AutocompleteInput, count: usize) void {
         self.max_visible = @max(count, @as(usize, 1));
+        self.clampSelection();
+        self.widget.markDirty();
     }
 
     pub fn setCaseSensitive(self: *AutocompleteInput, enabled: bool) !void {
@@ -124,6 +126,7 @@ pub const AutocompleteInput = struct {
         try self.input_field.widget.layout(input_rect);
         try self.input_field.widget.draw(renderer);
 
+        self.clampSelection();
         const available_rows = if (rect.height > 1) rect.height - 1 else 0;
         const visible_rows: usize = @intCast(@min(@as(usize, @intCast(available_rows)), @min(self.filtered.items.len, self.max_visible)));
         if (visible_rows == 0) return;
@@ -345,6 +348,40 @@ test "autocomplete clamps stale selection before keyboard navigation" {
     const up_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(up_event));
     try std.testing.expectEqual(@as(usize, 0), ac.selected);
+}
+
+test "autocomplete setMaxVisible clamps stale visible selection" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.setMaxVisible(3);
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    ac.selected = 2;
+
+    ac.setMaxVisible(1);
+    try std.testing.expectEqual(@as(usize, 0), ac.selected);
+}
+
+test "autocomplete draw clamps stale selection" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.setMaxVisible(2);
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    ac.selected = std.math.maxInt(usize);
+
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    try ac.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+    try ac.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(usize, 1), ac.selected);
 }
 
 test "autocomplete accepts clamped stale selection" {
