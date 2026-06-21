@@ -66,18 +66,24 @@ pub const MenuBar = struct {
     }
 
     pub fn setActive(self: *MenuBar, index: usize) void {
-        if (index < self.items.items.len and self.active_index != index) {
-            self.active_index = index;
-            self.widget.markDirty();
-        }
+        _ = self.setActiveIndex(index);
     }
 
-    fn clampActive(self: *MenuBar) void {
+    fn clampActive(self: *MenuBar) bool {
+        const previous = self.active_index;
         if (self.items.items.len == 0) {
             self.active_index = 0;
         } else if (self.active_index >= self.items.items.len) {
             self.active_index = self.items.items.len - 1;
         }
+        return previous != self.active_index;
+    }
+
+    fn setActiveIndex(self: *MenuBar, index: usize) bool {
+        if (index >= self.items.items.len or self.active_index == index) return false;
+        self.active_index = index;
+        self.widget.markDirty();
+        return true;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -109,14 +115,12 @@ pub const MenuBar = struct {
 
         switch (event) {
             .key => |key| {
-                self.clampActive();
+                if (self.clampActive()) self.widget.markDirty();
                 if (key.key == input.KeyCode.LEFT and self.active_index > 0) {
-                    self.active_index -= 1;
-                    return true;
+                    return self.setActiveIndex(self.active_index - 1);
                 }
                 if (key.key == input.KeyCode.RIGHT and self.active_index + 1 < self.items.items.len) {
-                    self.active_index += 1;
-                    return true;
+                    return self.setActiveIndex(self.active_index + 1);
                 }
                 if (key.key == '\n') {
                     if (self.items.items.len == 0) return false;
@@ -136,7 +140,7 @@ pub const MenuBar = struct {
                         const start = x;
                         const end = start + @as(u32, @intCast(label_len));
                         if (mouse_x >= start and mouse_x < end) {
-                            self.active_index = idx;
+                            _ = self.setActiveIndex(idx);
                             if (item.on_select) |cb| cb();
                             return true;
                         }
@@ -228,6 +232,38 @@ test "menubar clamps stale active index before keyboard navigation" {
     try std.testing.expectEqual(@as(usize, 0), bar.active_index);
 }
 
+test "menubar keyboard navigation marks dirty only when active item changes" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", null);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) };
+    try std.testing.expect(!try bar.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
+    try std.testing.expect(!bar.widget.dirty);
+
+    const right = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) };
+    try std.testing.expect(try bar.widget.handleEvent(right));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expect(bar.widget.dirty);
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    try std.testing.expect(!try bar.widget.handleEvent(right));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expect(!bar.widget.dirty);
+}
+
 test "menubar ignores activation without items" {
     const alloc = std.testing.allocator;
     var bar = try MenuBar.init(alloc);
@@ -263,6 +299,30 @@ test "menubar mouse selects rendered item row" {
     try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 4, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), bar.active_index);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+test "menubar mouse selection marks dirty when active item changes" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", null);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 0, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), bar.active_index);
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 7, 0, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expect(bar.widget.dirty);
 }
 
 test "menubar clips edge coordinates before u16 overflow" {
