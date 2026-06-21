@@ -194,6 +194,7 @@ pub const InputField = struct {
 
     fn writeText(self: *InputField, value: []const u8) void {
         const len = utf8PrefixLen(value, self.text.len);
+        const changed = self.len != len or !std.mem.eql(u8, self.currentText(), value[0..len]) or self.cursor != len;
         @memset(self.text, 0);
         if (len > 0) {
             std.mem.copyForwards(u8, self.text[0..len], value[0..len]);
@@ -201,6 +202,7 @@ pub const InputField = struct {
         self.len = len;
         self.cursor = len;
         self.resetSentinel();
+        if (changed) self.widget.markDirty();
     }
 
     fn ensureCapacity(self: *InputField, capacity: usize) !void {
@@ -250,10 +252,12 @@ pub const InputField = struct {
     }
 
     fn clearValidationResult(self: *InputField) void {
+        const had_result = self.last_validation != null;
         if (self.last_validation) |*res| {
             res.deinit();
         }
         self.last_validation = null;
+        if (had_result) self.widget.markDirty();
     }
 
     fn runValidation(self: *InputField) !void {
@@ -264,11 +268,13 @@ pub const InputField = struct {
     }
 
     fn commitValidationResult(self: *InputField, result: form.ValidationResult) void {
+        const was_invalid = self.hasValidationError();
         var previous = self.last_validation;
         self.last_validation = result;
         if (previous) |*res| {
             res.deinit();
         }
+        if (was_invalid != self.hasValidationError()) self.widget.markDirty();
         if (self.on_validation) |callback| {
             callback(self, &self.last_validation.?);
         }
@@ -390,6 +396,8 @@ pub const InputField = struct {
 
     /// Set the placeholder text.
     pub fn setPlaceholder(self: *InputField, placeholder: []const u8) !void {
+        if (std.mem.eql(u8, self.placeholder, placeholder)) return;
+
         if (placeholder.len == 0) {
             if (self.placeholder_owned and self.placeholder.len > 0) {
                 self.allocator.free(self.placeholder);
@@ -447,21 +455,48 @@ pub const InputField = struct {
 
     /// Set the border style
     pub fn setBorder(self: *InputField, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
         self.show_border = border != .none;
+        self.widget.markDirty();
     }
 
     /// Set the input field colors
     pub fn setColors(self: *InputField, fg: render.Color, bg: render.Color, focused_fg: render.Color, focused_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.focused_fg, focused_fg) and
+            std.meta.eql(self.focused_bg, focused_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.focused_fg = focused_fg;
         self.focused_bg = focused_bg;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for input colors and focus ring.
     pub fn setTheme(self: *InputField, theme_value: theme.Theme) void {
         const colors = theme.inputColors(theme_value);
+        const focus_ring = render.FocusRingStyle{
+            .color = colors.focused_bg,
+            .border = .rounded,
+            .style = render.Style{ .bold = true },
+        };
+        const changed = !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.focused_fg, colors.focused_fg) or
+            !std.meta.eql(self.focused_bg, colors.focused_bg) or
+            !std.meta.eql(self.disabled_fg, colors.disabled_fg) or
+            !std.meta.eql(self.disabled_bg, colors.disabled_bg) or
+            !std.meta.eql(self.invalid_fg, colors.invalid_fg) or
+            !std.meta.eql(self.invalid_bg, colors.invalid_bg) or
+            !std.meta.eql(self.style, colors.style) or
+            self.widget.focus_ring == null or
+            !std.meta.eql(self.widget.focus_ring.?, focus_ring);
+
+        if (!changed) return;
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.focused_fg = colors.focused_fg;
@@ -471,11 +506,7 @@ pub const InputField = struct {
         self.invalid_fg = colors.invalid_fg;
         self.invalid_bg = colors.invalid_bg;
         self.style = colors.style;
-        self.widget.setFocusRing(render.FocusRingStyle{
-            .color = self.focused_bg,
-            .border = .rounded,
-            .style = render.Style{ .bold = true },
-        });
+        self.widget.setFocusRing(focus_ring);
     }
 
     /// Set the on-change callback
@@ -843,6 +874,81 @@ test "input field placeholder can be replaced safely" {
     try field.setPlaceholder("first");
     try field.setPlaceholder("second");
     try std.testing.expectEqualStrings("second", field.placeholder);
+}
+
+test "input field visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    field.widget.clearDirty();
+    try field.setText("alpha");
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    try field.setText("alpha");
+    try std.testing.expect(!field.widget.dirty);
+
+    try field.setText("beta");
+    field.widget.clearDirty();
+    try std.testing.expect(field.undo());
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    try std.testing.expect(field.redo());
+    try std.testing.expect(field.widget.dirty);
+
+    field.widget.clearDirty();
+    try field.setPlaceholder("Name");
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    try field.setPlaceholder("Name");
+    try std.testing.expect(!field.widget.dirty);
+
+    field.widget.clearDirty();
+    field.setBorder(.rounded);
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    field.setBorder(.rounded);
+    try std.testing.expect(!field.widget.dirty);
+
+    field.widget.clearDirty();
+    field.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    field.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!field.widget.dirty);
+
+    field.widget.clearDirty();
+    field.setTheme(theme.Theme.light());
+    try std.testing.expect(field.widget.dirty);
+    field.widget.clearDirty();
+    field.setTheme(theme.Theme.light());
+    try std.testing.expect(!field.widget.dirty);
+}
+
+test "input field validation state changes mark dirty" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+
+    const rules = [_]form.Rule{form.required("needed")};
+
+    field.widget.clearDirty();
+    try field.setValidation("name", &rules, true);
+    try std.testing.expect(field.widget.dirty);
+    try std.testing.expect(field.hasValidationError());
+
+    field.widget.clearDirty();
+    try field.revalidate();
+    try std.testing.expect(!field.widget.dirty);
+
+    try field.setText("valid");
+    try std.testing.expect(field.widget.dirty);
+    try std.testing.expect(!field.hasValidationError());
+
+    field.widget.clearDirty();
+    field.clearValidation();
+    try std.testing.expect(field.widget.dirty);
+    try std.testing.expect(field.validationState() == null);
 }
 
 fn inputFieldInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {
