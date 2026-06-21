@@ -82,7 +82,7 @@ pub const TreeView = struct {
 
         const children = std.ArrayList(usize).empty;
         const owned = try self.allocator.dupe(u8, label);
-        const depth = if (parent_index) |idx| self.nodes.items[idx].depth + 1 else 0;
+        const depth = if (parent_index) |idx| addUsizeSaturating(self.nodes.items[idx].depth, 1) else 0;
         const node = Node{
             .label = owned,
             .parent = parent_index,
@@ -156,6 +156,22 @@ pub const TreeView = struct {
         return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
     }
 
+    fn addU16Clamped(a: u16, b: u16) u16 {
+        const value = @as(u32, a) + @as(u32, b);
+        return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+    }
+
+    fn addUsizeSaturating(a: usize, b: usize) usize {
+        return std.math.add(usize, a, b) catch std.math.maxInt(usize);
+    }
+
+    fn indentForDepth(depth: usize, width: u16) u16 {
+        const width_usize: usize = width;
+        const saturating_threshold = (width_usize + 1) / 2;
+        if (depth >= saturating_threshold) return width;
+        return @intCast(depth * 2);
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *TreeView = @fieldParentPtr("widget", widget_ref);
@@ -195,7 +211,7 @@ pub const TreeView = struct {
 
             renderer.fillRect(rect.x, y_pos, rect.width, 1, ' ', row_fg, row_bg, self.palette.style);
 
-            const indent: u16 = @min(rect.width, @as(u16, @intCast(node.depth * 2)));
+            const indent = indentForDepth(node.depth, rect.width);
             const marker: u21 = if (node.children.items.len > 0)
                 (if (node.expanded) '▾' else '▸')
             else
@@ -205,7 +221,7 @@ pub const TreeView = struct {
                 renderer.drawChar(addOffsetClamped(rect.x, indent), y_pos, marker, if (node.children.items.len > 0) accent else muted, row_bg, self.palette.style);
             }
 
-            const label_start = indent + 2;
+            const label_start = addU16Clamped(indent, 2);
             if (label_start < rect.width) {
                 var label_buf: [256]u8 = undefined;
                 const clipped = text_metrics.clipWithEllipsis(node.label, rect.width - label_start, &label_buf);
@@ -433,6 +449,26 @@ test "tree view rejects invalid parent index" {
 
     try std.testing.expectError(error.InvalidParent, tree.addChild(42, "missing"));
     try std.testing.expectEqual(@as(usize, 0), tree.nodes.items.len);
+}
+
+test "tree view saturates externally oversized depth" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), TreeView.addU16Clamped(std.math.maxInt(u16), 2));
+
+    const root = try tree.addRoot("root");
+    tree.nodes.items[root].depth = std.math.maxInt(usize);
+    tree.nodes.items[root].expanded = true;
+    const child = try tree.addChild(root, "child");
+    try std.testing.expectEqual(std.math.maxInt(usize), tree.nodes.items[child].depth);
+
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+
+    var renderer = try render.Renderer.init(alloc, 8, 2);
+    defer renderer.deinit();
+    try tree.widget.draw(&renderer);
 }
 
 test "tree view preferred size defaults when empty" {
