@@ -62,11 +62,13 @@ pub const MenuBar = struct {
         try self.items.ensureUnusedCapacity(self.allocator, 1);
         const copy = try self.allocator.dupe(u8, label);
         self.items.appendAssumeCapacity(.{ .label = copy, .on_select = on_select });
+        self.widget.markDirty();
     }
 
     pub fn setActive(self: *MenuBar, index: usize) void {
-        if (index < self.items.items.len) {
+        if (index < self.items.items.len and self.active_index != index) {
             self.active_index = index;
+            self.widget.markDirty();
         }
     }
 
@@ -287,6 +289,50 @@ test "menubar clips edge coordinates before u16 overflow" {
     try std.testing.expect(try bar.widget.handleEvent(click));
     try std.testing.expectEqual(@as(usize, 0), bar.active_index);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+test "menubar marks dirty when item list changes" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    try bar.addItem("File", null);
+    try std.testing.expect(bar.widget.dirty);
+}
+
+test "menubar marks dirty when active item changes" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+
+    try bar.addItem("File", null);
+    try bar.addItem("Edit", null);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+
+    var renderer = try render.Renderer.init(alloc, 20, 1);
+    defer renderer.deinit();
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.setActive(1);
+    try std.testing.expect(bar.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+
+    try bar.widget.draw(&renderer);
+    try std.testing.expect(!bar.widget.dirty);
+    bar.setActive(1);
+    try std.testing.expect(!bar.widget.dirty);
+
+    bar.setActive(99);
+    try std.testing.expect(!bar.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
 }
 
 fn menuBarAddItemAllocationFailureHarness(allocator: std.mem.Allocator) !void {
