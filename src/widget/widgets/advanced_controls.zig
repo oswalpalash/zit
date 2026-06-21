@@ -428,11 +428,17 @@ pub const Slider = struct {
     }
 
     pub fn setValue(self: *Slider, value: f32) void {
+        _ = self.trySetValue(value);
+    }
+
+    fn trySetValue(self: *Slider, value: f32) bool {
         const clamped = normalizedRangeValue(value, self.min, self.max);
         if (clamped != self.value) {
             self.value = clamped;
             self.widget.markDirty();
+            return true;
         }
+        return false;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -472,8 +478,8 @@ pub const Slider = struct {
         if (!self.widget.visible or !self.widget.enabled) return false;
 
         const adjust = struct {
-            fn apply(slider: *Slider, delta: f32) void {
-                slider.setValue(slider.value + delta);
+            fn apply(slider: *Slider, delta: f32) bool {
+                return slider.trySetValue(slider.value + delta);
             }
         };
 
@@ -482,12 +488,10 @@ pub const Slider = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        adjust.apply(self, -self.step);
-                        return true;
+                        return adjust.apply(self, -self.step);
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        adjust.apply(self, self.step);
-                        return true;
+                        return adjust.apply(self, self.step);
                     },
                     else => {},
                 }
@@ -500,8 +504,7 @@ pub const Slider = struct {
                     const track_start = offsetCoord(rect.x, 1);
                     const offset = if (mouse.x <= track_start) 0 else @min(mouse.x - track_start, track_width);
                     const ratio = @as(f32, @floatFromInt(offset)) / @as(f32, @floatFromInt(track_width));
-                    self.setValue(self.min + ratio * (self.max - self.min));
-                    return true;
+                    return self.trySetValue(self.min + ratio * (self.max - self.min));
                 }
             },
             else => {},
@@ -559,11 +562,17 @@ pub const RatingStars = struct {
     }
 
     pub fn setValue(self: *RatingStars, value: f32) void {
+        _ = self.trySetValue(value);
+    }
+
+    fn trySetValue(self: *RatingStars, value: f32) bool {
         const normalized = normalizedRatingValue(value, self.max_stars);
         if (normalized != self.value) {
             self.value = normalized;
             self.widget.markDirty();
+            return true;
         }
+        return false;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -591,20 +600,17 @@ pub const RatingStars = struct {
             .mouse => |mouse| {
                 if (mouse.action == .press and mouse.button == 1 and self.widget.rect.contains(mouse.x, mouse.y)) {
                     const offset = mouse.x - self.widget.rect.x;
-                    self.setValue(@floatFromInt(offset + 1));
-                    return true;
+                    return self.trySetValue(@floatFromInt(offset + 1));
                 }
             },
             .key => |key| {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        self.setValue(self.value - 1);
-                        return true;
+                        return self.trySetValue(self.value - 1);
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        self.setValue(self.value + 1);
-                        return true;
+                        return self.trySetValue(self.value + 1);
                     },
                     else => {},
                 }
@@ -2022,6 +2028,32 @@ test "slider mouse maps rendered track to value" {
     try std.testing.expect(slider.value < 10);
 }
 
+test "slider saturated input does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var slider = try Slider.init(alloc, 0, 10);
+    defer slider.deinit();
+
+    slider.widget.focused = true;
+    slider.widget.clearDirty();
+    try std.testing.expect(!try slider.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expect(!slider.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 0), slider.value);
+
+    try std.testing.expect(try slider.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(slider.widget.dirty);
+
+    slider.setValue(10);
+    slider.widget.clearDirty();
+    try std.testing.expect(!try slider.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(!slider.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 10), slider.value);
+
+    slider.widget.rect = layout_module.Rect.init(0, 0, 12, 1);
+    slider.widget.clearDirty();
+    try std.testing.expect(!try slider.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 0, 1, 0) }));
+    try std.testing.expect(!slider.widget.dirty);
+}
+
 test "slider draws with non-finite internal state" {
     const alloc = std.testing.allocator;
     var slider = try Slider.init(alloc, 0, 10);
@@ -2132,6 +2164,32 @@ test "rating stars mouse maps rendered columns to values" {
 
     try std.testing.expect(try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) }));
     try std.testing.expectEqual(@as(f32, 3), stars.value);
+}
+
+test "rating stars saturated input does not consume unchanged events" {
+    const alloc = std.testing.allocator;
+    var stars = try RatingStars.init(alloc, 5);
+    defer stars.deinit();
+
+    stars.widget.focused = true;
+    stars.widget.clearDirty();
+    try std.testing.expect(!try stars.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expect(!stars.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 0), stars.value);
+
+    try std.testing.expect(try stars.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(stars.widget.dirty);
+
+    stars.setValue(5);
+    stars.widget.clearDirty();
+    try std.testing.expect(!try stars.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expect(!stars.widget.dirty);
+    try std.testing.expectEqual(@as(f32, 5), stars.value);
+
+    stars.widget.rect = layout_module.Rect.init(0, 0, 5, 1);
+    stars.widget.clearDirty();
+    try std.testing.expect(!try stars.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 0, 1, 0) }));
+    try std.testing.expect(!stars.widget.dirty);
 }
 
 test "rating stars draw with non-finite internal state" {
