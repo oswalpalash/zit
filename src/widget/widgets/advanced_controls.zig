@@ -276,6 +276,14 @@ pub const RadioGroup = struct {
         }
     }
 
+    fn clampSelection(self: *RadioGroup) void {
+        if (self.options.items.len == 0) {
+            self.selected = 0;
+        } else if (self.selected >= self.options.items.len) {
+            self.selected = self.options.items.len - 1;
+        }
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *RadioGroup = @fieldParentPtr("widget", widget_ref);
@@ -308,6 +316,7 @@ pub const RadioGroup = struct {
         switch (event) {
             .key => |key| {
                 if (!self.widget.focused) return false;
+                self.clampSelection();
                 switch (key.key) {
                     'k', 'K', input.KeyCode.PAGE_UP => {
                         if (self.selected > 0) {
@@ -1790,6 +1799,33 @@ test "radio group mouse selects rendered option rows" {
 
     try std.testing.expect(try radio.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 5, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), radio.selected);
+}
+
+test "radio group keyboard clamps stale selection" {
+    const alloc = std.testing.allocator;
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{ "A", "B", "C" });
+    defer radio.deinit();
+
+    radio.widget.focused = true;
+    radio.selected = std.math.maxInt(usize);
+
+    try std.testing.expect(!try radio.widget.handleEvent(.{ .key = input.KeyEvent.init('j', .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), radio.selected);
+
+    try std.testing.expect(try radio.widget.handleEvent(.{ .key = input.KeyEvent.init('k', .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), radio.selected);
+}
+
+test "radio group keyboard handles empty options" {
+    const alloc = std.testing.allocator;
+    var radio = try RadioGroup.init(alloc, &[_][]const u8{});
+    defer radio.deinit();
+
+    radio.widget.focused = true;
+    radio.selected = std.math.maxInt(usize);
+
+    try std.testing.expect(!try radio.widget.handleEvent(.{ .key = input.KeyEvent.init('j', .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), radio.selected);
 }
 
 test "radio group draws narrow edge rectangles" {
