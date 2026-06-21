@@ -1146,12 +1146,16 @@ pub const Pagination = struct {
         }
     }
 
-    fn previousPage(self: *Pagination) void {
+    fn previousPage(self: *Pagination) bool {
+        const previous = self.current;
         self.setPage(self.current -| 1);
+        return self.current != previous;
     }
 
-    fn nextPage(self: *Pagination) void {
+    fn nextPage(self: *Pagination) bool {
+        const previous = self.current;
         self.setPage(addUsizeClamped(self.current, 1));
+        return self.current != previous;
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1197,12 +1201,10 @@ pub const Pagination = struct {
                 if (!self.widget.focused) return false;
                 switch (key.key) {
                     'h', 'H', input.KeyCode.LEFT => {
-                        self.previousPage();
-                        return true;
+                        return self.previousPage();
                     },
                     'l', 'L', input.KeyCode.RIGHT => {
-                        self.nextPage();
-                        return true;
+                        return self.nextPage();
                     },
                     else => {},
                 }
@@ -1212,14 +1214,12 @@ pub const Pagination = struct {
                     const rect = self.widget.rect;
                     const prev_end = if (rect.width > 1) offsetCoord(rect.x, 1) else rect.x;
                     if (mouse.x <= prev_end) {
-                        self.previousPage();
-                        return true;
+                        return self.previousPage();
                     }
                     const next_offset = if (rect.width > 2) rect.width - 2 else if (rect.width > 1) rect.width - 1 else 0;
                     const next_start = offsetCoord(rect.x, next_offset);
                     if (mouse.x >= next_start) {
-                        self.nextPage();
-                        return true;
+                        return self.nextPage();
                     }
                 }
             },
@@ -2769,6 +2769,41 @@ test "pagination navigation saturates stale current state" {
     pager.current = std.math.maxInt(usize);
     try std.testing.expect(try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 5), pager.current);
+}
+
+test "pagination ignores saturated unchanged navigation" {
+    const alloc = std.testing.allocator;
+    var pager = try Pagination.init(alloc, 5);
+    defer pager.deinit();
+
+    pager.widget.focused = true;
+    pager.widget.clearDirty();
+    try std.testing.expect(!try pager.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), pager.current);
+    try std.testing.expect(!pager.widget.dirty);
+
+    try std.testing.expect(try pager.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), pager.current);
+    try std.testing.expect(pager.widget.dirty);
+
+    pager.setPage(5);
+    pager.widget.clearDirty();
+    try std.testing.expect(!try pager.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 5), pager.current);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.widget.rect = layout_module.Rect.init(4, 6, 20, 1);
+    pager.setPage(1);
+    pager.widget.clearDirty();
+    try std.testing.expect(!try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), pager.current);
+    try std.testing.expect(!pager.widget.dirty);
+
+    pager.setPage(5);
+    pager.widget.clearDirty();
+    try std.testing.expect(!try pager.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 22, 6, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 5), pager.current);
+    try std.testing.expect(!pager.widget.dirty);
 }
 
 test "accordion mouse toggles rendered section rows" {
