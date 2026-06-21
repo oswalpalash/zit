@@ -187,35 +187,31 @@ pub const SplitPane = struct {
         if (event == .key) {
             const key = event.key;
             const delta: f32 = 0.05;
-            var changed = false;
+            const previous_ratio = self.ratio;
             switch (key.key) {
                 input.KeyCode.LEFT => {
                     if (self.orientation == .horizontal) {
                         self.setRatio(self.ratio - delta);
-                        changed = true;
                     }
                 },
                 input.KeyCode.RIGHT => {
                     if (self.orientation == .horizontal) {
                         self.setRatio(self.ratio + delta);
-                        changed = true;
                     }
                 },
                 input.KeyCode.UP => {
                     if (self.orientation == .vertical) {
                         self.setRatio(self.ratio - delta);
-                        changed = true;
                     }
                 },
                 input.KeyCode.DOWN => {
                     if (self.orientation == .vertical) {
                         self.setRatio(self.ratio + delta);
-                        changed = true;
                     }
                 },
                 else => {},
             }
-            if (changed) return true;
+            if (previous_ratio != self.ratio) return true;
         }
 
         // Pass through to children.
@@ -349,6 +345,39 @@ test "split pane marks dirty when visible state changes" {
     try std.testing.expect(!pane.widget.dirty);
     pane.setFirst(&replacement.widget);
     try std.testing.expect(!pane.widget.dirty);
+}
+
+test "split pane does not consume saturated ratio nudges" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    pane.setRatio(0.05);
+    pane.widget.clearDirty();
+    try std.testing.expect(!try pane.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.LEFT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(f32, 0.05), pane.ratio);
+    try std.testing.expect(!pane.widget.dirty);
+
+    try std.testing.expect(try pane.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(f32, 0.1), pane.ratio);
+    try std.testing.expect(pane.widget.dirty);
+
+    pane.setRatio(0.95);
+    pane.widget.clearDirty();
+    try std.testing.expect(!try pane.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.RIGHT, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(f32, 0.95), pane.ratio);
+    try std.testing.expect(!pane.widget.dirty);
+
+    pane.setOrientation(.vertical);
+    pane.setRatio(0.05);
+    pane.widget.clearDirty();
+    try std.testing.expect(!try pane.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(f32, 0.05), pane.ratio);
+    try std.testing.expect(!pane.widget.dirty);
+
+    try std.testing.expect(try pane.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(f32, 0.1), pane.ratio);
+    try std.testing.expect(pane.widget.dirty);
 }
 
 test "split pane clamps horizontal edge layout and draw coordinates" {
