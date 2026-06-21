@@ -109,6 +109,7 @@ pub const TextArea = struct {
     pub fn setText(self: *TextArea, text: []const u8) !void {
         const copy_len = utf8PrefixLen(text, self.max_bytes);
         const next_text = text[0..copy_len];
+        const changed = !std.mem.eql(u8, self.buffer.items, next_text) or self.cursor != copy_len or self.scroll_row != 0 or self.scroll_col != 0 or self.normalizedSelection() != null or self.extra_cursors.items.len > 0;
         try self.buffer.ensureTotalCapacity(self.allocator, copy_len);
 
         var next_validation: ?form.ValidationResult = null;
@@ -126,6 +127,7 @@ pub const TextArea = struct {
             self.commitValidationResult(result);
             next_validation = null;
         }
+        if (changed) self.widget.markDirty();
         self.notifyChange();
     }
 
@@ -134,6 +136,8 @@ pub const TextArea = struct {
     }
 
     pub fn setPlaceholder(self: *TextArea, placeholder: []const u8) !void {
+        if (std.mem.eql(u8, self.placeholder, placeholder)) return;
+
         if (placeholder.len == 0) {
             if (self.placeholder_owned and self.placeholder.len > 0) {
                 self.allocator.free(self.placeholder);
@@ -160,15 +164,40 @@ pub const TextArea = struct {
     }
 
     pub fn setColors(self: *TextArea, fg: render.Color, bg: render.Color, focused_fg: render.Color, focused_bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and
+            std.meta.eql(self.bg, bg) and
+            std.meta.eql(self.focused_fg, focused_fg) and
+            std.meta.eql(self.focused_bg, focused_bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.focused_fg = focused_fg;
         self.focused_bg = focused_bg;
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for text area colors and focus ring.
     pub fn setTheme(self: *TextArea, theme_value: theme.Theme) void {
         const colors = theme.inputColors(theme_value);
+        const focus_ring = render.FocusRingStyle{
+            .color = colors.focused_bg,
+            .border = .rounded,
+            .style = render.Style{ .bold = true },
+        };
+        const changed = !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.focused_fg, colors.focused_fg) or
+            !std.meta.eql(self.focused_bg, colors.focused_bg) or
+            !std.meta.eql(self.disabled_fg, colors.disabled_fg) or
+            !std.meta.eql(self.disabled_bg, colors.disabled_bg) or
+            !std.meta.eql(self.invalid_fg, colors.invalid_fg) or
+            !std.meta.eql(self.invalid_bg, colors.invalid_bg) or
+            !std.meta.eql(self.style, colors.style) or
+            self.widget.focus_ring == null or
+            !std.meta.eql(self.widget.focus_ring.?, focus_ring);
+
+        if (!changed) return;
+
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.focused_fg = colors.focused_fg;
@@ -178,16 +207,14 @@ pub const TextArea = struct {
         self.invalid_fg = colors.invalid_fg;
         self.invalid_bg = colors.invalid_bg;
         self.style = colors.style;
-        self.widget.setFocusRing(render.FocusRingStyle{
-            .color = self.focused_bg,
-            .border = .rounded,
-            .style = render.Style{ .bold = true },
-        });
+        self.widget.setFocusRing(focus_ring);
     }
 
     pub fn setBorder(self: *TextArea, border: render.BorderStyle) void {
+        if (self.border == border) return;
         self.border = border;
         self.show_border = border != .none;
+        self.widget.markDirty();
     }
 
     fn contentRect(self: *const TextArea) layout_module.Rect {
@@ -252,15 +279,29 @@ pub const TextArea = struct {
     pub fn selectRange(self: *TextArea, start: usize, end: usize) void {
         const clamped_start = @min(start, self.buffer.items.len);
         const clamped_end = @min(end, self.buffer.items.len);
+        if (self.selection) |sel| {
+            if (sel.start == clamped_start and sel.end == clamped_end) return;
+        }
         self.selection = .{ .start = clamped_start, .end = clamped_end };
+        self.widget.markDirty();
     }
 
     pub fn clearSelection(self: *TextArea) void {
+        if (self.normalizedSelection() == null) {
+            self.selection = null;
+            return;
+        }
         self.selection = null;
+        self.widget.markDirty();
     }
 
     pub fn selectAll(self: *TextArea) void {
+        if (self.buffer.items.len == 0) return;
+        if (self.selection) |sel| {
+            if (sel.start == 0 and sel.end == self.buffer.items.len) return;
+        }
         self.selection = .{ .start = 0, .end = self.buffer.items.len };
+        self.widget.markDirty();
     }
 
     pub fn addCursor(self: *TextArea, position: usize) !void {
@@ -269,10 +310,13 @@ pub const TextArea = struct {
         if (std.mem.indexOfScalar(usize, self.extra_cursors.items, clamped) != null) return;
         try self.extra_cursors.append(self.allocator, clamped);
         std.sort.pdq(usize, self.extra_cursors.items, {}, std.sort.asc(usize));
+        self.widget.markDirty();
     }
 
     pub fn clearExtraCursors(self: *TextArea) void {
+        if (self.extra_cursors.items.len == 0) return;
         self.extra_cursors.clearRetainingCapacity();
+        self.widget.markDirty();
     }
 
     pub fn setCursors(self: *TextArea, positions: []const usize) !void {
@@ -293,9 +337,16 @@ pub const TextArea = struct {
         }
         std.sort.pdq(usize, next_extra.items, {}, std.sort.asc(usize));
 
+        const changed = self.cursor != next_primary or !std.mem.eql(usize, self.extra_cursors.items, next_extra.items);
+        if (!changed) {
+            next_extra.deinit(self.allocator);
+            return;
+        }
+
         self.extra_cursors.deinit(self.allocator);
         self.extra_cursors = next_extra;
         self.cursor = next_primary;
+        self.widget.markDirty();
     }
 
     pub fn setValidation(self: *TextArea, field_name: []const u8, rules: []const form.Rule, realtime: bool) !void {
@@ -326,8 +377,10 @@ pub const TextArea = struct {
     }
 
     fn clearValidationResult(self: *TextArea) void {
+        const was_invalid = self.hasValidationError();
         if (self.last_validation) |*res| res.deinit();
         self.last_validation = null;
+        if (was_invalid) self.widget.markDirty();
     }
 
     fn setValidationFieldName(self: *TextArea, name: []const u8) !void {
@@ -355,9 +408,11 @@ pub const TextArea = struct {
     }
 
     fn commitValidationResult(self: *TextArea, result: form.ValidationResult) void {
+        const was_invalid = self.hasValidationError();
         var previous = self.last_validation;
         self.last_validation = result;
         if (previous) |*res| res.deinit();
+        if (was_invalid != self.hasValidationError()) self.widget.markDirty();
         if (self.on_validation) |callback| callback(self, &self.last_validation.?);
     }
 
@@ -368,6 +423,7 @@ pub const TextArea = struct {
         if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
             try self.runValidation();
         }
+        self.widget.markDirty();
         self.notifyChange();
     }
 
@@ -1369,6 +1425,117 @@ test "text area setText resets cursor and scroll" {
     try std.testing.expectEqual(@as(usize, 0), area.scroll_row);
     try std.testing.expectEqual(@as(usize, 0), area.scroll_col);
     try std.testing.expectEqual(@as(?TextArea.Selection, null), area.selection);
+}
+
+test "text area visible mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    area.widget.clearDirty();
+    try area.setText("alpha");
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    try area.setText("alpha");
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    try area.setPlaceholder("Notes");
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    try area.setPlaceholder("Notes");
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    area.setBorder(.rounded);
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    area.setBorder(.rounded);
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    area.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    area.setColors(render.Color.named(.white), render.Color.named(.black), render.Color.named(.black), render.Color.named(.green));
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    area.setTheme(theme.Theme.light());
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    area.setTheme(theme.Theme.light());
+    try std.testing.expect(!area.widget.dirty);
+}
+
+test "text area selection and cursor mutations mark dirty" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("abcdef");
+
+    area.widget.clearDirty();
+    area.selectRange(1, 4);
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    area.selectRange(1, 4);
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    area.clearSelection();
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    area.clearSelection();
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    try area.addCursor(2);
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    try area.addCursor(2);
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    try area.setCursors(&[_]usize{ 3, 1, 5 });
+    try std.testing.expect(area.widget.dirty);
+    area.widget.clearDirty();
+    try area.setCursors(&[_]usize{ 3, 1, 5 });
+    try std.testing.expect(!area.widget.dirty);
+
+    area.widget.clearDirty();
+    try area.setCursors(&.{});
+    try std.testing.expect(area.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
+    area.widget.clearDirty();
+    try area.setCursors(&.{});
+    try std.testing.expect(!area.widget.dirty);
+}
+
+test "text area validation state changes mark dirty" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    const rules = [_]form.Rule{form.required("needed")};
+
+    area.widget.clearDirty();
+    try area.setValidation("body", &rules, true);
+    try std.testing.expect(area.widget.dirty);
+    try std.testing.expect(area.hasValidationError());
+
+    area.widget.clearDirty();
+    try area.revalidate();
+    try std.testing.expect(!area.widget.dirty);
+
+    try area.setText("valid");
+    try std.testing.expect(area.widget.dirty);
+    try std.testing.expect(!area.hasValidationError());
+
+    area.widget.clearDirty();
+    area.clearValidation();
+    try std.testing.expect(!area.widget.dirty);
+    try std.testing.expect(area.validationState() == null);
 }
 
 test "text area clips edge draw coordinates before u16 overflow" {
