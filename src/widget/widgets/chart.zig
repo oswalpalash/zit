@@ -73,22 +73,32 @@ pub const Chart = struct {
     }
 
     pub fn setTheme(self: *Chart, t: theme.Theme) !void {
+        if (std.meta.eql(self.theme_value, t)) return;
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     pub fn setType(self: *Chart, chart_type: ChartType) void {
+        if (self.chart_type == chart_type) return;
         self.chart_type = chart_type;
+        self.widget.markDirty();
     }
 
     pub fn setPadding(self: *Chart, padding: u16) void {
+        if (self.padding == padding) return;
         self.padding = padding;
+        self.widget.markDirty();
     }
 
     pub fn setShowAxes(self: *Chart, show_axes: bool) void {
+        if (self.show_axes == show_axes) return;
         self.show_axes = show_axes;
+        self.widget.markDirty();
     }
 
     pub fn setAxisLabels(self: *Chart, x_label: ?[]const u8, y_label: ?[]const u8) !void {
+        if (optionalTextEqual(self.x_axis_label, x_label) and optionalTextEqual(self.y_axis_label, y_label)) return;
+
         var next_x_label: ?[]u8 = null;
         errdefer if (next_x_label) |label| self.allocator.free(label);
         if (x_label) |text| {
@@ -105,10 +115,13 @@ pub const Chart = struct {
         if (self.y_axis_label) |label| self.allocator.free(label);
         self.x_axis_label = next_x_label;
         self.y_axis_label = next_y_label;
+        self.widget.markDirty();
     }
 
     pub fn setShowLegend(self: *Chart, show: bool) void {
+        if (self.show_legend == show) return;
         self.show_legend = show;
+        self.widget.markDirty();
     }
 
     pub fn addSeries(self: *Chart, label: []const u8, values: []const f32, color: ?render.Color, fill: ?render.Color) !void {
@@ -135,6 +148,13 @@ pub const Chart = struct {
         };
 
         self.series.appendAssumeCapacity(s);
+        self.widget.markDirty();
+    }
+
+    fn optionalTextEqual(current: ?[]const u8, next: ?[]const u8) bool {
+        if (current == null and next == null) return true;
+        if (current == null or next == null) return false;
+        return std.mem.eql(u8, current.?, next.?);
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -807,4 +827,62 @@ test "chart axis labels preserve old values on replacement allocation failure" {
     try std.testing.expectError(error.OutOfMemory, chart.setAxisLabels("new-x", "new-y"));
     try std.testing.expectEqualStrings("old-x", chart.x_axis_label.?);
     try std.testing.expectEqualStrings("old-y", chart.y_axis_label.?);
+}
+
+test "chart marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+
+    try chart.widget.layout(layout_module.Rect.init(0, 0, 18, 8));
+    var renderer = try render.Renderer.init(alloc, 18, 8);
+    defer renderer.deinit();
+
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+
+    chart.setType(.bar);
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    chart.setType(.bar);
+    try std.testing.expect(!chart.widget.dirty);
+
+    chart.setPadding(2);
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    chart.setPadding(2);
+    try std.testing.expect(!chart.widget.dirty);
+
+    chart.setShowAxes(false);
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    chart.setShowAxes(false);
+    try std.testing.expect(!chart.widget.dirty);
+
+    try chart.setAxisLabels("x", "y");
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    try chart.setAxisLabels("x", "y");
+    try std.testing.expect(!chart.widget.dirty);
+
+    chart.setShowLegend(false);
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    chart.setShowLegend(false);
+    try std.testing.expect(!chart.widget.dirty);
+
+    try chart.setTheme(theme.Theme.solarizedLight());
+    try std.testing.expect(chart.widget.dirty);
+    try chart.widget.draw(&renderer);
+    try std.testing.expect(!chart.widget.dirty);
+    try chart.setTheme(theme.Theme.solarizedLight());
+    try std.testing.expect(!chart.widget.dirty);
+
+    try chart.addSeries("requests", &[_]f32{ 1, 3, 2, 4 }, null, null);
+    try std.testing.expect(chart.widget.dirty);
 }
