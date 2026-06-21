@@ -339,6 +339,11 @@ fn saturatingI16AddU32(a: i16, b: u32) i16 {
     return @intCast(@min(sum, @as(u32, std.math.maxInt(i16))));
 }
 
+fn addU16Clamped(a: u16, b: u16) u16 {
+    const sum = @as(u32, a) + @as(u32, b);
+    return @intCast(@min(sum, @as(u32, std.math.maxInt(u16))));
+}
+
 /// Tab view widget for managing tabbed interfaces
 pub const TabView = struct {
     /// Base widget
@@ -630,11 +635,11 @@ pub const TabView = struct {
     fn contentRect(self: *TabView) layout_module.Rect {
         var rect = self.widget.rect;
         const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
-        rect.y += tab_height;
+        rect.y = addU16Clamped(rect.y, tab_height);
         rect.height = if (rect.height > tab_height) rect.height - tab_height else 0;
         if (self.show_border and rect.height >= 2 and rect.width >= 2) {
-            rect.x += 1;
-            rect.y += 1;
+            rect.x = addU16Clamped(rect.x, 1);
+            rect.y = addU16Clamped(rect.y, 1);
             rect.width -= 2;
             rect.height -= 2;
         }
@@ -662,10 +667,10 @@ pub const TabView = struct {
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', fg, bg, style);
         try self.tab_bar.widget.draw(renderer);
         const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
-        if (self.show_border and rect.width > 1 and rect.height > tab_height + 1) {
+        if (self.show_border and rect.width > 1 and @as(u32, rect.height) > @as(u32, tab_height) + 1) {
             renderer.drawBox(
                 rect.x,
-                rect.y + tab_height,
+                addU16Clamped(rect.y, tab_height),
                 rect.width,
                 rect.height - tab_height,
                 .single,
@@ -1039,6 +1044,54 @@ test "tab view preferred size saturates active content chrome" {
 
     try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.width);
     try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.height);
+}
+
+test "tab view clamps far-edge content coordinates" {
+    const Recorder = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        var last_rect: ?layout_module.Rect = null;
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, rect: layout_module.Rect) anyerror!void {
+            last_rect = rect;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+    var recorder = Recorder{};
+    Recorder.last_rect = null;
+
+    try tab_view.addTab("edge", &recorder.widget);
+    try tab_view.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 4));
+
+    const laid_out = Recorder.last_rect.?;
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), laid_out.x);
+    try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), laid_out.y);
+    try std.testing.expectEqual(@as(u16, 2), laid_out.width);
+    try std.testing.expectEqual(@as(u16, 1), laid_out.height);
+
+    var renderer = try render.Renderer.init(alloc, 4, 4);
+    defer renderer.deinit();
+    try tab_view.widget.draw(&renderer);
 }
 
 test "tab view remove before active preserves active tab" {
