@@ -108,6 +108,15 @@ pub const ColorPicker = struct {
         return previous != self.selected_index;
     }
 
+    fn selectKeyboardTarget(self: *ColorPicker, target: usize, clamped: bool) bool {
+        if (target == self.selected_index) {
+            if (clamped) self.widget.markDirty();
+            return clamped;
+        }
+        self.selectIndex(target);
+        return true;
+    }
+
     fn checkedCoord(value: u64) ?u16 {
         if (value > std.math.maxInt(u16)) return null;
         return @intCast(value);
@@ -210,15 +219,15 @@ pub const ColorPicker = struct {
             .key => |key| {
                 if (!self.widget.focused) return false;
                 const max_index = self.palette.items.len - 1;
-                _ = self.clampSelection();
+                const clamped = self.clampSelection();
                 const current = @min(self.selected_index, max_index);
                 const cols_step: usize = if (self.columns == 0) 1 else self.columns;
 
                 switch (key.key) {
-                    input.KeyCode.LEFT => self.selectIndex(if (current > 0) current - 1 else 0),
-                    input.KeyCode.RIGHT => self.selectIndex(@min(current +| 1, max_index)),
-                    input.KeyCode.UP => self.selectIndex(if (current > cols_step) current - cols_step else 0),
-                    input.KeyCode.DOWN => self.selectIndex(@min(current +| cols_step, max_index)),
+                    input.KeyCode.LEFT => return self.selectKeyboardTarget(if (current > 0) current - 1 else 0, clamped),
+                    input.KeyCode.RIGHT => return self.selectKeyboardTarget(@min(current +| 1, max_index), clamped),
+                    input.KeyCode.UP => return self.selectKeyboardTarget(if (current > cols_step) current - cols_step else 0, clamped),
+                    input.KeyCode.DOWN => return self.selectKeyboardTarget(@min(current +| cols_step, max_index), clamped),
                     input.KeyCode.ENTER, input.KeyCode.SPACE => {
                         if (self.on_change) |cb| cb(self.palette.items[current], current);
                         if (self.on_change_with_ctx) |cb| cb(self.palette.items[current], current, self.on_change_ctx);
@@ -226,7 +235,6 @@ pub const ColorPicker = struct {
                     },
                     else => return false,
                 }
-                return true;
             },
             else => {},
         }
@@ -468,8 +476,68 @@ test "color picker clamps invalid selected index during keyboard handling" {
     try std.testing.expectEqual(@as(usize, 1), change_index);
 
     const right_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) };
-    try std.testing.expect(try picker.widget.handleEvent(right_event));
+    picker.widget.clearDirty();
+    try std.testing.expect(!try picker.widget.handleEvent(right_event));
     try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    try std.testing.expect(!picker.widget.dirty);
+}
+
+test "color picker saturated keyboard navigation does not consume unchanged events" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.blue),
+        render.Color.named(render.NamedColor.yellow),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.setColumns(2);
+    picker.widget.setFocus(true);
+    picker.widget.clearDirty();
+
+    try std.testing.expect(!try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), picker.selected_index);
+    try std.testing.expect(!picker.widget.dirty);
+
+    try std.testing.expect(!try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.UP, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), picker.selected_index);
+    try std.testing.expect(!picker.widget.dirty);
+
+    try std.testing.expect(try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    try std.testing.expect(picker.widget.dirty);
+
+    picker.selectIndex(3);
+    picker.widget.clearDirty();
+    try std.testing.expect(!try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 3), picker.selected_index);
+    try std.testing.expect(!picker.widget.dirty);
+
+    try std.testing.expect(!try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.DOWN, .{}) }));
+    try std.testing.expectEqual(@as(usize, 3), picker.selected_index);
+    try std.testing.expect(!picker.widget.dirty);
+}
+
+test "color picker keyboard navigation repairs stale selection" {
+    const allocator = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+    };
+
+    var picker = try ColorPicker.init(allocator, &palette);
+    defer picker.deinit();
+
+    picker.widget.setFocus(true);
+    picker.selected_index = std.math.maxInt(usize);
+    picker.widget.clearDirty();
+
+    try std.testing.expect(try picker.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    try std.testing.expect(picker.widget.dirty);
 }
 
 test "color picker setPalette preserves palette on allocation failure" {
