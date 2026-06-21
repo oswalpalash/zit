@@ -45,6 +45,8 @@ pub const Popup = struct {
     }
 
     pub fn setMessage(self: *Popup, message: []const u8) !void {
+        if (std.mem.eql(u8, self.message, message)) return;
+
         const next = try self.allocator.dupe(u8, message);
         self.allocator.free(self.message);
         self.message = next;
@@ -53,6 +55,8 @@ pub const Popup = struct {
     }
 
     pub fn setColors(self: *Popup, fg: render.Color, bg: render.Color) void {
+        if (std.meta.eql(self.fg, fg) and std.meta.eql(self.bg, bg)) return;
+
         self.fg = fg;
         self.bg = bg;
         self.widget.markDirty();
@@ -101,13 +105,13 @@ pub const Popup = struct {
         switch (event) {
             .key => {
                 if (self.dismiss_on_any_key) {
-                    self.widget.visible = false;
+                    self.widget.setVisible(false);
                     return true;
                 }
             },
             .mouse => |mouse| {
                 if (mouse.action == .press and !self.widget.rect.contains(mouse.x, mouse.y)) {
-                    self.widget.visible = false;
+                    self.widget.setVisible(false);
                     return true;
                 }
             },
@@ -229,4 +233,68 @@ test "popup preferred size clamps long messages before u16 cast" {
     const size = try popup.widget.getPreferredSize();
     try std.testing.expectEqual(popup.width, size.width);
     try std.testing.expectEqual(popup.height, size.height);
+}
+
+test "popup visible mutations mark dirty only when changed" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "Stable");
+    defer popup.deinit();
+
+    popup.widget.clearDirty();
+    try popup.setMessage("Stable");
+    try std.testing.expect(!popup.widget.dirty);
+    popup.widget.clearDirty();
+    try popup.setMessage("Changed");
+    try std.testing.expect(popup.widget.dirty);
+    try std.testing.expectEqualStrings("Changed", popup.message);
+
+    popup.widget.clearDirty();
+    popup.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(popup.widget.dirty);
+    popup.widget.clearDirty();
+    popup.setColors(render.Color.named(.white), render.Color.named(.black));
+    try std.testing.expect(!popup.widget.dirty);
+
+    popup.widget.clearDirty();
+    popup.setBorder(.single);
+    try std.testing.expect(popup.widget.dirty);
+    popup.widget.clearDirty();
+    popup.setBorder(.single);
+    try std.testing.expect(!popup.widget.dirty);
+}
+
+test "popup setMessage no-op does not allocate" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "Stable");
+    defer popup.deinit();
+
+    popup.widget.clearDirty();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = popup.allocator;
+    popup.allocator = failing.allocator();
+    defer popup.allocator = original_allocator;
+
+    try popup.setMessage("Stable");
+    try std.testing.expectEqualStrings("Stable", popup.message);
+    try std.testing.expect(!popup.widget.dirty);
+}
+
+test "popup dismissals mark dirty" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "Dismiss");
+    defer popup.deinit();
+
+    try popup.widget.layout(layout_module.Rect.init(0, 0, 30, 10));
+
+    popup.widget.clearDirty();
+    const key_event = input.Event{ .key = input.KeyEvent.init('a', input.KeyModifiers{}) };
+    try std.testing.expect(try popup.widget.handleEvent(key_event));
+    try std.testing.expect(!popup.widget.visible);
+    try std.testing.expect(popup.widget.dirty);
+
+    popup.widget.setVisible(true);
+    popup.widget.clearDirty();
+    try std.testing.expect(try popup.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 29, 9, 1, 0) }));
+    try std.testing.expect(!popup.widget.visible);
+    try std.testing.expect(popup.widget.dirty);
 }
