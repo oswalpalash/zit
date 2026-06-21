@@ -178,17 +178,16 @@ pub const AutocompleteInput = struct {
 
         if (event == .key and self.widget.focused and self.filtered.items.len > 0) {
             const key_event = event.key;
-            _ = self.clampSelection();
+            const selection_was_clamped = self.clampSelection();
+            if (selection_was_clamped) self.widget.markDirty();
             switch (key_event.key) {
                 input.KeyCode.UP => {
-                    if (self.selected > 0) self.selected -= 1;
-                    return true;
+                    const changed = if (self.selected > 0) self.setSelectedVisibleIndex(self.selected - 1) else false;
+                    return changed or selection_was_clamped;
                 },
                 input.KeyCode.DOWN => {
-                    if (self.selected + 1 < self.filtered.items.len and self.selected + 1 < self.max_visible) {
-                        self.selected += 1;
-                    }
-                    return true;
+                    const changed = self.setSelectedVisibleIndex(self.selected + 1);
+                    return changed or selection_was_clamped;
                 },
                 input.KeyCode.ENTER, input.KeyCode.TAB => {
                     return try self.acceptSelection();
@@ -259,6 +258,14 @@ pub const AutocompleteInput = struct {
             self.selected = visible_items - 1;
         }
         return self.selected != previous;
+    }
+
+    fn setSelectedVisibleIndex(self: *AutocompleteInput, index: usize) bool {
+        const visible_items = @min(self.filtered.items.len, self.max_visible);
+        if (index >= visible_items or self.selected == index) return false;
+        self.selected = index;
+        self.widget.markDirty();
+        return true;
     }
 
     fn freeSuggestionList(self: *AutocompleteInput, suggestions: *std.ArrayList([]u8)) void {
@@ -358,6 +365,40 @@ test "autocomplete clamps stale selection before keyboard navigation" {
     const up_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(up_event));
     try std.testing.expectEqual(@as(usize, 0), ac.selected);
+}
+
+test "autocomplete ignores saturated keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.widget.focused = true;
+    ac.setMaxVisible(2);
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine", "alt" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    try ac.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
+
+    var renderer = try render.Renderer.init(alloc, 12, 3);
+    defer renderer.deinit();
+    try ac.widget.draw(&renderer);
+    try std.testing.expect(!ac.widget.dirty);
+
+    const up_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, input.KeyModifiers{}) };
+    try std.testing.expect(!try ac.widget.handleEvent(up_event));
+    try std.testing.expectEqual(@as(usize, 0), ac.selected);
+    try std.testing.expect(!ac.widget.dirty);
+
+    const down_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, input.KeyModifiers{}) };
+    try std.testing.expect(try ac.widget.handleEvent(down_event));
+    try std.testing.expectEqual(@as(usize, 1), ac.selected);
+    try std.testing.expect(ac.widget.dirty);
+    try ac.widget.draw(&renderer);
+    try std.testing.expect(!ac.widget.dirty);
+
+    try std.testing.expect(!try ac.widget.handleEvent(down_event));
+    try std.testing.expectEqual(@as(usize, 1), ac.selected);
+    try std.testing.expect(!ac.widget.dirty);
 }
 
 test "autocomplete setMaxVisible clamps stale visible selection" {
