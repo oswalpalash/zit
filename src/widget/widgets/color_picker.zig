@@ -46,6 +46,11 @@ pub const ColorPicker = struct {
 
     /// Replace the palette and clamp selection to a valid entry if needed.
     pub fn setPalette(self: *ColorPicker, palette: []const render.Color) !void {
+        if (self.paletteEqual(palette)) {
+            if (self.clampSelection()) self.widget.markDirty();
+            return;
+        }
+
         var next_palette = std.ArrayList(render.Color).empty;
         errdefer next_palette.deinit(self.allocator);
 
@@ -53,11 +58,14 @@ pub const ColorPicker = struct {
 
         self.palette.deinit(self.allocator);
         self.palette = next_palette;
-        self.clampSelection();
+        _ = self.clampSelection();
+        self.widget.markDirty();
     }
 
     pub fn setColumns(self: *ColorPicker, columns: u16) void {
-        if (columns > 0) self.columns = columns;
+        if (columns == 0 or self.columns == columns) return;
+        self.columns = columns;
+        self.widget.markDirty();
     }
 
     pub fn setOnChange(self: *ColorPicker, callback: *const fn (render.Color, usize) void) void {
@@ -76,17 +84,28 @@ pub const ColorPicker = struct {
         if (index >= self.palette.items.len) return;
         if (self.selected_index != index) {
             self.selected_index = index;
+            self.widget.markDirty();
             if (self.on_change) |cb| cb(self.palette.items[index], index);
             if (self.on_change_with_ctx) |cb| cb(self.palette.items[index], index, self.on_change_ctx);
         }
     }
 
-    fn clampSelection(self: *ColorPicker) void {
+    fn paletteEqual(self: *const ColorPicker, palette: []const render.Color) bool {
+        if (self.palette.items.len != palette.len) return false;
+        for (self.palette.items, palette) |lhs, rhs| {
+            if (!std.meta.eql(lhs, rhs)) return false;
+        }
+        return true;
+    }
+
+    fn clampSelection(self: *ColorPicker) bool {
+        const previous = self.selected_index;
         if (self.palette.items.len == 0) {
             self.selected_index = 0;
         } else if (self.selected_index >= self.palette.items.len) {
             self.selected_index = self.palette.items.len - 1;
         }
+        return previous != self.selected_index;
     }
 
     fn checkedCoord(value: u64) ?u16 {
@@ -111,7 +130,7 @@ pub const ColorPicker = struct {
         const rect = self.widget.rect;
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', render.Color.named(render.NamedColor.default), render.Color.named(render.NamedColor.black), render.Style{});
 
-        self.clampSelection();
+        _ = self.clampSelection();
         if (self.palette.items.len == 0 or rect.width == 0 or rect.height == 0 or self.columns == 0) return;
 
         const cols: usize = @intCast(self.columns);
@@ -191,7 +210,7 @@ pub const ColorPicker = struct {
             .key => |key| {
                 if (!self.widget.focused) return false;
                 const max_index = self.palette.items.len - 1;
-                self.clampSelection();
+                _ = self.clampSelection();
                 const current = @min(self.selected_index, max_index);
                 const cols_step: usize = if (self.columns == 0) 1 else self.columns;
 
@@ -479,4 +498,59 @@ test "color picker setPalette preserves palette on allocation failure" {
     try std.testing.expectEqual(render.NamedColor.red, picker.palette.items[0].named_color);
     try std.testing.expectEqual(render.NamedColor.green, picker.palette.items[1].named_color);
     try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+}
+
+test "color picker marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+    const palette = [_]render.Color{
+        render.Color.named(render.NamedColor.red),
+        render.Color.named(render.NamedColor.green),
+        render.Color.named(render.NamedColor.blue),
+    };
+    const replacement_palette = [_]render.Color{
+        render.Color.named(render.NamedColor.yellow),
+        render.Color.named(render.NamedColor.magenta),
+    };
+
+    var picker = try ColorPicker.init(alloc, &palette);
+    defer picker.deinit();
+
+    try picker.widget.layout(layout.Rect.init(0, 0, 18, 6));
+    var renderer = try render.Renderer.init(alloc, 18, 6);
+    defer renderer.deinit();
+
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.setColumns(2);
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.setColumns(2);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.setColumns(0);
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.selectIndex(1);
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.selectIndex(1);
+    try std.testing.expect(!picker.widget.dirty);
+    picker.selectIndex(42);
+    try std.testing.expect(!picker.widget.dirty);
+
+    try picker.setPalette(&palette);
+    try std.testing.expect(!picker.widget.dirty);
+
+    picker.selected_index = std.math.maxInt(usize);
+    try picker.setPalette(&palette);
+    try std.testing.expectEqual(@as(usize, 2), picker.selected_index);
+    try std.testing.expect(picker.widget.dirty);
+    try picker.widget.draw(&renderer);
+    try std.testing.expect(!picker.widget.dirty);
+
+    try picker.setPalette(&replacement_palette);
+    try std.testing.expectEqual(@as(usize, 1), picker.selected_index);
+    try std.testing.expect(picker.widget.dirty);
 }
