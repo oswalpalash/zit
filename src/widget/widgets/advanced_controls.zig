@@ -146,6 +146,7 @@ pub const ToggleSwitch = struct {
     pub fn set(self: *ToggleSwitch, value: bool) void {
         if (self.on != value) {
             self.on = value;
+            self.widget.markDirty();
             if (self.on_toggle) |cb| cb(self.on);
         }
     }
@@ -1743,6 +1744,32 @@ test "toggle switch renders state" {
     var snap = try testing.renderWidget(alloc, &toggle.widget, layout_module.Size.init(16, 1));
     defer snap.deinit(alloc);
     try snap.expectEqual("[ ON ] Turbo    \n");
+}
+
+test "toggle switch marks dirty when visible state changes" {
+    const alloc = std.testing.allocator;
+
+    var toggle = try ToggleSwitch.init(alloc, "Turbo");
+    defer toggle.deinit();
+
+    try toggle.widget.layout(layout_module.Rect.init(0, 0, 16, 1));
+    var renderer = try render.Renderer.init(alloc, 16, 1);
+    defer renderer.deinit();
+
+    try toggle.widget.draw(&renderer);
+    try std.testing.expect(!toggle.widget.dirty);
+
+    toggle.set(true);
+    try std.testing.expect(toggle.widget.dirty);
+    try toggle.widget.draw(&renderer);
+    try std.testing.expect(!toggle.widget.dirty);
+
+    toggle.set(true);
+    try std.testing.expect(!toggle.widget.dirty);
+
+    toggle.toggle();
+    try std.testing.expect(!toggle.on);
+    try std.testing.expect(toggle.widget.dirty);
 }
 
 test "toggle switch mouse toggles rendered row only" {
