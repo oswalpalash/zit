@@ -154,12 +154,21 @@ pub const TreeView = struct {
         }
     }
 
-    fn clampSelection(self: *TreeView) void {
+    fn clampSelection(self: *TreeView) bool {
+        const previous = self.selected;
         if (self.visible.items.len == 0) {
             self.selected = 0;
         } else if (self.selected >= self.visible.items.len) {
             self.selected = self.visible.items.len - 1;
         }
+        return previous != self.selected;
+    }
+
+    fn setSelectedVisibleIndex(self: *TreeView, index: usize) bool {
+        if (index >= self.visible.items.len or self.selected == index) return false;
+        self.selected = index;
+        self.widget.markDirty();
+        return true;
     }
 
     fn addOffsetClamped(origin: u16, offset: u16) u16 {
@@ -250,7 +259,7 @@ pub const TreeView = struct {
 
         try self.syncVisible();
         if (self.visible.items.len == 0) return false;
-        self.clampSelection();
+        if (self.clampSelection()) self.widget.markDirty();
 
         switch (event) {
             .key => |key| {
@@ -258,14 +267,12 @@ pub const TreeView = struct {
                 switch (key.key) {
                     input.KeyCode.DOWN => {
                         if (self.selected + 1 < self.visible.items.len) {
-                            self.selected += 1;
-                            handled = true;
+                            handled = self.setSelectedVisibleIndex(self.selected + 1);
                         }
                     },
                     input.KeyCode.UP => {
                         if (self.selected > 0) {
-                            self.selected -= 1;
-                            handled = true;
+                            handled = self.setSelectedVisibleIndex(self.selected - 1);
                         }
                     },
                     input.KeyCode.RIGHT => {
@@ -275,6 +282,7 @@ pub const TreeView = struct {
                             self.visible_dirty = true;
                             handled = true;
                             try self.syncVisible();
+                            if (self.clampSelection()) self.widget.markDirty();
                         }
                     },
                     input.KeyCode.LEFT => {
@@ -284,18 +292,18 @@ pub const TreeView = struct {
                             self.visible_dirty = true;
                             handled = true;
                             try self.syncVisible();
+                            if (self.clampSelection()) self.widget.markDirty();
                         } else if (self.nodes.items[idx].parent) |parent_idx| {
-                            self.selected = self.indexOfVisible(parent_idx) orelse self.selected;
-                            handled = true;
+                            if (self.indexOfVisible(parent_idx)) |parent_visible_index| {
+                                handled = self.setSelectedVisibleIndex(parent_visible_index);
+                            }
                         }
                     },
                     input.KeyCode.HOME => {
-                        self.selected = 0;
-                        handled = true;
+                        handled = self.setSelectedVisibleIndex(0);
                     },
                     input.KeyCode.END => {
-                        self.selected = self.visible.items.len - 1;
-                        handled = true;
+                        handled = self.setSelectedVisibleIndex(self.visible.items.len - 1);
                     },
                     input.KeyCode.SPACE, input.KeyCode.ENTER => {
                         const idx = self.visible.items[self.selected];
@@ -304,6 +312,7 @@ pub const TreeView = struct {
                             self.visible_dirty = true;
                             handled = true;
                             try self.syncVisible();
+                            if (self.clampSelection()) self.widget.markDirty();
                         }
                     },
                     else => {},
@@ -311,6 +320,7 @@ pub const TreeView = struct {
 
                 if (handled) {
                     self.ensureSelectionVisible(@intCast(self.widget.rect.height));
+                    self.widget.markDirty();
                     return true;
                 }
             },
@@ -398,6 +408,82 @@ test "tree view clamps stale selection before keyboard navigation" {
     const up = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.UP, .modifiers = .{} } };
     try std.testing.expect(try tree.widget.handleEvent(up));
     try std.testing.expectEqual(@as(usize, 0), tree.selected);
+}
+
+test "tree view ignores saturated keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    _ = try tree.addRoot("first");
+    _ = try tree.addRoot("second");
+    _ = try tree.addRoot("third");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 3));
+
+    var renderer = try render.Renderer.init(alloc, 20, 3);
+    defer renderer.deinit();
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const up = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.UP, .modifiers = .{} } };
+    try std.testing.expect(!try tree.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 0), tree.selected);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const home = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.HOME, .modifiers = .{} } };
+    try std.testing.expect(!try tree.widget.handleEvent(home));
+    try std.testing.expectEqual(@as(usize, 0), tree.selected);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const down = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.DOWN, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 1), tree.selected);
+    try std.testing.expect(tree.widget.dirty);
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const end = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.END, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(end));
+    try std.testing.expectEqual(@as(usize, 2), tree.selected);
+    try std.testing.expect(tree.widget.dirty);
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    try std.testing.expect(!try tree.widget.handleEvent(end));
+    try std.testing.expectEqual(@as(usize, 2), tree.selected);
+    try std.testing.expect(!tree.widget.dirty);
+
+    try std.testing.expect(!try tree.widget.handleEvent(down));
+    try std.testing.expectEqual(@as(usize, 2), tree.selected);
+    try std.testing.expect(!tree.widget.dirty);
+}
+
+test "tree view key toggles mark dirty" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    const root = try tree.addRoot("root");
+    _ = try tree.addChild(root, "child");
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 3));
+
+    var renderer = try render.Renderer.init(alloc, 20, 3);
+    defer renderer.deinit();
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const right = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.RIGHT, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(right));
+    try std.testing.expect(tree.nodes.items[root].expanded);
+    try std.testing.expect(tree.widget.dirty);
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const left = input.Event{ .key = input.KeyEvent{ .key = input.KeyCode.LEFT, .modifiers = .{} } };
+    try std.testing.expect(try tree.widget.handleEvent(left));
+    try std.testing.expect(!tree.nodes.items[root].expanded);
+    try std.testing.expect(tree.widget.dirty);
 }
 
 test "tree view clamps stale selection before toggling node" {
