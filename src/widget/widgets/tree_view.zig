@@ -60,7 +60,9 @@ pub const TreeView = struct {
     }
 
     pub fn setTheme(self: *TreeView, palette: theme.Theme) !void {
+        if (std.meta.eql(self.palette, palette)) return;
         self.palette = palette;
+        self.widget.markDirty();
     }
 
     pub fn addRoot(self: *TreeView, label: []const u8) !usize {
@@ -96,6 +98,7 @@ pub const TreeView = struct {
             self.nodes.items[idx].children.appendAssumeCapacity(index);
         }
         self.visible_dirty = true;
+        self.widget.markDirty();
         return index;
     }
 
@@ -436,6 +439,40 @@ test "tree view lazily rebuilds visible cache" {
     tree.nodes.items[0].expanded = true;
     tree.visible_dirty = true;
     try std.testing.expectEqual(@as(usize, 3), try tree.visibleCount());
+}
+
+test "tree view direct visible state changes mark dirty" {
+    const alloc = std.testing.allocator;
+    var tree = try TreeView.init(alloc);
+    defer tree.deinit();
+
+    try tree.widget.layout(layout_module.Rect.init(0, 0, 20, 3));
+    var renderer = try render.Renderer.init(alloc, 20, 3);
+    defer renderer.deinit();
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    const root = try tree.addRoot("root");
+    try std.testing.expect(tree.widget.dirty);
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    _ = try tree.addChild(root, "child");
+    try std.testing.expect(tree.widget.dirty);
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    try tree.setTheme(theme.Theme.light());
+    try std.testing.expect(tree.widget.dirty);
+
+    try tree.widget.draw(&renderer);
+    try std.testing.expect(!tree.widget.dirty);
+
+    try tree.setTheme(theme.Theme.light());
+    try std.testing.expect(!tree.widget.dirty);
 }
 
 fn treeViewAddChildAllocationFailureHarness(allocator: std.mem.Allocator) !void {
