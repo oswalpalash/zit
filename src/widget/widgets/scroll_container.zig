@@ -114,10 +114,12 @@ pub const ScrollContainer = struct {
 
     /// Set the content widget
     pub fn setContent(self: *ScrollContainer, content: *base.Widget) void {
+        const previous = self.content;
         self.detachContent();
         self.content = content;
         content.parent = &self.widget;
-        self.updateContentSize();
+        const size_changed = self.updateContentSize();
+        if (previous != content or size_changed) self.widget.markDirty();
     }
 
     fn detachContent(self: *ScrollContainer) void {
@@ -131,12 +133,17 @@ pub const ScrollContainer = struct {
 
     /// Set whether to show scrollbars
     pub fn setShowScrollbars(self: *ScrollContainer, show_h: bool, show_v: bool) void {
+        if (self.show_h_scrollbar == show_h and self.show_v_scrollbar == show_v) return;
         self.show_h_scrollbar = show_h;
         self.show_v_scrollbar = show_v;
+        self.syncHScrollbar();
+        self.syncVScrollbar();
+        self.widget.markDirty();
     }
 
     /// Set the scroll container colors
     pub fn setColors(self: *ScrollContainer, fg: render.Color, bg: render.Color) void {
+        const changed = !std.meta.eql(self.fg, fg) or !std.meta.eql(self.bg, bg);
         self.fg = fg;
         self.bg = bg;
 
@@ -147,17 +154,28 @@ pub const ScrollContainer = struct {
         if (self.v_scrollbar) |v_scrollbar_widget| {
             v_scrollbar_widget.setColors(fg, bg, render.Color{ .named_color = render.NamedColor.white });
         }
+        if (changed) self.widget.markDirty();
     }
 
     /// Set the border options
     pub fn setBorder(self: *ScrollContainer, show_border: bool, border_style: BorderStyle) void {
+        if (self.show_border == show_border and self.border == border_style) return;
         self.show_border = show_border;
         self.border = border_style;
+        self.syncHScrollbar();
+        self.syncVScrollbar();
+        self.widget.markDirty();
     }
 
     /// Apply theme defaults for container and scrollbar colors.
     pub fn setTheme(self: *ScrollContainer, theme_value: theme.Theme) void {
         const colors = theme.controlColors(theme_value);
+        const changed =
+            !std.meta.eql(self.fg, colors.fg) or
+            !std.meta.eql(self.bg, colors.bg) or
+            !std.meta.eql(self.disabled_fg, colors.disabled_fg) or
+            !std.meta.eql(self.disabled_bg, colors.disabled_bg) or
+            !std.meta.eql(self.style, theme_value.style);
         self.fg = colors.fg;
         self.bg = colors.bg;
         self.disabled_fg = colors.disabled_fg;
@@ -169,11 +187,14 @@ pub const ScrollContainer = struct {
         if (self.v_scrollbar) |v_scrollbar_widget| {
             v_scrollbar_widget.setTheme(theme_value);
         }
+        if (changed) self.widget.markDirty();
     }
 
     /// Set custom border style
     pub fn setCustomBorderStyle(self: *ScrollContainer, style: *const [6]u21) void {
+        if (self.custom_border_style == style) return;
         self.custom_border_style = style;
+        self.widget.markDirty();
     }
 
     /// Horizontal scroll callback
@@ -187,14 +208,19 @@ pub const ScrollContainer = struct {
     }
 
     /// Update the content size
-    fn updateContentSize(self: *ScrollContainer) void {
+    fn updateContentSize(self: *ScrollContainer) bool {
         if (self.content) |content| {
             const content_size = content.getPreferredSize() catch layout_module.Size.init(0, 0);
-            self.content_width = @intCast(@min(content_size.width, std.math.maxInt(i16)));
-            self.content_height = @intCast(@min(content_size.height, std.math.maxInt(i16)));
+            const next_width: i16 = @intCast(@min(content_size.width, std.math.maxInt(i16)));
+            const next_height: i16 = @intCast(@min(content_size.height, std.math.maxInt(i16)));
+            const changed = self.content_width != next_width or self.content_height != next_height;
+            self.content_width = next_width;
+            self.content_height = next_height;
             self.syncHScrollbar();
             self.syncVScrollbar();
+            return changed;
         }
+        return false;
     }
 
     const Viewport = struct {
@@ -257,6 +283,7 @@ pub const ScrollContainer = struct {
         if (clamped == self.v_offset) return;
         self.v_offset = clamped;
         self.syncVScrollbar();
+        self.widget.markDirty();
     }
 
     fn applyHOffset(self: *ScrollContainer, offset: i16) void {
@@ -264,6 +291,7 @@ pub const ScrollContainer = struct {
         if (clamped == self.h_offset) return;
         self.h_offset = clamped;
         self.syncHScrollbar();
+        self.widget.markDirty();
     }
 
     fn offsetBySaturating(current: i16, delta: i32) i16 {
@@ -648,7 +676,7 @@ pub const ScrollContainer = struct {
             try content.layout(content_rect);
         }
 
-        self.updateContentSize();
+        if (self.updateContentSize()) self.widget.markDirty();
     }
 
     /// Get preferred size implementation for ScrollContainer
@@ -755,6 +783,116 @@ test "scroll container maintains parent linkage for content" {
     container.setContent(&second.widget);
     try std.testing.expect(first.widget.parent == null);
     try std.testing.expectEqual(&container.widget, second.widget.parent.?);
+}
+
+test "scroll container visible mutations mark dirty" {
+    const Dummy = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(20, 20);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const custom_border = [_]u21{ '/', '\\', '\\', '/', '=', '!' };
+
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    var renderer = try render.Renderer.init(alloc, 10, 6);
+    defer renderer.deinit();
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    var dummy = Dummy{};
+    container.setContent(&dummy.widget);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setContent(&dummy.widget);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setShowScrollbars(false, true);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setShowScrollbars(false, true);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setBorder(false, .single);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setBorder(false, .single);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setCustomBorderStyle(&custom_border);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setCustomBorderStyle(&custom_border);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setColors(render.Color.named(.red), render.Color.named(.black));
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setColors(render.Color.named(.red), render.Color.named(.black));
+    try std.testing.expect(!container.widget.dirty);
+
+    container.setBorder(true, .single);
+    container.setShowScrollbars(true, true);
+    try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.applyVOffset(1);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.applyVOffset(1);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.applyHOffset(1);
+    try std.testing.expect(container.widget.dirty);
+
+    try container.widget.draw(&renderer);
+    try std.testing.expect(!container.widget.dirty);
+
+    container.applyHOffset(1);
+    try std.testing.expect(!container.widget.dirty);
 }
 
 test "scroll container deinit detaches content parent link" {
