@@ -142,9 +142,7 @@ pub const FileBrowser = struct {
         self.entries = next_entries;
         self.deinitEntries(&old_entries);
 
-        if (self.selected >= self.entries.items.len and self.entries.items.len > 0) {
-            self.selected = self.entries.items.len - 1;
-        }
+        self.clampSelection();
 
         self.resetTypeahead();
         self.ensureVisible();
@@ -230,6 +228,7 @@ pub const FileBrowser = struct {
 
     fn enterSelection(self: *FileBrowser) !void {
         if (self.entries.items.len == 0) return;
+        self.clampSelection();
         const entry = self.entries.items[self.selected];
 
         if (entry.is_dir) {
@@ -253,6 +252,20 @@ pub const FileBrowser = struct {
             self.scroll = self.selected;
         } else if (self.selected >= self.scroll + self.visible_items) {
             self.scroll = self.selected - self.visible_items + 1;
+        }
+    }
+
+    fn clampSelection(self: *FileBrowser) void {
+        if (self.entries.items.len == 0) {
+            self.selected = 0;
+            self.scroll = 0;
+            return;
+        }
+        if (self.selected >= self.entries.items.len) {
+            self.selected = self.entries.items.len - 1;
+        }
+        if (self.scroll >= self.entries.items.len) {
+            self.scroll = self.selected;
         }
     }
 
@@ -357,6 +370,7 @@ pub const FileBrowser = struct {
 
     fn handleTypeaheadKey(self: *FileBrowser, byte: u8) bool {
         if (self.entries.items.len == 0) return false;
+        self.clampSelection();
 
         const now = self.clock();
         if (self.last_search_ms) |last| {
@@ -434,6 +448,7 @@ pub const FileBrowser = struct {
             },
             .key => |key_event| {
                 if (!self.widget.focused) return false;
+                self.clampSelection();
 
                 const key = key_event.key;
                 if (key == input.KeyCode.UP or key == 'k') {
@@ -463,7 +478,8 @@ pub const FileBrowser = struct {
                     return true;
                 } else if (key == input.KeyCode.PAGE_DOWN) {
                     if (self.visible_items > 0) {
-                        self.selected = @min(self.selected + self.visible_items, self.entries.items.len - 1);
+                        const next = std.math.add(usize, self.selected, self.visible_items) catch std.math.maxInt(usize);
+                        self.selected = @min(next, self.entries.items.len - 1);
                         self.ensureVisible();
                     }
                     self.resetTypeahead();
@@ -598,6 +614,60 @@ test "file browser typeahead selects entries" {
     TestClock.now = 2_000;
     _ = try browser.widget.handleEvent(.{ .key = .{ .key = 'z', .modifiers = .{} } });
     try std.testing.expect(std.mem.startsWith(u8, browser.entries.items[browser.selected].name, "zeta"));
+}
+
+test "file browser clamps stale selection before keyboard navigation" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "alpha.txt"),
+        .is_dir = false,
+    });
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "beta.txt"),
+        .is_dir = false,
+    });
+    browser.widget.focused = true;
+    browser.visible_items = 1;
+    browser.selected = std.math.maxInt(usize);
+    browser.scroll = std.math.maxInt(usize);
+
+    try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.DOWN, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
+    try std.testing.expectEqual(@as(usize, 1), browser.scroll);
+
+    try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.UP, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 0), browser.selected);
+    try std.testing.expectEqual(@as(usize, 0), browser.scroll);
+}
+
+test "file browser clamps stale selection before typeahead and activation" {
+    const alloc = std.testing.allocator;
+    var browser = try FileBrowser.init(alloc, ".");
+    defer browser.deinit();
+
+    browser.clearEntries();
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "alpha.txt"),
+        .is_dir = false,
+    });
+    try browser.entries.append(alloc, .{
+        .name = try alloc.dupe(u8, "beta.txt"),
+        .is_dir = false,
+    });
+    browser.widget.focused = true;
+    browser.visible_items = 2;
+    browser.selected = std.math.maxInt(usize);
+
+    try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = 'b', .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
+
+    browser.selected = std.math.maxInt(usize);
+    try std.testing.expect(try browser.widget.handleEvent(.{ .key = .{ .key = input.KeyCode.ENTER, .modifiers = .{} } }));
+    try std.testing.expectEqual(@as(usize, 1), browser.selected);
 }
 
 test "file browser setPath preserves state when target cannot refresh" {
