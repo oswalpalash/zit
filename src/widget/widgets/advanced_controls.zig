@@ -1239,6 +1239,14 @@ pub const CommandPalette = struct {
         self.query = query;
     }
 
+    fn clampSelection(self: *CommandPalette) void {
+        if (self.commands.items.len == 0) {
+            self.selected = 0;
+        } else if (self.selected >= self.commands.items.len) {
+            self.selected = self.commands.items.len - 1;
+        }
+    }
+
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *CommandPalette = @fieldParentPtr("widget", widget_ref);
@@ -1277,6 +1285,7 @@ pub const CommandPalette = struct {
         switch (event) {
             .key => |key| {
                 if (!self.widget.focused) return false;
+                self.clampSelection();
                 switch (key.key) {
                     'k', 'K', input.KeyCode.UP => {
                         if (self.selected > 0) self.selected -= 1;
@@ -1287,6 +1296,7 @@ pub const CommandPalette = struct {
                         return true;
                     },
                     '\n' => {
+                        if (self.commands.items.len == 0) return false;
                         if (self.on_execute) |cb| cb(self.selected, self.commands.items[self.selected]);
                         return true;
                     },
@@ -2042,6 +2052,42 @@ test "command palette draws narrow edge rectangles" {
 
     try palette.widget.layout(layout_module.Rect.init(std.math.maxInt(u16) - 1, std.math.maxInt(u16) - 2, 1, 3));
     try palette.widget.draw(&renderer);
+}
+
+var command_palette_executed_index: ?usize = null;
+
+fn recordCommandPaletteExecution(index: usize, _: []const u8) void {
+    command_palette_executed_index = index;
+}
+
+test "command palette clamps stale selection before execution" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{ "Open file", "Run tests" });
+    defer palette.deinit();
+
+    command_palette_executed_index = null;
+    palette.widget.focused = true;
+    palette.selected = std.math.maxInt(usize);
+    palette.on_execute = recordCommandPaletteExecution;
+
+    try std.testing.expect(try palette.widget.handleEvent(.{ .key = input.KeyEvent.init('\n', .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), palette.selected);
+    try std.testing.expectEqual(@as(?usize, 1), command_palette_executed_index);
+}
+
+test "command palette ignores execution without commands" {
+    const alloc = std.testing.allocator;
+    var palette = try CommandPalette.init(alloc, &[_][]const u8{});
+    defer palette.deinit();
+
+    command_palette_executed_index = null;
+    palette.widget.focused = true;
+    palette.selected = std.math.maxInt(usize);
+    palette.on_execute = recordCommandPaletteExecution;
+
+    try std.testing.expect(!try palette.widget.handleEvent(.{ .key = input.KeyEvent.init('\n', .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), palette.selected);
+    try std.testing.expectEqual(@as(?usize, null), command_palette_executed_index);
 }
 
 test "wizard stepper draws with stale current index" {
