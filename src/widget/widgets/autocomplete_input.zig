@@ -110,7 +110,9 @@ pub const AutocompleteInput = struct {
     }
 
     pub fn setTheme(self: *AutocompleteInput, t: theme.Theme) !void {
+        if (std.meta.eql(self.theme_value, t)) return;
         self.theme_value = t;
+        self.widget.markDirty();
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -382,6 +384,32 @@ test "autocomplete draw clamps stale selection" {
     try ac.widget.draw(&renderer);
 
     try std.testing.expectEqual(@as(usize, 1), ac.selected);
+}
+
+test "autocomplete theme changes mark popup dirty" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    try ac.setSuggestions(&[_][]const u8{ "alpha", "alpine" });
+    try ac.input_field.setText("al");
+    try ac.updateFilter();
+    try ac.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
+
+    var renderer = try render.Renderer.init(alloc, 12, 3);
+    defer renderer.deinit();
+
+    try ac.widget.draw(&renderer);
+    try std.testing.expect(!ac.widget.dirty);
+
+    try ac.setTheme(theme.Theme.light());
+    try std.testing.expect(ac.widget.dirty);
+
+    try ac.widget.draw(&renderer);
+    try std.testing.expect(!ac.widget.dirty);
+
+    try ac.setTheme(theme.Theme.light());
+    try std.testing.expect(!ac.widget.dirty);
 }
 
 test "autocomplete accepts clamped stale selection" {
