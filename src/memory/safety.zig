@@ -124,12 +124,28 @@ pub const MemorySafety = struct {
     }
 
     fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = buf;
-        _ = buf_align;
-        _ = new_len;
-        _ = ret_addr;
-        return null;
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const new_backing_size = backingSize(new_len) orelse return null;
+
+        if (self.checks.getPtr(buf.ptr)) |check| {
+            if (buf_align != check.alignment or buf.len != check.size) return null;
+            if (!isCanaryIntact(check.*)) @panic("Buffer overflow detected!");
+
+            if (new_backing_size > check.backing_size) {
+                const success = self.parent_allocator.rawResize(check.ptr[0..check.backing_size], check.alignment, new_backing_size, ret_addr);
+                if (!success) return null;
+                check.backing_size = new_backing_size;
+            }
+
+            check.size = new_len;
+            writeCanary(&check.canary, check.*);
+            return check.ptr;
+        }
+
+        return self.parent_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
     }
 
     fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {

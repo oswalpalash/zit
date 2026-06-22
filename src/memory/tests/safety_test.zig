@@ -105,6 +105,78 @@ test "MemorySafety direct resize uses backing allocation length" {
     safe_allocator.free(ptr);
 }
 
+test "MemorySafety remap updates tracked size and canary" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var safety = try MemorySafety.init(allocator);
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+
+    const ptr = try safe_allocator.alloc(u8, 13);
+    @memset(ptr, 0x7a);
+
+    const remapped = safe_allocator.remap(ptr, 7) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(ptr.ptr, remapped.ptr);
+    try testing.expectEqual(@as(usize, 7), remapped.len);
+    try testing.expectEqual(@as(u8, 0x7a), remapped[0]);
+    try testing.expect(safety.validatePointer(remapped.ptr, 7));
+    try testing.expect(!safety.validatePointer(remapped.ptr, 8));
+    try safety.checkAllocations();
+
+    safe_allocator.free(remapped);
+}
+
+test "MemorySafety remap can grow when backing allocation resizes in place" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var safety = try MemorySafety.init(allocator);
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+
+    const ptr = try safe_allocator.alloc(u8, 13);
+    @memset(ptr, 0x19);
+
+    if (safe_allocator.remap(ptr, 17)) |remapped| {
+        try testing.expectEqual(ptr.ptr, remapped.ptr);
+        try testing.expectEqual(@as(usize, 17), remapped.len);
+        try testing.expectEqual(@as(u8, 0x19), remapped[0]);
+        try testing.expect(safety.validatePointer(remapped.ptr, 17));
+        try testing.expect(!safety.validatePointer(remapped.ptr, 18));
+        try safety.checkAllocations();
+        safe_allocator.free(remapped);
+    } else {
+        try testing.expect(safety.validatePointer(ptr.ptr, 13));
+        try safety.checkAllocations();
+        safe_allocator.free(ptr);
+    }
+}
+
+test "MemorySafety forwards untracked remap to parent allocator" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var safety = try MemorySafety.init(allocator);
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+    const foreign = try allocator.alloc(u8, 128);
+    @memset(foreign, 0x33);
+
+    const remapped = safe_allocator.remap(foreign, 96) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(@as(usize, 96), remapped.len);
+    try testing.expectEqual(@as(u8, 0x33), remapped[0]);
+    try testing.expect(!safety.validatePointer(remapped.ptr, 96));
+
+    safe_allocator.free(remapped);
+}
+
 test "MemorySafety thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
