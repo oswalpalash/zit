@@ -70,7 +70,7 @@ pub const FileWatchContext = struct {
     /// Target widget to send events to
     target: ?*event.widget.Widget,
     /// Whether the watcher is running
-    running: bool = false,
+    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     /// Thread handle
     thread: ?std.Thread = null,
     /// Allocator
@@ -123,11 +123,11 @@ pub const FileWatchContext = struct {
     /// Returns: success when the worker thread is spawned.
     /// Errors: allocation or thread creation failures.
     pub fn start(self: *FileWatchContext) !void {
-        if (self.running) return;
+        if (self.running.load(.acquire)) return;
 
-        self.running = true;
+        self.running.store(true, .release);
         self.thread = std.Thread.spawn(.{}, watchThreadFn, .{self}) catch |err| {
-            self.running = false;
+            self.running.store(false, .release);
             return err;
         };
     }
@@ -138,9 +138,9 @@ pub const FileWatchContext = struct {
     /// - `self`: watcher to stop.
     /// Safety: Joins the worker thread before returning.
     pub fn stop(self: *FileWatchContext) void {
-        if (!self.running) return;
+        if (!self.running.load(.acquire) and self.thread == null) return;
 
-        self.running = false;
+        self.running.store(false, .release);
         if (self.thread) |thread| {
             thread.join();
             self.thread = null;
@@ -152,7 +152,7 @@ pub const FileWatchContext = struct {
 fn watchThreadFn(ctx: *FileWatchContext) void {
     var last_modified: ?std.Io.Timestamp = null;
 
-    while (ctx.running) {
+    while (ctx.running.load(.acquire)) {
         // Check if file exists and get its modification time
         const io = std.Io.Threaded.global_single_threaded.io();
         const cwd = std.Io.Dir.cwd();
@@ -272,7 +272,7 @@ pub const NetworkContext = struct {
     /// Target widget to send events to
     target: ?*event.widget.Widget,
     /// Whether the connection is running
-    running: bool = false,
+    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     /// Thread handle
     thread: ?std.Thread = null,
     /// Allocator
@@ -335,11 +335,11 @@ pub const NetworkContext = struct {
     /// Returns: success when the worker thread is spawned.
     /// Errors: thread creation failures.
     pub fn connect(self: *NetworkContext) !void {
-        if (self.running) return;
+        if (self.running.load(.acquire)) return;
 
-        self.running = true;
+        self.running.store(true, .release);
         self.thread = std.Thread.spawn(.{}, connectThreadFn, .{self}) catch |err| {
-            self.running = false;
+            self.running.store(false, .release);
             return err;
         };
     }
@@ -350,9 +350,9 @@ pub const NetworkContext = struct {
     /// - `self`: network context to close.
     /// Safety: Joins the worker thread and closes the socket.
     pub fn disconnect(self: *NetworkContext) void {
-        if (!self.running) return;
+        if (!self.running.load(.acquire) and self.thread == null) return;
 
-        self.running = false;
+        self.running.store(false, .release);
         self.socket_connected = false;
 
         if (self.thread) |thread| {
@@ -370,7 +370,7 @@ pub const NetworkContext = struct {
     /// Errors: `error.NotConnected` if the socket is not established, or any socket write error.
     pub fn send(self: *NetworkContext, data: []const u8) !void {
         _ = data;
-        if (!self.running or !self.socket_connected) return error.NotConnected;
+        if (!self.running.load(.acquire) or !self.socket_connected) return error.NotConnected;
         return error.Unsupported;
     }
 };
@@ -378,7 +378,7 @@ pub const NetworkContext = struct {
 /// Thread function for network connection
 fn connectThreadFn(ctx: *NetworkContext) void {
     _ = sendNetworkEvent(ctx, .network_error, .error_, "Network I/O is unsupported on this Zig baseline", null);
-    ctx.running = false;
+    ctx.running.store(false, .release);
 }
 
 /// Helper function to send a network event
@@ -574,6 +574,47 @@ test "network context init cleans partial allocations when buffer allocation fai
         error.OutOfMemory,
         NetworkContext.init(failing.allocator(), "127.0.0.1", 8080, &queue, 1, null),
     );
+}
+
+test "file watcher stop clears atomic running flag and joins thread" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const watcher = try FileWatchContext.init(alloc, "definitely-missing-zit-watch-file.txt", &queue, 1, null);
+    defer watcher.deinit();
+
+    try watcher.start();
+    try std.testing.expect(watcher.running.load(.acquire));
+
+    watcher.stop();
+    try std.testing.expect(!watcher.running.load(.acquire));
+    try std.testing.expect(watcher.thread == null);
+
+    watcher.stop();
+    try std.testing.expect(!watcher.running.load(.acquire));
+    try std.testing.expect(watcher.thread == null);
+}
+
+test "network disconnect joins worker after it reports completion" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const connection = try NetworkContext.init(alloc, "127.0.0.1", 8080, &queue, 1, null);
+    defer connection.deinit();
+
+    try connection.connect();
+
+    var attempts: usize = 0;
+    while (connection.running.load(.acquire) and attempts < 1000) : (attempts += 1) {
+        compat.sleepMillis(1);
+    }
+    try std.testing.expect(!connection.running.load(.acquire));
+
+    connection.disconnect();
+    try std.testing.expect(!connection.running.load(.acquire));
+    try std.testing.expect(connection.thread == null);
 }
 
 test "watchFile preserves manager state when registration allocation fails" {
