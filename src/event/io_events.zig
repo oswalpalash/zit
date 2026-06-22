@@ -162,21 +162,8 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
             // If file was modified since the last check
             if (last_modified) |previous| {
                 if (modified.nanoseconds > previous.nanoseconds) {
-                    // Create an IoEventData
-                    const data = ctx.allocator.create(IoEventData) catch continue;
-                    data.* = IoEventData{
-                        .type = .file_watch,
-                        .status = .success,
-                        .allocator = ctx.allocator,
-                        .data = null,
-                        .size = 0,
-                        .error_message = null,
-                        .payload_cleanup = null,
-                        .owns_payload = false,
-                        .owns_error_message = false,
-                    };
-
-                    postIoEventData(ctx.event_queue, ctx.event_id, data, ctx.target);
+                    const data = createIoEventData(ctx.allocator, .file_watch, .success, null, false, null, 0, null, false) catch continue;
+                    _ = postIoEventData(ctx.event_queue, ctx.event_id, data, ctx.target);
                 }
             }
 
@@ -195,30 +182,77 @@ fn watchThreadFn(ctx: *FileWatchContext) void {
 fn ioEventDataCleanup(data: *anyopaque) void {
     const io_data = @as(*IoEventData, @ptrCast(@alignCast(data)));
 
-    // Free error message if owned
-    if (io_data.owns_error_message) {
-        if (io_data.error_message) |msg| {
-            io_data.allocator.free(msg);
-        }
-    }
-
-    // Call cleanup function for inner data if present
-    if (io_data.payload_cleanup != null and io_data.data != null) {
-        io_data.payload_cleanup.?(io_data.data.?);
-    } else if (io_data.owns_payload and io_data.data != null) {
-        const bytes = @as([*]u8, @ptrCast(io_data.data.?))[0..io_data.size];
-        io_data.allocator.free(bytes);
-    }
+    cleanupIoEventOwnedFields(
+        io_data.allocator,
+        io_data.data,
+        io_data.size,
+        io_data.payload_cleanup,
+        io_data.owns_payload,
+        io_data.error_message,
+        io_data.owns_error_message,
+    );
 
     // Destroy the IoEventData itself
     io_data.allocator.destroy(io_data);
 }
 
-fn postIoEventData(queue: *event.EventQueue, event_id: u32, io_data: *IoEventData, target: ?*event.widget.Widget) void {
+fn cleanupIoEventOwnedFields(
+    allocator: std.mem.Allocator,
+    data: ?*anyopaque,
+    size: usize,
+    payload_cleanup: ?*const fn (data: ?*anyopaque) void,
+    owns_payload: bool,
+    error_message: ?[]const u8,
+    owns_error_message: bool,
+) void {
+    if (owns_error_message) {
+        if (error_message) |msg| allocator.free(msg);
+    }
+
+    if (payload_cleanup != null and data != null) {
+        payload_cleanup.?(data);
+    } else if (owns_payload and data != null) {
+        const bytes = @as([*]u8, @ptrCast(data.?))[0..size];
+        allocator.free(bytes);
+    }
+}
+
+fn createIoEventData(
+    allocator: std.mem.Allocator,
+    event_type: IoEventType,
+    status: IoStatus,
+    error_message: ?[]const u8,
+    owns_error_message: bool,
+    data: ?*anyopaque,
+    size: usize,
+    payload_cleanup: ?*const fn (data: ?*anyopaque) void,
+    owns_payload: bool,
+) !*IoEventData {
+    const io_data = allocator.create(IoEventData) catch |err| {
+        cleanupIoEventOwnedFields(allocator, data, size, payload_cleanup, owns_payload, error_message, owns_error_message);
+        return err;
+    };
+    io_data.* = IoEventData{
+        .type = event_type,
+        .status = status,
+        .allocator = allocator,
+        .data = data,
+        .size = size,
+        .error_message = error_message,
+        .payload_cleanup = payload_cleanup,
+        .owns_payload = owns_payload,
+        .owns_error_message = owns_error_message,
+    };
+    return io_data;
+}
+
+fn postIoEventData(queue: *event.EventQueue, event_id: u32, io_data: *IoEventData, target: ?*event.widget.Widget) bool {
     queue.createCustomEvent(event_id, @ptrCast(io_data), ioEventDataCleanup, target) catch |err| {
         std.log.debug("zit.event.io: dropping {s} event after enqueue failure: {s}", .{ @tagName(io_data.type), @errorName(err) });
         ioEventDataCleanup(@ptrCast(io_data));
+        return false;
     };
+    return true;
 }
 
 /// Network connection context.
@@ -343,27 +377,28 @@ pub const NetworkContext = struct {
 
 /// Thread function for network connection
 fn connectThreadFn(ctx: *NetworkContext) void {
-    sendNetworkEvent(ctx, .network_error, .error_, "Network I/O is unsupported on this Zig baseline", null, 0);
+    _ = sendNetworkEvent(ctx, .network_error, .error_, "Network I/O is unsupported on this Zig baseline", null);
     ctx.running = false;
 }
 
 /// Helper function to send a network event
-fn sendNetworkEvent(ctx: *NetworkContext, event_type: IoEventType, status: IoStatus, error_msg: ?[]const u8, data: ?[]u8, size: usize) void {
-    // Create an IoEventData
-    const io_data = ctx.allocator.create(IoEventData) catch return;
-    io_data.* = IoEventData{
-        .type = event_type,
-        .status = status,
-        .allocator = ctx.allocator,
-        .data = if (data) |d| @ptrCast(d.ptr) else null,
-        .size = size,
-        .error_message = error_msg,
-        .payload_cleanup = null,
-        .owns_payload = data != null,
-        .owns_error_message = false,
+fn sendNetworkEvent(ctx: *NetworkContext, event_type: IoEventType, status: IoStatus, error_msg: ?[]const u8, owned_data: ?[]u8) bool {
+    const io_data = createIoEventData(
+        ctx.allocator,
+        event_type,
+        status,
+        error_msg,
+        false,
+        if (owned_data) |bytes| @ptrCast(bytes.ptr) else null,
+        if (owned_data) |bytes| bytes.len else 0,
+        null,
+        owned_data != null,
+    ) catch |err| {
+        std.log.debug("zit.event.io: dropping {s} event after allocation failure: {s}", .{ @tagName(event_type), @errorName(err) });
+        return false;
     };
 
-    postIoEventData(ctx.event_queue, ctx.event_id, io_data, ctx.target);
+    return postIoEventData(ctx.event_queue, ctx.event_id, io_data, ctx.target);
 }
 
 /// I/O event manager to simplify working with I/O events
@@ -500,6 +535,21 @@ test "ioEventDataCleanup frees owned payloads" {
     ioEventDataCleanup(@ptrCast(ptr));
 }
 
+test "createIoEventData frees owned payload when wrapper allocation fails" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const alloc = failing.allocator();
+    const payload = try alloc.dupe(u8, "packet");
+
+    failing.fail_index = failing.alloc_index;
+
+    try std.testing.expectError(
+        error.OutOfMemory,
+        createIoEventData(alloc, .network_data, .success, null, false, @ptrCast(payload.ptr), payload.len, null, true),
+    );
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
 test "file watch context init cleans context when path allocation fails" {
     const alloc = std.testing.allocator;
     var queue = event.EventQueue.init(alloc);
@@ -558,6 +608,33 @@ test "connectToServer preserves manager state when registration allocation fails
     try std.testing.expectEqual(@as(usize, 0), manager.network_connections.items.len);
 }
 
+test "sendNetworkEvent frees owned payload when event allocation fails" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const alloc = failing.allocator();
+
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var buffer: [0]u8 = .{};
+    var ctx = NetworkContext{
+        .address = "127.0.0.1",
+        .port = 8080,
+        .event_queue = &queue,
+        .event_id = 1,
+        .target = null,
+        .allocator = alloc,
+        .buffer = buffer[0..],
+    };
+
+    const payload = try alloc.dupe(u8, "packet");
+    failing.fail_index = failing.alloc_index;
+
+    try std.testing.expect(!sendNetworkEvent(&ctx, .network_data, .success, null, payload));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
 test "postIoEventData cleans payload when enqueue fails" {
     const alloc = std.testing.allocator;
     var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
@@ -587,7 +664,7 @@ test "postIoEventData cleans payload when enqueue fails" {
         .owns_error_message = false,
     };
 
-    postIoEventData(&queue, 1, ptr, null);
+    try std.testing.expect(!postIoEventData(&queue, 1, ptr, null));
 
     try std.testing.expect(cleaned);
     try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
