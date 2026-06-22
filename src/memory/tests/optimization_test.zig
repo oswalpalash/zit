@@ -55,6 +55,31 @@ test "MemoryOptimizer cache hits" {
     try testing.expectEqual(@as(usize, 1), stats.cache_misses);
 }
 
+test "MemoryOptimizer tracks pass-through deallocations" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    defer optimizer.deinit();
+
+    const opt_allocator = optimizer.allocator();
+    const ptr = try opt_allocator.alloc(u8, 128);
+
+    var stats = optimizer.getStats();
+    try testing.expectEqual(@as(usize, 0), stats.cache_hits);
+    try testing.expectEqual(@as(usize, 1), stats.cache_misses);
+    try testing.expectEqual(@as(usize, 1), stats.allocations);
+    try testing.expectEqual(@as(usize, 0), stats.deallocations);
+    try testing.expectEqual(@as(usize, 0), stats.cache_size);
+
+    opt_allocator.free(ptr);
+    stats = optimizer.getStats();
+    try testing.expectEqual(@as(usize, 1), stats.allocations);
+    try testing.expectEqual(@as(usize, 1), stats.deallocations);
+    try testing.expectEqual(@as(usize, 0), stats.cache_size);
+}
+
 test "MemoryOptimizer resize" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);

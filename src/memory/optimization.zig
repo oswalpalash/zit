@@ -160,6 +160,7 @@ pub const MemoryOptimizer = struct {
         }
 
         self.parent_allocator.rawFree(buf, buf_align, ret_addr);
+        self.stats.deallocations += 1;
     }
 
     pub fn getStats(self: *Self) struct {
