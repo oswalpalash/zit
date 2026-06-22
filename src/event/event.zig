@@ -409,6 +409,30 @@ pub const BackgroundTaskResult = struct {
     allocator: std.mem.Allocator,
 };
 
+fn destroyBackgroundTaskResult(data: *anyopaque) void {
+    const res = @as(*BackgroundTaskResult, @ptrCast(@alignCast(data)));
+    if (res.message.len > 0) res.allocator.free(res.message);
+    res.allocator.destroy(res);
+}
+
+fn createBackgroundTaskResult(allocator: std.mem.Allocator, status: BackgroundTaskStatus, owned_message: []const u8) !*BackgroundTaskResult {
+    const result = allocator.create(BackgroundTaskResult) catch |err| {
+        if (owned_message.len > 0) allocator.free(owned_message);
+        return err;
+    };
+    result.* = .{ .status = status, .message = owned_message, .allocator = allocator };
+    return result;
+}
+
+fn enqueueBackgroundTaskResult(queue: *EventQueue, allocator: std.mem.Allocator, status: BackgroundTaskStatus, owned_message: []const u8, target: ?*widget.Widget) bool {
+    const result = createBackgroundTaskResult(allocator, status, owned_message) catch return false;
+    queue.createCustomEvent(BACKGROUND_TASK_EVENT_ID, @ptrCast(result), destroyBackgroundTaskResult, target) catch {
+        destroyBackgroundTaskResult(@ptrCast(result));
+        return false;
+    };
+    return true;
+}
+
 /// Invoke work on a separate thread and monitor for cancellation.
 pub const BackgroundTaskFn = *const fn (stop_flag: *std.atomic.Value(bool), ctx: ?*anyopaque) anyerror!void;
 
@@ -3032,23 +3056,7 @@ pub const Application = struct {
                     status = .cancelled;
                 }
 
-                const result = allocator.create(BackgroundTaskResult) catch {
-                    return;
-                };
-
-                result.* = .{ .status = status, .message = message, .allocator = allocator };
-
-                const destructor = struct {
-                    fn destroy(data: *anyopaque) void {
-                        const res = @as(*BackgroundTaskResult, @ptrCast(@alignCast(data)));
-                        if (res.message.len > 0) res.allocator.free(res.message);
-                        res.allocator.destroy(res);
-                    }
-                }.destroy;
-
-                queue.createCustomEvent(BACKGROUND_TASK_EVENT_ID, @ptrCast(result), destructor, target_widget) catch {
-                    destructor(@ptrCast(result));
-                };
+                _ = enqueueBackgroundTaskResult(queue, allocator, status, message, target_widget);
             }
         }.run;
 
@@ -3416,6 +3424,33 @@ test "application automatic drag can be disabled for explicit payload drags" {
     app.setAutomaticDrag(true);
     try app.processInputEvent(input.Event{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) });
     try std.testing.expect(app.drag_manager.active);
+}
+
+test "background task result frees message when result allocation fails" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const alloc = failing.allocator();
+    const message = try alloc.dupe(u8, "background failed");
+
+    failing.fail_index = failing.alloc_index;
+
+    try std.testing.expectError(error.OutOfMemory, createBackgroundTaskResult(alloc, .failed, message));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
+test "background task result enqueue cleans up when event allocation fails" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const alloc = failing.allocator();
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    const message = try alloc.dupe(u8, "background failed");
+    failing.fail_index = failing.alloc_index + 1;
+
+    try std.testing.expect(!enqueueBackgroundTaskResult(&queue, alloc, .failed, message, null));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 0), queue.queue.items.len);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
 }
 
 test "background tasks emit completion events" {
