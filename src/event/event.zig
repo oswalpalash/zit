@@ -1004,7 +1004,7 @@ pub const FocusManager = struct {
         }
 
         if (self.accessibility) |acc| {
-            _ = acc.announceFocus(target_widget) catch {};
+            acc.announceFocusBestEffort(target_widget);
         }
 
         // Send focus change events
@@ -2466,6 +2466,59 @@ test "focus request preserves current focus on event queue allocation failure" {
     try std.testing.expectEqual(&first, queue.queue.items[0].target.?);
 }
 
+test "focus request records accessibility announcement failure without failing focus" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+    var manager = FocusManager.init(alloc, &queue);
+    defer manager.deinit();
+
+    const vtable = widget.Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn doLayout(_: *anyopaque, _: layout.Rect) anyerror!void {}
+        }.doLayout,
+        .get_preferred_size = struct {
+            fn size(_: *anyopaque) anyerror!layout.Size {
+                return layout.Size.zero();
+            }
+        }.size,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return true;
+            }
+        }.can,
+    };
+
+    var accessible = accessibility.Manager.init(alloc);
+    defer accessible.deinit();
+    manager.accessibility = &accessible;
+
+    var target = widget.Widget.init(&vtable);
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = accessible.allocator;
+    accessible.allocator = failing.allocator();
+
+    try std.testing.expect(try manager.requestFocus(&target));
+
+    accessible.allocator = original_allocator;
+    try std.testing.expectEqual(&target, manager.focused_widget.?);
+    try std.testing.expect(target.focused);
+    try std.testing.expectEqual(@as(usize, 1), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.focus_change, queue.queue.items[0].type);
+    try std.testing.expectEqual(@as(usize, 1), accessible.bestEffortFailureCount());
+    const failure = accessible.lastBestEffortFailure().?;
+    try std.testing.expectEqual(accessibility.BestEffortOperation.announce_focus, failure.operation);
+    try std.testing.expectEqual(error.OutOfMemory, failure.err);
+}
+
 /// Application class for managing the event loop and UI components
 pub const Application = struct {
     /// Event queue
@@ -2736,13 +2789,13 @@ pub const Application = struct {
             return;
         }
         const role: accessibility.Role = @enumFromInt(w.accessibility_role);
-        manager.registerNode(accessibility.AccessibleNode{
+        manager.registerNodeBestEffort(accessibility.AccessibleNode{
             .widget_ptr = w,
             .role = role,
             .name = w.accessibility_name,
             .description = w.accessibility_description,
             .bounds = w.rect,
-        }) catch {};
+        });
     }
 
     fn updateAccessibleBoundsCallback(ctx: ?*anyopaque, w: *widget.Widget, rect: @import("../layout/layout.zig").Rect) void {
@@ -3094,6 +3147,16 @@ pub const Application = struct {
         }
     }
 
+    /// Number of non-fatal accessibility hook failures since the manager was enabled.
+    pub fn accessibilityBestEffortFailureCount(self: *const Application) usize {
+        return if (self.accessibility) |manager| manager.bestEffortFailureCount() else 0;
+    }
+
+    /// Last non-fatal accessibility hook failure, if accessibility is enabled.
+    pub fn lastAccessibilityBestEffortFailure(self: *const Application) ?accessibility.BestEffortFailure {
+        return if (self.accessibility) |manager| manager.lastBestEffortFailure() else null;
+    }
+
     /// Process an input event
     pub fn processInputEvent(self: *Application, input_event: input.Event) !void {
         self.syncInternalPointers();
@@ -3306,6 +3369,27 @@ test "application input binding stores non-blocking poll configuration" {
     try std.testing.expect(app.input_binding.handler == null);
     try std.testing.expectEqual(@as(u64, 0), app.input_binding.poll_timeout_ms);
     try std.testing.expect(!app.input_polled_before_tick);
+}
+
+test "application records automatic accessibility registration failures" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+    try app.enableAccessibility();
+
+    const original_allocator = app.accessibility.?.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    app.accessibility.?.allocator = failing.allocator();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    app.setRoot(root);
+
+    app.accessibility.?.allocator = original_allocator;
+    try std.testing.expectEqual(@as(usize, 1), app.accessibilityBestEffortFailureCount());
+    const failure = app.lastAccessibilityBestEffortFailure().?;
+    try std.testing.expectEqual(accessibility.BestEffortOperation.register_node, failure.operation);
+    try std.testing.expectEqual(error.OutOfMemory, failure.err);
 }
 
 test "application automatic drag can be disabled for explicit payload drags" {

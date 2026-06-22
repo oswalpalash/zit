@@ -1018,8 +1018,13 @@ pub const Renderer = struct {
             .dirty_rows = dirty_rows,
             .capabilities = capabilities,
         };
+        errdefer {
+            renderer.style_scratch.deinit(allocator);
+            renderer.output_batch.deinit(allocator);
+            renderer.grapheme_scratch.deinit(allocator);
+        }
         renderer.resetDirty();
-        renderer.primeBuffers();
+        try renderer.primeBuffers();
         return renderer;
     }
 
@@ -1042,6 +1047,8 @@ pub const Renderer = struct {
         const new_dirty_rows = try self.allocator.alloc(DirtyRow, height);
         errdefer self.allocator.free(new_dirty_rows);
 
+        try self.ensureScratchCapacity(width, height);
+
         self.front.deinit();
         self.back.deinit();
         if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
@@ -1050,7 +1057,7 @@ pub const Renderer = struct {
         self.dirty_rows = new_dirty_rows;
         self.resetDirty();
         self.markDirtyRect(0, 0, width, height);
-        self.primeBuffers();
+        try self.primeBuffers();
     }
 
     /// Draw a compact live geometry marker on the bottom line.
@@ -1077,16 +1084,20 @@ pub const Renderer = struct {
         }
     }
 
-    fn primeBuffers(self: *Renderer) void {
-        const est_cells = std.math.mul(u64, self.back.width, self.back.height) catch 0;
+    fn ensureScratchCapacity(self: *Renderer, width: u16, height: u16) !void {
+        const est_cells = std.math.mul(u64, width, height) catch 0;
         const estimated_bytes = std.math.mul(u64, est_cells, 8) catch std.math.maxInt(u64);
         const desired_bytes: u64 = @min(estimated_bytes, 512 * 1024);
         if (desired_bytes > 0 and desired_bytes <= std.math.maxInt(usize)) {
-            self.output_batch.ensureTotalCapacity(self.allocator, @intCast(desired_bytes)) catch {};
+            try self.output_batch.ensureTotalCapacity(self.allocator, @intCast(desired_bytes));
         }
-        self.style_scratch.ensureTotalCapacity(self.allocator, 64) catch {};
-        const grapheme_cap: usize = @max(@as(usize, self.back.width), 64);
-        self.grapheme_scratch.ensureTotalCapacity(self.allocator, grapheme_cap) catch {};
+        try self.style_scratch.ensureTotalCapacity(self.allocator, 64);
+        const grapheme_cap: usize = @max(@as(usize, width), 64);
+        try self.grapheme_scratch.ensureTotalCapacity(self.allocator, grapheme_cap);
+    }
+
+    fn primeBuffers(self: *Renderer) !void {
+        try self.ensureScratchCapacity(self.back.width, self.back.height);
     }
 
     /// Configure an optional scratch allocator for per-frame allocations.
@@ -2120,6 +2131,38 @@ test "drawResizeStatus writes visible geometry marker and tolerates zero size" {
     renderer.drawResizeStatus(Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
 }
 
+test "renderer init reports scratch preallocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 3 });
+
+    try std.testing.expectError(error.OutOfMemory, Renderer.init(failing.allocator(), 1, 1));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+}
+
+test "renderer resize preserves existing buffers when scratch preallocation fails" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var renderer = try Renderer.init(failing.allocator(), 1, 1);
+    defer renderer.deinit();
+
+    renderer.drawChar(0, 0, 'A', Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
+    const before_cell = renderer.back.getCell(0, 0).*;
+    const before_front_width = renderer.front.width;
+    const before_front_height = renderer.front.height;
+    const before_back_width = renderer.back.width;
+    const before_back_height = renderer.back.height;
+
+    failing.fail_index = failing.alloc_index + 3;
+    failing.resize_fail_index = failing.resize_index;
+
+    try std.testing.expectError(error.OutOfMemory, renderer.resize(8, 8));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(before_front_width, renderer.front.width);
+    try std.testing.expectEqual(before_front_height, renderer.front.height);
+    try std.testing.expectEqual(before_back_width, renderer.back.width);
+    try std.testing.expectEqual(before_back_height, renderer.back.height);
+    try std.testing.expect(before_cell.eql(renderer.back.getCell(0, 0).*));
+}
+
 test "capability detection degrades gracefully on allocation failure" {
     var empty_buf: [0]u8 = .{};
     var fallback_alloc = std.heap.FixedBufferAllocator.init(&empty_buf);
@@ -2130,7 +2173,7 @@ test "capability detection degrades gracefully on allocation failure" {
 }
 
 test "drawSmartStr falls back when bidi sanitization cannot allocate" {
-    var backing: [256]u8 = undefined;
+    var backing: [4096]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&backing);
     var renderer = try Renderer.init(fba.allocator(), 1, 1);
     defer renderer.deinit();

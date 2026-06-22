@@ -32,12 +32,25 @@ pub const AccessibleNode = struct {
     bounds: layout.Rect = layout.Rect.init(0, 0, 0, 0),
 };
 
+pub const BestEffortOperation = enum {
+    register_node,
+    announce_focus,
+    announce_state,
+};
+
+pub const BestEffortFailure = struct {
+    operation: BestEffortOperation,
+    err: anyerror,
+};
+
 /// Minimal accessibility manager that tracks widget semantics and produces announcements.
 pub const Manager = struct {
     allocator: std.mem.Allocator,
     nodes: std.ArrayList(AccessibleNode),
     last_announcement: []u8 = &[_]u8{},
     high_contrast: bool = false,
+    best_effort_failure_count: usize = 0,
+    last_best_effort_failure: ?BestEffortFailure = null,
 
     pub fn init(allocator: std.mem.Allocator) Manager {
         return Manager{
@@ -88,6 +101,10 @@ pub const Manager = struct {
         });
     }
 
+    pub fn registerNodeBestEffort(self: *Manager, node: AccessibleNode) void {
+        self.registerNode(node) catch |err| self.recordBestEffortFailure(.register_node, err);
+    }
+
     pub fn updateBounds(self: *Manager, ptr: *base.Widget, rect: layout.Rect) void {
         if (self.findNode(ptr)) |node| {
             node.bounds = rect;
@@ -108,6 +125,10 @@ pub const Manager = struct {
             try std.fmt.allocPrint(self.allocator, "{s}: {s}", .{ role_name, node.name });
         self.replaceAnnouncement(next);
         return self.last_announcement;
+    }
+
+    pub fn announceFocusBestEffort(self: *Manager, ptr: *base.Widget) void {
+        _ = self.announceFocus(ptr) catch |err| self.recordBestEffortFailure(.announce_focus, err);
     }
 
     fn replaceAnnouncement(self: *Manager, next: []u8) void {
@@ -131,8 +152,25 @@ pub const Manager = struct {
         return self.last_announcement;
     }
 
+    pub fn announceStateBestEffort(self: *Manager, ptr: *base.Widget, state: []const u8) void {
+        _ = self.announceState(ptr, state) catch |err| self.recordBestEffortFailure(.announce_state, err);
+    }
+
     pub fn lastAnnouncement(self: *Manager) []const u8 {
         return self.last_announcement;
+    }
+
+    pub fn bestEffortFailureCount(self: *const Manager) usize {
+        return self.best_effort_failure_count;
+    }
+
+    pub fn lastBestEffortFailure(self: *const Manager) ?BestEffortFailure {
+        return self.last_best_effort_failure;
+    }
+
+    pub fn resetBestEffortFailures(self: *Manager) void {
+        self.best_effort_failure_count = 0;
+        self.last_best_effort_failure = null;
     }
 
     /// Toggle high contrast preference to inform theme selection.
@@ -155,6 +193,14 @@ pub const Manager = struct {
             if (node.widget_ptr == ptr) return node;
         }
         return null;
+    }
+
+    fn recordBestEffortFailure(self: *Manager, operation: BestEffortOperation, err: anyerror) void {
+        self.best_effort_failure_count += 1;
+        self.last_best_effort_failure = .{
+            .operation = operation,
+            .err = err,
+        };
     }
 };
 
@@ -379,4 +425,49 @@ test "state announcement preserves previous text on allocation failure" {
     manager.allocator = original_allocator;
 
     try std.testing.expectEqualStrings("progress bar: Download (50%)", manager.lastAnnouncement());
+}
+
+test "best-effort helpers record allocation failures without changing state" {
+    const alloc = std.testing.allocator;
+    var manager = Manager.init(alloc);
+    defer manager.deinit();
+
+    var widget_instance = base.Widget.init(&base.Widget.VTable{
+        .draw = undefined,
+        .handle_event = undefined,
+        .layout = undefined,
+        .get_preferred_size = undefined,
+        .can_focus = undefined,
+    });
+
+    const original_allocator = manager.allocator;
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    manager.allocator = failing.allocator();
+    manager.registerNodeBestEffort(AccessibleNode{
+        .widget_ptr = &widget_instance,
+        .role = .button,
+        .name = "Save",
+    });
+    manager.allocator = original_allocator;
+
+    try std.testing.expectEqual(@as(usize, 0), manager.nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 1), manager.bestEffortFailureCount());
+    const register_failure = manager.lastBestEffortFailure().?;
+    try std.testing.expectEqual(BestEffortOperation.register_node, register_failure.operation);
+    try std.testing.expectEqual(error.OutOfMemory, register_failure.err);
+
+    manager.resetBestEffortFailures();
+    try std.testing.expectEqual(@as(usize, 0), manager.bestEffortFailureCount());
+    try std.testing.expect(manager.lastBestEffortFailure() == null);
+
+    failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    manager.allocator = failing.allocator();
+    manager.announceFocusBestEffort(&widget_instance);
+    manager.allocator = original_allocator;
+
+    try std.testing.expectEqualStrings("", manager.lastAnnouncement());
+    try std.testing.expectEqual(@as(usize, 1), manager.bestEffortFailureCount());
+    const focus_failure = manager.lastBestEffortFailure().?;
+    try std.testing.expectEqual(BestEffortOperation.announce_focus, focus_failure.operation);
+    try std.testing.expectEqual(error.OutOfMemory, focus_failure.err);
 }
