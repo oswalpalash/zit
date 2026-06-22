@@ -4,9 +4,10 @@
 Zit is a public TUI library, so allocation and I/O failures should either be
 propagated, handled best-effort, or explicitly documented. `catch unreachable`
 turns recoverable failures into panics and is too easy to copy into production
-paths. Silent `catch {}` on capacity reservation is equally risky because it
-lets later rendering/input paths continue after memory pressure invalidated a
-precondition they were trying to establish.
+paths. Silent `catch {}` is also rejected across public Zig sources because
+library code and examples should either propagate failures, record/report them,
+or call a named best-effort helper. Silent capacity reservation catches are
+called out separately because they can invalidate allocation preconditions.
 """
 
 from __future__ import annotations
@@ -24,14 +25,6 @@ SILENT_CAPACITY_CATCH = re.compile(
 EMPTY_CATCH = re.compile(r"catch\s*\{\s*\}")
 SCAN_ROOTS = ("src", "examples")
 SCAN_FILES = ("build.zig",)
-CRITICAL_EMPTY_CATCH_FILES = {
-    Path("src/compat.zig"),
-    Path("src/debug.zig"),
-    Path("src/event/event.zig"),
-    Path("src/render/render.zig"),
-    Path("src/terminal/terminal.zig"),
-    Path("src/widget/accessibility.zig"),
-}
 
 
 def repo_root() -> Path:
@@ -75,7 +68,7 @@ def main() -> int:
     root = repo_root()
     failures: list[tuple[Path, int, str]] = []
     silent_capacity_failures: list[tuple[Path, int, str]] = []
-    critical_empty_catches: list[tuple[Path, int, str]] = []
+    empty_catches: list[tuple[Path, int, str]] = []
 
     for path in zig_files(root):
         text = path.read_text(encoding="utf-8")
@@ -86,10 +79,9 @@ def main() -> int:
         for match in SILENT_CAPACITY_CATCH.finditer(text):
             snippet = " ".join(match.group(0).split())
             silent_capacity_failures.append((rel, source_line_no(text, match.start()), snippet))
-        if rel in CRITICAL_EMPTY_CATCH_FILES:
-            for match in EMPTY_CATCH.finditer(text):
-                snippet = " ".join(match.group(0).split())
-                critical_empty_catches.append((rel, source_line_no(text, match.start()), snippet))
+        for match in EMPTY_CATCH.finditer(text):
+            snippet = " ".join(match.group(0).split())
+            empty_catches.append((rel, source_line_no(text, match.start()), snippet))
 
     if failures:
         sys.stderr.write("recoverable errors must not be converted to `catch unreachable`:\n")
@@ -103,9 +95,9 @@ def main() -> int:
             sys.stderr.write(f"  {path}:{line_no}: {line}\n")
         return 1
 
-    if critical_empty_catches:
-        sys.stderr.write("critical source modules must not silently swallow errors with `catch {}`:\n")
-        for path, line_no, line in critical_empty_catches:
+    if empty_catches:
+        sys.stderr.write("Zig sources must not silently swallow errors with `catch {}`:\n")
+        for path, line_no, line in empty_catches:
             sys.stderr.write(f"  {path}:{line_no}: {line}\n")
         return 1
 

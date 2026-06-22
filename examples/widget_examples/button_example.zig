@@ -20,7 +20,7 @@ var button_status_buf: [96]u8 = undefined;
 fn setStatus(comptime fmt: []const u8, args: anytype) void {
     const label = button_status_label orelse return;
     const text = std.fmt.bufPrint(&button_status_buf, fmt, args) catch return;
-    label.setText(text) catch {};
+    label.setText(text) catch |err| std.debug.print("button-example: status update failed: {s}\n", .{@errorName(err)});
 }
 
 const LayoutWidget = struct {
@@ -220,7 +220,7 @@ pub fn main() !void {
         fn callback() void {
             counter_state += 1;
             const text = std.fmt.bufPrint(&counter_data.label_buf, "Counter: {}", .{counter_state}) catch return;
-            counter_data.button.setText(text) catch {};
+            counter_data.button.setText(text) catch |err| std.debug.print("button-example: counter text update failed: {s}\n", .{@errorName(err)});
             setStatus("Counter updated to {d}", .{counter_state});
         }
     }.callback);
@@ -239,7 +239,7 @@ pub fn main() !void {
         fn callback() void {
             toggle_data.state = !toggle_data.state;
             const text = std.fmt.bufPrint(&toggle_data.label_buf, "Toggle: {s}", .{if (toggle_data.state) "On" else "Off"}) catch return;
-            toggle_data.button.setText(text) catch {};
+            toggle_data.button.setText(text) catch |err| std.debug.print("button-example: toggle text update failed: {s}\n", .{@errorName(err)});
             setStatus("Toggle switched {s}", .{if (toggle_data.state) "On" else "Off"});
         }
     }.callback);

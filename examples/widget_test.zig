@@ -10,7 +10,7 @@ var widget_status_buf: [96]u8 = undefined;
 fn updateStatus(comptime fmt: []const u8, args: anytype) void {
     const label = widget_status_label orelse return;
     const text = std.fmt.bufPrint(&widget_status_buf, fmt, args) catch return;
-    label.setText(text) catch {};
+    label.setText(text) catch |err| std.debug.print("widget-test: status update failed: {s}\n", .{@errorName(err)});
 }
 
 fn subClamped(value: u16, amount: u16) u16 {

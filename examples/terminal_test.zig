@@ -24,7 +24,7 @@ pub fn main() !void {
     var stdout_buffer: [512]u8 = undefined;
     var stdout_writer = stdout_file.writerStreaming(io, &stdout_buffer);
     var writer = &stdout_writer.interface;
-    defer stdout_writer.flush() catch {};
+    defer stdout_writer.flush() catch |err| zit.terminal.reportCleanupError("stdout.flush", err);
     try writer.print("Terminal size: {d}x{d}\n", .{ term.width, term.height });
     try writer.print("256 colors support: {}\n", .{term.supports256Colors()});
     try writer.print("True color support: {}\n\n", .{term.supportsTrueColor()});

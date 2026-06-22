@@ -39,7 +39,7 @@ pub fn main() !void {
     var stdout_buffer: [512]u8 = undefined;
     var stdout_writer = stdout_file.writerStreaming(io, &stdout_buffer);
     var writer = &stdout_writer.interface;
-    defer stdout_writer.flush() catch {};
+    defer stdout_writer.flush() catch |err| zit.terminal.reportCleanupError("stdout.flush", err);
     try writer.writeAll("Input Handler Test\n\n");
     try writer.writeAll("Press keys to see their events (press 'q' to quit)\n");
     try writer.writeAll("Click or move mouse to see mouse events\n\n");

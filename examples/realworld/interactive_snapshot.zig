@@ -59,7 +59,7 @@ fn writeFrame(term: *zit.terminal.Terminal, text: []const u8) !void {
         term.writeUtf8(text[offset..end]) catch |err| switch (err) {
             error.WouldBlock => {
                 const io = std.Io.Threaded.global_single_threaded.io();
-                std.Io.sleep(io, .{ .nanoseconds = 2 * std.time.ns_per_ms }, .awake) catch {};
+                try std.Io.sleep(io, .{ .nanoseconds = 2 * std.time.ns_per_ms }, .awake);
                 continue;
             },
             else => return err,

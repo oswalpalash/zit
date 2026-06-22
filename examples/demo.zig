@@ -13,7 +13,7 @@ var demo_status_buf: [96]u8 = undefined;
 fn updateStatus(comptime fmt: []const u8, args: anytype) void {
     const label = demo_status_label orelse return;
     const text = std.fmt.bufPrint(&demo_status_buf, fmt, args) catch return;
-    label.setText(text) catch {};
+    label.setText(text) catch |err| std.debug.print("demo: status update failed: {s}\n", .{@errorName(err)});
 }
 
 fn drawText(renderer: *render.Renderer, x: u16, y: u16, value: []const u8, fg: render.Color, bg: render.Color, bold: bool) void {
