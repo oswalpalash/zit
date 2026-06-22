@@ -182,6 +182,66 @@ test "PoolAllocator tracks pooled ownership and falls back for foreign frees" {
     try testing.expectEqual(before, pool.getStats().allocated_nodes);
 }
 
+test "PoolAllocator remaps pooled allocations in place within node size" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var pool = try PoolAllocator.init(allocator, 64, 1);
+    defer pool.deinit();
+
+    const pooled_alloc = pool.allocator();
+    const ptr = try pooled_alloc.alloc(u8, 16);
+    @memset(ptr, 0x42);
+
+    const remapped = pooled_alloc.remap(ptr, 48) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(ptr.ptr, remapped.ptr);
+    try testing.expectEqual(@as(usize, 48), remapped.len);
+    try testing.expectEqual(@as(u8, 0x42), remapped[0]);
+    remapped[47] = 0x24;
+
+    try testing.expectEqual(@as(usize, 1), pool.getStats().allocated_nodes);
+    pooled_alloc.free(remapped);
+    try testing.expectEqual(@as(usize, 0), pool.getStats().allocated_nodes);
+}
+
+test "PoolAllocator rejects pooled remap beyond node size" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var pool = try PoolAllocator.init(allocator, 64, 1);
+    defer pool.deinit();
+
+    const pooled_alloc = pool.allocator();
+    const ptr = try pooled_alloc.alloc(u8, 16);
+    defer pooled_alloc.free(ptr);
+
+    try testing.expectEqual(@as(?[]u8, null), pooled_alloc.remap(ptr, 65));
+    try testing.expectEqual(@as(usize, 1), pool.getStats().allocated_nodes);
+}
+
+test "PoolAllocator forwards pass-through remap to parent allocator" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var pool = try PoolAllocator.init(allocator, 64, 1);
+    defer pool.deinit();
+
+    const pooled_alloc = pool.allocator();
+    const ptr = try pooled_alloc.alloc(u8, 128);
+    @memset(ptr, 0x33);
+
+    const remapped = pooled_alloc.remap(ptr, 96) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(@as(usize, 96), remapped.len);
+    try testing.expectEqual(@as(u8, 0x33), remapped[0]);
+    try testing.expectEqual(@as(usize, 0), pool.getStats().allocated_nodes);
+
+    pooled_alloc.free(remapped);
+    try testing.expectEqual(@as(usize, 0), pool.getStats().allocated_nodes);
+}
+
 test "ArenaAllocator init cleans up object when buffer allocation fails" {
     var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
     try testing.expectError(error.OutOfMemory, ArenaAllocator.init(failing.allocator(), 4096, true));

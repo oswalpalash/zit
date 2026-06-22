@@ -198,11 +198,14 @@ pub const PoolAllocator = struct {
     }
 
     pub fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = buf;
-        _ = buf_align;
-        _ = new_len;
-        _ = ret_addr;
-        return null;
+        const self = @as(*PoolAllocator, @ptrCast(@alignCast(ctx)));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.in_use.contains(buf.ptr)) {
+            return if (new_len <= self.node_size and @intFromEnum(buf_align) <= self.node_alignment_log2) buf.ptr else null;
+        }
+
+        return self.parent_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
     }
 };
