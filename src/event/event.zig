@@ -1193,7 +1193,11 @@ pub const DragManager = struct {
 
     pub fn begin(self: *DragManager, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
         try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 1);
-        if (self.active) self.cancel();
+        if (self.active) {
+            self.cancel();
+        } else {
+            self.cleanupPayload();
+        }
         self.active = true;
         self.source = source;
         self.payload = payload;
@@ -1231,12 +1235,14 @@ pub const DragManager = struct {
                 }
             }
         }
-        self.cleanupPayload();
+
+        // Queued drag_end/drop events carry this payload by value. Release the
+        // backing storage when the manager is reused, cancelled, or deinitialized.
         self.active = false;
     }
 
     pub fn cancel(self: *DragManager) void {
-        if (!self.active) return;
+        if (!self.active and self.payload.kind == .none) return;
         self.cleanupPayload();
         self.active = false;
     }
@@ -1797,6 +1803,60 @@ test "drop targets gate acceptance" {
     try mgr.end(6, 6, null);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[3].type);
     try std.testing.expect(queue.queue.items[3].data.drop.accepted);
+}
+
+test "drag manager keeps ended payload alive for queued drop events" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var cleanup_count: usize = 0;
+    const Hooks = struct {
+        fn cleanup(data: *anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(data)));
+            counter.* += 1;
+        }
+    };
+
+    var mgr = DragManager.init(&queue, alloc);
+
+    try mgr.begin(null, 1, 2, 1, DragPayload.fromOpaque(@ptrCast(&cleanup_count), Hooks.cleanup, "counter"));
+    try mgr.end(3, 4, null);
+
+    try std.testing.expect(!mgr.active);
+    try std.testing.expectEqual(@as(usize, 0), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 3), queue.queue.items.len);
+    try std.testing.expectEqual(EventType.drop, queue.queue.items[2].type);
+    try std.testing.expectEqual(@as(?*anyopaque, @ptrCast(&cleanup_count)), queue.queue.items[2].data.drop.payload.storage.custom.ptr);
+
+    mgr.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+}
+
+test "drag manager releases ended payload before next drag" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var cleanup_count: usize = 0;
+    const Hooks = struct {
+        fn cleanup(data: *anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(data)));
+            counter.* += 1;
+        }
+    };
+
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.begin(null, 1, 2, 1, DragPayload.fromOpaque(@ptrCast(&cleanup_count), Hooks.cleanup, "counter"));
+    try mgr.end(3, 4, null);
+    try std.testing.expectEqual(@as(usize, 0), cleanup_count);
+
+    try mgr.begin(null, 5, 6, 1, .{});
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+    mgr.cancel();
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
 }
 
 test "drag manager hit testing accepts edge coordinates above u16 rect end" {
