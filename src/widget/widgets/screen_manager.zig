@@ -246,6 +246,7 @@ pub const ScreenManager = struct {
 
         if (!entering_done or !exiting_done) return;
 
+        var first_error: ?anyerror = null;
         switch (active_trans.kind) {
             .push => {
                 if (active_trans.entering) |idx| {
@@ -259,18 +260,24 @@ pub const ScreenManager = struct {
                 if (active_trans.exiting) |idx| {
                     var entry = self.screens.orderedRemove(idx);
                     defer self.deinitEntry(&entry);
-                    try self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit);
+                    self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit) catch |err| {
+                        first_error = err;
+                    };
                 }
                 if (self.topEntry()) |top| {
                     top.state = .steady;
-                    try self.runHook(top, top.label_copy, top.screen.lifecycle.on_resume);
+                    self.runHook(top, top.label_copy, top.screen.lifecycle.on_resume) catch |err| {
+                        if (first_error == null) first_error = err;
+                    };
                 }
             },
             .replace => {
                 if (active_trans.exiting) |idx| {
                     var entry = self.screens.orderedRemove(idx);
                     defer self.deinitEntry(&entry);
-                    try self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit);
+                    self.runHook(&entry, entry.label_copy, entry.screen.lifecycle.on_exit) catch |err| {
+                        first_error = err;
+                    };
                 }
                 if (active_trans.entering) |idx| {
                     var entering_idx = idx;
@@ -285,6 +292,7 @@ pub const ScreenManager = struct {
         }
 
         self.active_transition = null;
+        if (first_error) |err| return err;
     }
 
     fn runHook(self: *ScreenManager, entry: *ScreenEntry, label: []const u8, hook: ?*const fn (*ScreenContext) anyerror!void) !void {
@@ -666,6 +674,89 @@ test "screen manager rejected replace after pause failure is detached" {
     try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
     try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
     try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+}
+
+test "screen manager pop exit hook failure still completes cleanup" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    var resumed = false;
+    const Hooks = struct {
+        var resumed_ptr: *bool = undefined;
+
+        fn exit(_: *ScreenContext) anyerror!void {
+            return error.ExitFailed;
+        }
+
+        fn resume_cb(_: *ScreenContext) anyerror!void {
+            resumed_ptr.* = true;
+        }
+    };
+    Hooks.resumed_ptr = &resumed;
+
+    try manager.push(.{
+        .widget = &block_a.widget,
+        .label = "a",
+        .lifecycle = .{ .on_resume = Hooks.resume_cb },
+    });
+    try manager.tick(1000);
+    try manager.push(.{
+        .widget = &block_b.widget,
+        .label = "b",
+        .lifecycle = .{ .on_exit = Hooks.exit },
+    });
+    try manager.tick(1000);
+
+    try manager.pop();
+    try std.testing.expectError(error.ExitFailed, manager.tick(1000));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block_a.widget, manager.active().?.widget);
+    try std.testing.expect(manager.active_transition == null);
+    try std.testing.expect(resumed);
+    try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
+    try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+}
+
+test "screen manager replace exit hook failure keeps replacement active" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var block_a = try @import("block.zig").Block.init(alloc);
+    defer block_a.deinit();
+    var block_b = try @import("block.zig").Block.init(alloc);
+    defer block_b.deinit();
+
+    const Hooks = struct {
+        fn exit(_: *ScreenContext) anyerror!void {
+            return error.ExitFailed;
+        }
+    };
+
+    try manager.push(.{
+        .widget = &block_a.widget,
+        .label = "a",
+        .lifecycle = .{ .on_exit = Hooks.exit },
+    });
+    try manager.tick(1000);
+    try manager.replace(.{ .widget = &block_b.widget, .label = "b" });
+
+    try std.testing.expectError(error.ExitFailed, manager.tick(1000));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(&block_b.widget, manager.active().?.widget);
+    try std.testing.expect(manager.active_transition == null);
+    try std.testing.expect(block_a.widget.parent == null);
+    try std.testing.expectEqual(&manager.widget, block_b.widget.parent.?);
     try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
 }
 
