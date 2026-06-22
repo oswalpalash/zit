@@ -257,10 +257,14 @@ pub const Widget = struct {
     /// Animate visibility using configured transitions. This keeps the widget
     /// renderable while fading/sliding out, then hides it when complete.
     pub fn animateVisibility(self: *Widget, animator: *animation.Animator, visible: bool, opts: animation.VisibilityOptions) !void {
+        const previous_visible = self.visible;
         if (visible) {
             self.visible = true;
         }
-        _ = try self.visibility_transition.animate(animator, visible, opts);
+        _ = self.visibility_transition.animate(animator, visible, opts) catch |err| {
+            self.visible = previous_visible;
+            return err;
+        };
         self.markDirty();
     }
 
@@ -982,4 +986,45 @@ test "layout adapter fade clips edge rect without u16 overflow" {
         4,
         4,
     ));
+}
+
+test "widget animateVisibility restores visible state on scheduling failure" {
+    const noop_vtable = Widget.VTable{
+        .draw = struct {
+            fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        }.draw,
+        .handle_event = struct {
+            fn handle(_: *anyopaque, _: input.Event) anyerror!bool {
+                return false;
+            }
+        }.handle,
+        .layout = struct {
+            fn layout(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+        }.layout,
+        .get_preferred_size = struct {
+            fn preferred(_: *anyopaque) anyerror!layout_module.Size {
+                return layout_module.Size.zero();
+            }
+        }.preferred,
+        .can_focus = struct {
+            fn can(_: *anyopaque) bool {
+                return false;
+            }
+        }.can,
+    };
+
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var animator = animation.Animator.init(failing.allocator());
+    defer animator.deinit();
+
+    var widget = Widget.init(&noop_vtable);
+    widget.visible = false;
+    widget.visibility_transition.snap(false);
+
+    try std.testing.expectError(error.OutOfMemory, widget.animateVisibility(&animator, true, .{}));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expect(!widget.visible);
+    try std.testing.expect(!widget.visibility_transition.target_visible);
+    try std.testing.expectEqual(@as(f32, 0), widget.visibility_transition.progress);
+    try std.testing.expect(widget.visibility_transition.handle == null);
 }

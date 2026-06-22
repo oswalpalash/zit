@@ -62,8 +62,8 @@ pub const Animator = struct {
 
     pub fn add(self: *Animator, spec: AnimationSpec) !AnimationHandle {
         const id = self.next_id;
-        self.next_id += 1;
         try self.animations.append(self.allocator, AnimationState{ .id = id, .spec = spec });
+        self.next_id += 1;
         return AnimationHandle{ .id = id };
     }
 
@@ -143,6 +143,7 @@ pub const ValueDriver = struct {
 
     /// Start a value animation, cancelling any previous handle on the same driver.
     pub fn animate(self: *ValueDriver, animator: *Animator, start_value: f32, target_value: f32, duration_ms: u64, easing: AnimationEasingFn, on_change: ValueChangeFn, user_ctx: ?*anyopaque) !AnimationHandle {
+        const previous = self.*;
         if (self.handle) |h| {
             _ = animator.cancel(h);
             self.handle = null;
@@ -163,7 +164,17 @@ pub const ValueDriver = struct {
             .context = self,
         };
 
-        const handle = try animator.add(spec);
+        const handle = animator.add(spec) catch |err| {
+            self.current = previous.current;
+            self.start = previous.start;
+            self.target = previous.target;
+            self.on_change = previous.on_change;
+            self.user_ctx = previous.user_ctx;
+            self.duration_ms = previous.duration_ms;
+            self.easing = previous.easing;
+            self.handle = null;
+            return err;
+        };
         self.handle = handle;
         return handle;
     }
@@ -240,9 +251,17 @@ pub const ColorTransition = struct {
             }
         }.onChange;
 
+        const previous_start = self.start;
+        const previous_target = self.target;
+        const previous_current = self.current;
         self.start = self.current;
         self.target = to;
-        _ = try self.driver.animate(animator, 0, 1, duration_ms, easing, update, self);
+        _ = self.driver.animate(animator, 0, 1, duration_ms, easing, update, self) catch |err| {
+            self.start = previous_start;
+            self.target = previous_target;
+            self.current = previous_current;
+            return err;
+        };
     }
 
     /// Get the current blended color.
@@ -279,6 +298,7 @@ pub const VisibilityController = struct {
     }
 
     pub fn animate(self: *VisibilityController, animator: *Animator, visible: bool, opts: VisibilityOptions) !AnimationHandle {
+        const previous = self.*;
         if (self.handle) |h| {
             _ = animator.cancel(h);
             self.handle = null;
@@ -296,7 +316,14 @@ pub const VisibilityController = struct {
             .context = self,
         };
 
-        const handle = try animator.add(spec);
+        const handle = animator.add(spec) catch |err| {
+            self.target_visible = previous.target_visible;
+            self.progress = previous.progress;
+            self.start_progress = previous.start_progress;
+            self.options = previous.options;
+            self.handle = null;
+            return err;
+        };
         self.handle = handle;
         return handle;
     }
@@ -398,6 +425,24 @@ test "animator runs callbacks and completes" {
     try std.testing.expect(animator.animations.items.len == 0);
 }
 
+test "animator add preserves next id on allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var animator = Animator.init(failing.allocator());
+    defer animator.deinit();
+
+    const onUpdate = struct {
+        fn callback(_: f32, _: ?*anyopaque) void {}
+    }.callback;
+
+    try std.testing.expectError(error.OutOfMemory, animator.add(AnimationSpec{
+        .duration_ms = 100,
+        .on_update = onUpdate,
+    }));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u32, 1), animator.next_id);
+    try std.testing.expectEqual(@as(usize, 0), animator.animations.items.len);
+}
+
 test "animator supports yoyo" {
     const alloc = std.testing.allocator;
     var animator = Animator.init(alloc);
@@ -446,6 +491,41 @@ test "value driver animates scalar values" {
     try std.testing.expectEqual(@as(f32, 10), driver.current);
 }
 
+test "value driver restores sampled state on scheduling failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var animator = Animator.init(failing.allocator());
+    defer animator.deinit();
+
+    var observed: f32 = 4;
+    const update = struct {
+        fn onChange(value: f32, ctx: ?*anyopaque) void {
+            const slot = @as(*f32, @ptrCast(@alignCast(ctx.?)));
+            slot.* = value;
+        }
+    }.onChange;
+
+    var driver = ValueDriver{
+        .current = 4,
+        .start = 2,
+        .target = 8,
+        .on_change = update,
+        .user_ctx = @ptrCast(&observed),
+        .duration_ms = 50,
+        .easing = Easing.easeInOutQuad,
+    };
+
+    try std.testing.expectError(error.OutOfMemory, driver.animate(&animator, 0, 10, 100, Easing.linear, update, @ptrCast(&observed)));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(f32, 4), driver.current);
+    try std.testing.expectEqual(@as(f32, 2), driver.start);
+    try std.testing.expectEqual(@as(f32, 8), driver.target);
+    try std.testing.expectEqual(@as(u64, 50), driver.duration_ms);
+    try std.testing.expect(driver.easing == Easing.easeInOutQuad);
+    try std.testing.expect(driver.on_change.? == update);
+    try std.testing.expectEqual(@intFromPtr(&observed), @intFromPtr(driver.user_ctx.?));
+    try std.testing.expect(driver.handle == null);
+}
+
 test "color transition blends colors over time" {
     const alloc = std.testing.allocator;
     var animator = Animator.init(alloc);
@@ -463,6 +543,28 @@ test "color transition blends colors over time" {
     try std.testing.expectEqual(@as(u8, 255), final.rgb_color.b);
 }
 
+test "color transition restores color state on scheduling failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var animator = Animator.init(failing.allocator());
+    defer animator.deinit();
+
+    var transition = ColorTransition.init(render.Color.rgb(1, 2, 3));
+    transition.start = render.Color.rgb(4, 5, 6);
+    transition.target = render.Color.rgb(7, 8, 9);
+    transition.current = render.Color.rgb(10, 11, 12);
+
+    const previous_start = transition.start;
+    const previous_target = transition.target;
+    const previous_current = transition.current;
+
+    try std.testing.expectError(error.OutOfMemory, transition.animateTo(&animator, render.Color.rgb(0, 0, 255), 20, Easing.linear));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expect(std.meta.eql(previous_start, transition.start));
+    try std.testing.expect(std.meta.eql(previous_target, transition.target));
+    try std.testing.expect(std.meta.eql(previous_current, transition.current));
+    try std.testing.expect(transition.driver.handle == null);
+}
+
 test "visibility controller tracks slide offsets and alpha" {
     const alloc = std.testing.allocator;
     var animator = Animator.init(alloc);
@@ -477,5 +579,29 @@ test "visibility controller tracks slide offsets and alpha" {
 
     animator.tick(10);
     try std.testing.expect(visibility.alpha() == 0);
+    try std.testing.expect(visibility.handle == null);
+}
+
+test "visibility controller restores state on scheduling failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var animator = Animator.init(failing.allocator());
+    defer animator.deinit();
+
+    var visibility = VisibilityController{
+        .progress = 0.25,
+        .target_visible = false,
+        .start_progress = 0.75,
+        .options = .{ .mode = .slide, .slide_direction = .left, .slide_distance = 4, .duration_ms = 90 },
+    };
+
+    try std.testing.expectError(error.OutOfMemory, visibility.animate(&animator, true, VisibilityOptions{ .mode = .fade, .duration_ms = 10 }));
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(f32, 0.25), visibility.progress);
+    try std.testing.expect(!visibility.target_visible);
+    try std.testing.expectEqual(@as(f32, 0.75), visibility.start_progress);
+    try std.testing.expectEqual(VisibilityMode.slide, visibility.options.mode);
+    try std.testing.expectEqual(SlideDirection.left, visibility.options.slide_direction);
+    try std.testing.expectEqual(@as(u16, 4), visibility.options.slide_distance);
+    try std.testing.expectEqual(@as(u64, 90), visibility.options.duration_ms);
     try std.testing.expect(visibility.handle == null);
 }
