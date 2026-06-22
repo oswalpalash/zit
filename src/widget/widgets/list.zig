@@ -159,7 +159,7 @@ pub const List = struct {
 
     /// Clean up list resources
     pub fn deinit(self: *List) void {
-        self.clearDragPayload();
+        self.cancelDragFromSelf();
         // Free all items
         for (self.items.items) |item| {
             self.allocator.free(item);
@@ -183,6 +183,7 @@ pub const List = struct {
         if (index >= self.items.items.len) {
             return;
         }
+        self.cancelDragFromSelf();
 
         const previous_selected_index = self.selected_index;
         const previous_first_visible_index = self.first_visible_index;
@@ -214,7 +215,7 @@ pub const List = struct {
     /// Clear all items from the list
     pub fn clear(self: *List) void {
         const had_items = self.items.items.len > 0;
-        self.clearDragPayload();
+        self.cancelDragFromSelf();
         // Free all items
         for (self.items.items) |item| {
             self.allocator.free(item);
@@ -387,6 +388,7 @@ pub const List = struct {
 
     /// Enable or disable drag-to-reorder behavior.
     pub fn setReorderable(self: *List, enabled: bool) void {
+        if (!enabled) self.cancelDragFromSelf();
         self.enable_reorder = enabled;
     }
 
@@ -409,6 +411,29 @@ pub const List = struct {
         if (self.drag_payload) |buf| {
             self.allocator.free(buf);
             self.drag_payload = null;
+        }
+    }
+
+    fn resetDragState(self: *List) void {
+        self.dragging = false;
+        self.drag_start_index = null;
+        self.drag_hover_index = null;
+        self.clearDragPayload();
+    }
+
+    fn cancelDragFromSelf(self: *List) void {
+        if (active_drag) |drag| {
+            if (drag.source == self) {
+                active_drag = null;
+            }
+        }
+        self.resetDragState();
+    }
+
+    fn cancelActiveDrag() void {
+        if (active_drag) |drag| {
+            drag.source.resetDragState();
+            active_drag = null;
         }
     }
 
@@ -496,8 +521,7 @@ pub const List = struct {
 
     fn startDrag(self: *List, index: usize) void {
         if (!self.enable_reorder) return;
-        if (active_drag) |_|
-            active_drag = null;
+        cancelActiveDrag();
 
         self.dragging = true;
         self.drag_start_index = index;
@@ -572,6 +596,7 @@ pub const List = struct {
             cb(drag.from_index, drop_index, drag.source, self);
         }
 
+        drag.source.resetDragState();
         active_drag = null;
     }
 
@@ -1432,6 +1457,60 @@ test "list drag reorder accepts edge row coordinates above i16 max" {
     try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
 }
 
+test "list starting a new drag cancels previous source state" {
+    const alloc = std.testing.allocator;
+    var first = try List.init(alloc);
+    defer first.deinit();
+    var second = try List.init(alloc);
+    defer second.deinit();
+
+    first.setReorderable(true);
+    second.setReorderable(true);
+    try first.addItem("first");
+    try second.addItem("second");
+
+    try first.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    try second.widget.layout(layout_module.Rect.init(0, 2, 8, 1));
+
+    _ = try first.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) });
+    try std.testing.expect(first.dragging);
+    try std.testing.expect(first.drag_payload != null);
+    try std.testing.expect(active_drag != null);
+    try std.testing.expectEqual(first, active_drag.?.source);
+
+    _ = try second.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 2, 1, 0) });
+    try std.testing.expect(!first.dragging);
+    try std.testing.expectEqual(@as(?usize, null), first.drag_start_index);
+    try std.testing.expectEqual(@as(?usize, null), first.drag_hover_index);
+    try std.testing.expect(first.drag_payload == null);
+    try std.testing.expect(second.dragging);
+    try std.testing.expect(active_drag != null);
+    try std.testing.expectEqual(second, active_drag.?.source);
+}
+
+test "list clear cancels active drag state" {
+    const alloc = std.testing.allocator;
+    var list = try List.init(alloc);
+    defer list.deinit();
+
+    list.setReorderable(true);
+    try list.addItem("alpha");
+    try list.addItem("beta");
+    try list.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+
+    _ = try list.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) });
+    try std.testing.expect(list.dragging);
+    try std.testing.expect(active_drag != null);
+
+    list.clear();
+    try std.testing.expect(!list.dragging);
+    try std.testing.expectEqual(@as(?usize, null), list.drag_start_index);
+    try std.testing.expectEqual(@as(?usize, null), list.drag_hover_index);
+    try std.testing.expect(list.drag_payload == null);
+    try std.testing.expect(active_drag == null);
+    try std.testing.expectEqual(@as(usize, 0), list.items.items.len);
+}
+
 test "list reorder in place moves items without changing capacity" {
     const alloc = std.testing.allocator;
     var list = try List.init(alloc);
@@ -1485,6 +1564,41 @@ test "list accepts cross-list drops and moves items" {
     try std.testing.expectEqualStrings("alpha", target.items.items[0]);
     try std.testing.expectEqualStrings("one", target.items.items[1]);
     try std.testing.expect(!source.dragging);
+}
+
+test "list copy drop finishes source drag state" {
+    const alloc = std.testing.allocator;
+    var source = try List.init(alloc);
+    defer source.deinit();
+    var target = try List.init(alloc);
+    defer target.deinit();
+
+    source.setReorderable(true);
+    target.setCrossDropMode(.copy);
+    try source.addItem("alpha");
+    try source.addItem("beta");
+    try target.addItem("one");
+
+    try source.widget.layout(layout_module.Rect.init(0, 0, 8, 2));
+    try target.widget.layout(layout_module.Rect.init(0, 4, 8, 4));
+
+    _ = try source.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 0, 0, 1, 0) });
+    try std.testing.expect(source.dragging);
+    try std.testing.expect(source.drag_payload != null);
+
+    _ = try target.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 0, 4, 1, 0) });
+
+    try std.testing.expectEqual(@as(usize, 2), source.items.items.len);
+    try std.testing.expectEqualStrings("alpha", source.items.items[0]);
+    try std.testing.expectEqualStrings("beta", source.items.items[1]);
+    try std.testing.expectEqual(@as(usize, 2), target.items.items.len);
+    try std.testing.expectEqualStrings("alpha", target.items.items[0]);
+    try std.testing.expectEqualStrings("one", target.items.items[1]);
+    try std.testing.expect(!source.dragging);
+    try std.testing.expectEqual(@as(?usize, null), source.drag_start_index);
+    try std.testing.expectEqual(@as(?usize, null), source.drag_hover_index);
+    try std.testing.expect(source.drag_payload == null);
+    try std.testing.expect(active_drag == null);
 }
 
 test "list external drop reports allocation failure without changing lists" {
