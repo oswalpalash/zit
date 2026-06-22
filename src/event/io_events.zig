@@ -466,7 +466,7 @@ pub const IoEventManager = struct {
     /// var manager = IoEventManager.init(alloc, queue);
     /// defer manager.deinit();
     /// const watch = try manager.watchFile("log.txt", null);
-    /// defer watch.deinit();
+    /// defer _ = manager.unwatchFile(watch);
     /// ```
     pub fn watchFile(self: *IoEventManager, path: []const u8, target: ?*event.widget.Widget) !*FileWatchContext {
         const event_id = self.next_event_id;
@@ -480,6 +480,23 @@ pub const IoEventManager = struct {
 
         self.next_event_id += 1;
         return watcher;
+    }
+
+    /// Stop, unregister, and destroy a file watcher returned by `watchFile`.
+    ///
+    /// Returns `true` when the watcher belonged to this manager. Returned
+    /// watcher pointers are manager-owned; use this method instead of calling
+    /// `watcher.deinit()` directly.
+    pub fn unwatchFile(self: *IoEventManager, watcher: *FileWatchContext) bool {
+        for (self.file_watchers.items, 0..) |item, idx| {
+            if (item == watcher) {
+                _ = self.file_watchers.orderedRemove(idx);
+                watcher.deinit();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// Create a network connection context.
@@ -499,7 +516,7 @@ pub const IoEventManager = struct {
     /// var manager = IoEventManager.init(alloc, queue);
     /// defer manager.deinit();
     /// const conn = try manager.connectToServer("127.0.0.1", 5555, null);
-    /// defer conn.deinit();
+    /// defer _ = manager.disconnectFromServer(conn);
     /// ```
     pub fn connectToServer(self: *IoEventManager, address: []const u8, port: u16, target: ?*event.widget.Widget) !*NetworkContext {
         const event_id = self.next_event_id;
@@ -513,6 +530,23 @@ pub const IoEventManager = struct {
 
         self.next_event_id += 1;
         return connection;
+    }
+
+    /// Disconnect, unregister, and destroy a network context returned by `connectToServer`.
+    ///
+    /// Returns `true` when the connection belonged to this manager. Returned
+    /// connection pointers are manager-owned; use this method instead of calling
+    /// `connection.deinit()` directly.
+    pub fn disconnectFromServer(self: *IoEventManager, connection: *NetworkContext) bool {
+        for (self.network_connections.items, 0..) |item, idx| {
+            if (item == connection) {
+                _ = self.network_connections.orderedRemove(idx);
+                connection.deinit();
+                return true;
+            }
+        }
+
+        return false;
     }
 };
 
@@ -633,6 +667,23 @@ test "watchFile preserves manager state when registration allocation fails" {
     try std.testing.expectEqual(@as(usize, 0), manager.file_watchers.items.len);
 }
 
+test "unwatchFile unregisters and destroys manager-owned watcher" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var manager = IoEventManager.init(alloc, &queue);
+    defer manager.deinit();
+
+    const watcher = try manager.watchFile("definitely-missing-zit-watch-file.txt", null);
+    try std.testing.expectEqual(@as(usize, 1), manager.file_watchers.items.len);
+    try std.testing.expect(watcher.running.load(.acquire));
+
+    try std.testing.expect(manager.unwatchFile(watcher));
+    try std.testing.expectEqual(@as(usize, 0), manager.file_watchers.items.len);
+    try std.testing.expect(!manager.unwatchFile(watcher));
+}
+
 test "connectToServer preserves manager state when registration allocation fails" {
     const alloc = std.testing.allocator;
     var queue = event.EventQueue.init(alloc);
@@ -647,6 +698,22 @@ test "connectToServer preserves manager state when registration allocation fails
     try std.testing.expectError(error.OutOfMemory, manager.connectToServer("127.0.0.1", 8080, null));
     try std.testing.expectEqual(original_next_id, manager.next_event_id);
     try std.testing.expectEqual(@as(usize, 0), manager.network_connections.items.len);
+}
+
+test "disconnectFromServer unregisters and destroys manager-owned connection" {
+    const alloc = std.testing.allocator;
+    var queue = event.EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var manager = IoEventManager.init(alloc, &queue);
+    defer manager.deinit();
+
+    const connection = try manager.connectToServer("127.0.0.1", 8080, null);
+    try std.testing.expectEqual(@as(usize, 1), manager.network_connections.items.len);
+
+    try std.testing.expect(manager.disconnectFromServer(connection));
+    try std.testing.expectEqual(@as(usize, 0), manager.network_connections.items.len);
+    try std.testing.expect(!manager.disconnectFromServer(connection));
 }
 
 test "sendNetworkEvent frees owned payload when event allocation fails" {

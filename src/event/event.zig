@@ -2890,6 +2890,14 @@ pub const Application = struct {
         return try self.io_manager.?.watchFile(path, target);
     }
 
+    /// Stop and unregister a file watcher returned by `watchFile`.
+    pub fn unwatchFile(self: *Application, watcher: *@import("io_events.zig").FileWatchContext) bool {
+        if (self.io_manager) |manager| {
+            return manager.unwatchFile(watcher);
+        }
+        return false;
+    }
+
     /// Create a network context. Network transport is currently unsupported on the Zig 0.16 baseline;
     /// the context emits a `.network_error` event instead of opening a socket.
     pub fn connectToServer(self: *Application, address: []const u8, port: u16, target: ?*widget.Widget) !*@import("io_events.zig").NetworkContext {
@@ -2898,6 +2906,14 @@ pub const Application = struct {
         }
 
         return try self.io_manager.?.connectToServer(address, port, target);
+    }
+
+    /// Disconnect and unregister a network context returned by `connectToServer`.
+    pub fn disconnectFromServer(self: *Application, connection: *@import("io_events.zig").NetworkContext) bool {
+        if (self.io_manager) |manager| {
+            return manager.disconnectFromServer(connection);
+        }
+        return false;
     }
 
     /// Set the root widget
@@ -3626,6 +3642,34 @@ test "application automatic drag can be disabled for explicit payload drags" {
     app.setAutomaticDrag(true);
     try app.processInputEvent(input.Event{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) });
     try std.testing.expect(app.drag_manager.active);
+}
+
+test "application unwatchFile unregisters manager-owned watcher" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    const watcher = try app.watchFile("definitely-missing-zit-app-watch-file.txt", null);
+    try std.testing.expect(app.io_manager != null);
+    try std.testing.expectEqual(@as(usize, 1), app.io_manager.?.file_watchers.items.len);
+
+    try std.testing.expect(app.unwatchFile(watcher));
+    try std.testing.expectEqual(@as(usize, 0), app.io_manager.?.file_watchers.items.len);
+    try std.testing.expect(!app.unwatchFile(watcher));
+}
+
+test "application disconnectFromServer unregisters manager-owned connection" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    const connection = try app.connectToServer("127.0.0.1", 8080, null);
+    try std.testing.expect(app.io_manager != null);
+    try std.testing.expectEqual(@as(usize, 1), app.io_manager.?.network_connections.items.len);
+
+    try std.testing.expect(app.disconnectFromServer(connection));
+    try std.testing.expectEqual(@as(usize, 0), app.io_manager.?.network_connections.items.len);
+    try std.testing.expect(!app.disconnectFromServer(connection));
 }
 
 test "background task result frees message when result allocation fails" {
