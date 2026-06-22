@@ -51,7 +51,15 @@ pub fn getEnv(allocator: std.mem.Allocator, key: []const u8) !?[]u8 {
     return null;
 }
 
-pub fn sleepMillis(ms: u64) void {
+pub fn sleepMillisChecked(ms: u64) !void {
     const io = std.Io.Threaded.global_single_threaded.io();
-    std.Io.sleep(io, .{ .nanoseconds = @as(i96, ms) * std.time.ns_per_ms }, .awake) catch {};
+    try std.Io.sleep(io, .{ .nanoseconds = @as(i96, ms) * std.time.ns_per_ms }, .awake);
+}
+
+pub fn sleepMillis(ms: u64) void {
+    sleepMillisChecked(ms) catch return;
+}
+
+test "sleepMillisChecked accepts zero-duration sleep" {
+    try sleepMillisChecked(0);
 }

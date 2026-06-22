@@ -214,8 +214,20 @@ defer reloader.stop();
 
 ### Debug Hooks
 ```zig
-var tracer = zit.debug.EventTracer.init(std.io.getStdErr().writer());
-app.debug_hooks = tracer.hooks();
+const io = std.Io.Threaded.global_single_threaded.io();
+var stderr_file = std.Io.File.stderr();
+var stderr_buffer: [512]u8 = undefined;
+var stderr_writer = stderr_file.writerStreaming(io, &stderr_buffer);
+defer stderr_writer.flush() catch |err| std.debug.print("debug stderr flush failed: {s}\n", .{@errorName(err)});
+
+var tracer = zit.debug.EventTracer.init(&stderr_writer.interface);
+app.setDebugHooks(tracer.hooks());
+
+var stdout_file = std.Io.File.stdout();
+var stdout_buffer: [512]u8 = undefined;
+var stdout_writer = stdout_file.writerStreaming(io, &stdout_buffer);
+defer stdout_writer.flush() catch |err| std.debug.print("debug stdout flush failed: {s}\n", .{@errorName(err)});
+
 var inspector = zit.debug.WidgetInspector.init(alloc);
-try inspector.printTree(&root.widget, std.io.getStdOut().writer(), .{});
+try inspector.printTree(&root.widget, &stdout_writer.interface, .{});
 ```

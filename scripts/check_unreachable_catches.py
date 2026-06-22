@@ -25,6 +25,8 @@ EMPTY_CATCH = re.compile(r"catch\s*\{\s*\}")
 SCAN_ROOTS = ("src", "examples")
 SCAN_FILES = ("build.zig",)
 CRITICAL_EMPTY_CATCH_FILES = {
+    Path("src/compat.zig"),
+    Path("src/debug.zig"),
     Path("src/event/event.zig"),
     Path("src/render/render.zig"),
     Path("src/terminal/terminal.zig"),

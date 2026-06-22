@@ -80,7 +80,7 @@ pub const WidgetInspector = struct {
     /// Example:
     /// ```zig
     /// var inspector = zit.debug.WidgetInspector.init(alloc);
-    /// try inspector.printTree(root, std.io.getStdOut().writer(), .{});
+    /// try inspector.printTree(root, &stdout_writer.interface, .{});
     /// ```
     pub fn init(allocator: std.mem.Allocator) WidgetInspector {
         return .{ .allocator = allocator };
@@ -95,7 +95,7 @@ pub const WidgetInspector = struct {
     /// Returns: any writer error.
     /// Example:
     /// ```zig
-    /// try inspector.printTree(&my_root.widget, std.io.getStdErr().writer(), .{ .show_flags = false });
+    /// try inspector.printTree(&my_root.widget, &stderr_writer.interface, .{ .show_flags = false });
     /// ```
     pub fn printTree(self: *WidgetInspector, root: *widget.Widget, writer: anytype, options: Options) !void {
         try writer.writeAll("widget tree (root first):\n");
@@ -193,9 +193,11 @@ pub const LayoutDebugger = struct {
 
 /// Trace events as they flow through the dispatcher.
 pub const EventTracer = struct {
-    writer: std.io.AnyWriter,
+    writer: *std.Io.Writer,
     include_payloads: bool = true,
     include_path: bool = true,
+    write_failure_count: usize = 0,
+    last_write_failure: ?anyerror = null,
 
     /// Create a tracer that prints every event dispatched through the UI.
     ///
@@ -204,12 +206,12 @@ pub const EventTracer = struct {
     /// Returns: tracer with payload/path logging enabled by default.
     /// Example:
     /// ```zig
-    /// var tracer = zit.debug.EventTracer.init(std.io.getStdErr().writer());
+    /// var tracer = zit.debug.EventTracer.init(&stderr_writer.interface);
     /// const hooks = tracer.hooks();
-    /// app.debug_hooks = hooks;
+    /// app.setDebugHooks(hooks);
     /// ```
-    pub fn init(writer: anytype) EventTracer {
-        return .{ .writer = std.io.anyWriter(writer) };
+    pub fn init(writer: *std.Io.Writer) EventTracer {
+        return .{ .writer = writer };
     }
 
     /// Convert the tracer into `event.DebugHooks` used by `Application`.
@@ -217,7 +219,7 @@ pub const EventTracer = struct {
     /// Returns: hook struct that can be assigned to `Application.debug_hooks`.
     /// Example:
     /// ```zig
-    /// app.debug_hooks = tracer.hooks();
+    /// app.setDebugHooks(tracer.hooks());
     /// ```
     pub fn hooks(self: *EventTracer) event_mod.DebugHooks {
         return .{ .event_trace = trace, .trace_ctx = self };
@@ -226,7 +228,25 @@ pub const EventTracer = struct {
     fn trace(ev: *event_mod.Event, phase: event_mod.Event.PropagationPhase, node: ?*widget.Widget, handled: bool, ctx: ?*anyopaque) void {
         if (ctx == null) return;
         const self = @as(*EventTracer, @ptrCast(@alignCast(ctx.?)));
-        self.log(ev, phase, node, handled) catch {};
+        self.log(ev, phase, node, handled) catch |err| self.recordWriteFailure(err);
+    }
+
+    pub fn writeFailureCount(self: *const EventTracer) usize {
+        return self.write_failure_count;
+    }
+
+    pub fn lastWriteFailure(self: *const EventTracer) ?anyerror {
+        return self.last_write_failure;
+    }
+
+    pub fn resetWriteFailures(self: *EventTracer) void {
+        self.write_failure_count = 0;
+        self.last_write_failure = null;
+    }
+
+    fn recordWriteFailure(self: *EventTracer, err: anyerror) void {
+        self.write_failure_count += 1;
+        self.last_write_failure = err;
     }
 
     fn log(self: *EventTracer, ev: *event_mod.Event, phase: event_mod.Event.PropagationPhase, node: ?*widget.Widget, handled: bool) !void {
@@ -245,24 +265,42 @@ pub const EventTracer = struct {
     }
 
     fn describe(ev: *event_mod.Event, buf: []u8) []const u8 {
-        const written = switch (ev.type) {
-            .key_press => std.fmt.bufPrint(buf, " key='{u}' mods=0x{x}", .{ ev.data.key_press.key, ev.data.key_press.modifiers }),
-            .key_release => std.fmt.bufPrint(buf, " key-up='{u}' mods=0x{x}", .{ ev.data.key_release.key, ev.data.key_release.modifiers }),
+        return switch (ev.type) {
+            .key_press => std.fmt.bufPrint(buf, " key='{u}' ctrl={any} alt={any} shift={any}", .{ ev.data.key_press.key, ev.data.key_press.modifiers.ctrl, ev.data.key_press.modifiers.alt, ev.data.key_press.modifiers.shift }),
+            .key_release => std.fmt.bufPrint(buf, " key-up='{u}' ctrl={any} alt={any} shift={any}", .{ ev.data.key_release.key, ev.data.key_release.modifiers.ctrl, ev.data.key_release.modifiers.alt, ev.data.key_release.modifiers.shift }),
             .mouse_press, .mouse_release, .mouse_move => |tag| blk: {
                 const mouse = switch (tag) {
                     .mouse_press => ev.data.mouse_press,
                     .mouse_release => ev.data.mouse_release,
                     else => ev.data.mouse_move,
                 };
-                break :blk std.fmt.bufPrint(buf, " mouse@{d},{d} btn={d} mods=0x{x}", .{ mouse.x, mouse.y, mouse.button, mouse.modifiers });
+                break :blk std.fmt.bufPrint(buf, " mouse@{d},{d} btn={d} ctrl={any} alt={any} shift={any}", .{ mouse.x, mouse.y, mouse.button, mouse.modifiers.ctrl, mouse.modifiers.alt, mouse.modifiers.shift });
             },
             .mouse_wheel => std.fmt.bufPrint(buf, " wheel@{d},{d} dx={d} dy={d}", .{ ev.data.mouse_wheel.x, ev.data.mouse_wheel.y, ev.data.mouse_wheel.dx, ev.data.mouse_wheel.dy }),
             .resize => std.fmt.bufPrint(buf, " resize {d}x{d}", .{ ev.data.resize.width, ev.data.resize.height }),
-            .focus_change => std.fmt.bufPrint(buf, " focus to={any}", .{ev.data.focus_change.focused}),
+            .focus_change => std.fmt.bufPrint(buf, " focus gained={any}", .{ev.data.focus_change.gained}),
             .custom => std.fmt.bufPrint(buf, " custom id=0x{x}", .{ev.data.custom.id}),
             else => std.fmt.bufPrint(buf, "", .{}),
-        } catch 0;
-
-        return buf[0..written];
+        } catch "";
     }
 };
+
+test "event tracer records writer failures without failing dispatch" {
+    var failing_writer = std.Io.Writer.failing;
+    var tracer = EventTracer.init(&failing_writer);
+
+    var event = event_mod.Event.init(.custom, null, .{ .custom = .{
+        .id = 42,
+        .data = null,
+        .destructor = null,
+    } });
+
+    event_mod.traceEvent(tracer.hooks(), &event, .target, null);
+
+    try std.testing.expectEqual(@as(usize, 1), tracer.writeFailureCount());
+    try std.testing.expectEqual(error.WriteFailed, tracer.lastWriteFailure().?);
+
+    tracer.resetWriteFailures();
+    try std.testing.expectEqual(@as(usize, 0), tracer.writeFailureCount());
+    try std.testing.expect(tracer.lastWriteFailure() == null);
+}
