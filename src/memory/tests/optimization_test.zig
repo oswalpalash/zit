@@ -102,6 +102,69 @@ test "MemoryOptimizer resize" {
     try testing.expectEqual(false, success2);
 }
 
+test "MemoryOptimizer remaps optimized allocations within cache line" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    defer optimizer.deinit();
+
+    const opt_allocator = optimizer.allocator();
+    const ptr = try opt_allocator.alloc(u8, 32);
+    @memset(ptr, 0xaa);
+
+    const remapped = opt_allocator.remap(ptr, 48) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(ptr.ptr, remapped.ptr);
+    try testing.expectEqual(@as(usize, 48), remapped.len);
+    try testing.expectEqual(@as(u8, 0xaa), remapped[0]);
+    remapped[47] = 0x55;
+
+    opt_allocator.free(remapped);
+    const stats = optimizer.getStats();
+    try testing.expectEqual(@as(usize, 1), stats.deallocations);
+    try testing.expectEqual(@as(usize, 1), stats.cache_size);
+}
+
+test "MemoryOptimizer rejects optimized remap beyond cache line" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    defer optimizer.deinit();
+
+    const opt_allocator = optimizer.allocator();
+    const ptr = try opt_allocator.alloc(u8, 32);
+    defer opt_allocator.free(ptr);
+
+    try testing.expectEqual(@as(?[]u8, null), opt_allocator.remap(ptr, 65));
+    try testing.expectEqual(@as(usize, 0), optimizer.getStats().deallocations);
+}
+
+test "MemoryOptimizer forwards pass-through remap to parent allocator" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var optimizer = try MemoryOptimizer.init(allocator);
+    defer optimizer.deinit();
+
+    const opt_allocator = optimizer.allocator();
+    const ptr = try opt_allocator.alloc(u8, 128);
+    @memset(ptr, 0x33);
+
+    const remapped = opt_allocator.remap(ptr, 96) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(@as(usize, 96), remapped.len);
+    try testing.expectEqual(@as(u8, 0x33), remapped[0]);
+
+    opt_allocator.free(remapped);
+    const stats = optimizer.getStats();
+    try testing.expectEqual(@as(usize, 1), stats.allocations);
+    try testing.expectEqual(@as(usize, 1), stats.deallocations);
+    try testing.expectEqual(@as(usize, 0), stats.cache_size);
+}
+
 test "MemoryOptimizer thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);

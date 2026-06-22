@@ -136,12 +136,15 @@ pub const MemoryOptimizer = struct {
     }
 
     fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = buf;
-        _ = buf_align;
-        _ = new_len;
-        _ = ret_addr;
-        return null;
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.in_use.contains(buf.ptr)) {
+            return if (canOptimize(new_len, buf_align)) buf.ptr else null;
+        }
+
+        return self.parent_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
     }
 
     fn free(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
