@@ -942,11 +942,9 @@ pub const FocusManager = struct {
 
     /// Remove a focusable element
     pub fn removeElement(self: *FocusManager, element: *Focusable) void {
-        const element_id = element.getId();
-
         // Find and remove the element
         for (self.elements.items, 0..) |item, i| {
-            if (item.getId() == element_id) {
+            if (item == element) {
                 // If this is the focused element, clear focus
                 if (self.current_focus != null and self.current_focus.? == i) {
                     item.onBlur();
@@ -1049,6 +1047,105 @@ pub const FocusManager = struct {
         return self.elements.items[self.current_focus.?];
     }
 };
+
+const TestFocusable = struct {
+    focusable: Focusable,
+    id: u32,
+    focus_count: usize = 0,
+    blur_count: usize = 0,
+    key_count: usize = 0,
+
+    const vtable = FocusableVTable{
+        .getId = getId,
+        .onFocus = onFocus,
+        .onBlur = onBlur,
+        .onKeyEvent = onKeyEvent,
+    };
+
+    fn init(id: u32) TestFocusable {
+        return .{
+            .focusable = .{
+                .vtable = &vtable,
+                .context = undefined,
+            },
+            .id = id,
+        };
+    }
+
+    fn bind(self: *TestFocusable) *Focusable {
+        self.focusable.context = self;
+        return &self.focusable;
+    }
+
+    fn getId(ctx: *const anyopaque) u32 {
+        const self: *const TestFocusable = @ptrCast(@alignCast(ctx));
+        return self.id;
+    }
+
+    fn onFocus(ctx: *anyopaque) void {
+        const self: *TestFocusable = @ptrCast(@alignCast(ctx));
+        self.focus_count += 1;
+    }
+
+    fn onBlur(ctx: *anyopaque) void {
+        const self: *TestFocusable = @ptrCast(@alignCast(ctx));
+        self.blur_count += 1;
+    }
+
+    fn onKeyEvent(ctx: *anyopaque, _: KeyEvent) bool {
+        const self: *TestFocusable = @ptrCast(@alignCast(ctx));
+        self.key_count += 1;
+        return true;
+    }
+};
+
+test "focus manager removes exact duplicate-id element" {
+    const alloc = std.testing.allocator;
+    var manager = FocusManager.init(alloc);
+    defer manager.deinit();
+
+    var first = TestFocusable.init(7);
+    var second = TestFocusable.init(7);
+
+    try manager.addElement(first.bind());
+    try manager.addElement(second.bind());
+
+    try std.testing.expectEqual(@as(usize, 0), manager.current_focus.?);
+    try std.testing.expectEqual(first.bind(), manager.getFocusedElement().?);
+
+    manager.removeElement(second.bind());
+
+    try std.testing.expectEqual(@as(usize, 1), manager.elements.items.len);
+    try std.testing.expectEqual(first.bind(), manager.elements.items[0]);
+    try std.testing.expectEqual(first.bind(), manager.getFocusedElement().?);
+    try std.testing.expectEqual(@as(usize, 1), first.focus_count);
+    try std.testing.expectEqual(@as(usize, 0), first.blur_count);
+    try std.testing.expectEqual(@as(usize, 0), second.focus_count);
+    try std.testing.expectEqual(@as(usize, 0), second.blur_count);
+}
+
+test "focus manager removes focused duplicate-id element" {
+    const alloc = std.testing.allocator;
+    var manager = FocusManager.init(alloc);
+    defer manager.deinit();
+
+    var first = TestFocusable.init(11);
+    var second = TestFocusable.init(11);
+
+    try manager.addElement(first.bind());
+    try manager.addElement(second.bind());
+    try std.testing.expect(manager.moveFocus(.next));
+    try std.testing.expectEqual(second.bind(), manager.getFocusedElement().?);
+
+    manager.removeElement(second.bind());
+
+    try std.testing.expectEqual(@as(usize, 1), manager.elements.items.len);
+    try std.testing.expectEqual(first.bind(), manager.getFocusedElement().?);
+    try std.testing.expectEqual(@as(usize, 2), first.focus_count);
+    try std.testing.expectEqual(@as(usize, 1), first.blur_count);
+    try std.testing.expectEqual(@as(usize, 1), second.focus_count);
+    try std.testing.expectEqual(@as(usize, 1), second.blur_count);
+}
 
 fn isNonBlockingError(err: anyerror) bool {
     return err == error.WouldBlock or err == error.Again;
