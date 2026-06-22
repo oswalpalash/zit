@@ -130,11 +130,33 @@ pub const ArenaAllocator = struct {
     }
 
     pub fn remap(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = buf;
+        const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
         _ = buf_align;
-        _ = new_len;
         _ = ret_addr;
-        return null;
+
+        if (self.is_thread_safe) {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+        }
+
+        const buf_start = @intFromPtr(buf.ptr);
+        const arena_start = @intFromPtr(self.buffer.ptr);
+        if (buf_start < arena_start or buf_start >= arena_start + self.buffer.len) {
+            return null;
+        }
+
+        const buf_end = buf_start + buf.len;
+        if (buf_end != arena_start + self.end_index) {
+            return null;
+        }
+
+        const start_offset = buf_start - arena_start;
+        const new_end_index = std.math.add(usize, start_offset, new_len) catch return null;
+        if (new_end_index > self.buffer.len) {
+            return null;
+        }
+
+        self.end_index = new_end_index;
+        return buf.ptr;
     }
 };

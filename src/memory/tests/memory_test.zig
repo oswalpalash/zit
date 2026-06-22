@@ -121,6 +121,61 @@ test "MemoryManager arena reset" {
     try testing.expectEqual(@as(usize, 0), memory_manager.arena_allocator.end_index);
 }
 
+test "ArenaAllocator remaps latest allocation in place" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var arena = try ArenaAllocator.init(allocator, 64, true);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
+    const ptr = try alloc.alloc(u8, 13);
+    @memset(ptr, 0x42);
+
+    const remapped = alloc.remap(ptr, 20) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(ptr.ptr, remapped.ptr);
+    try testing.expectEqual(@as(usize, 20), remapped.len);
+    try testing.expectEqual(@as(u8, 0x42), remapped[0]);
+    try testing.expectEqual(@as(usize, 20), arena.usage());
+
+    const shrunk = alloc.remap(remapped, 7) orelse return error.UnexpectedRemapFailure;
+    try testing.expectEqual(ptr.ptr, shrunk.ptr);
+    try testing.expectEqual(@as(usize, 7), shrunk.len);
+    try testing.expectEqual(@as(usize, 7), arena.usage());
+}
+
+test "ArenaAllocator rejects remap for non-latest allocation" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var arena = try ArenaAllocator.init(allocator, 64, true);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
+    const first = try alloc.alloc(u8, 8);
+    _ = try alloc.alloc(u8, 8);
+
+    try testing.expectEqual(@as(?[]u8, null), alloc.remap(first, 12));
+    try testing.expectEqual(@as(usize, 16), arena.usage());
+}
+
+test "ArenaAllocator rejects remap beyond capacity without changing usage" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    var arena = try ArenaAllocator.init(allocator, 16, true);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
+    const ptr = try alloc.alloc(u8, 8);
+
+    try testing.expectEqual(@as(?[]u8, null), alloc.remap(ptr, 17));
+    try testing.expectEqual(@as(usize, 8), arena.usage());
+}
+
 test "MemoryManager thread safety" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
