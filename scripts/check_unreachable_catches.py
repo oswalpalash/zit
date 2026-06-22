@@ -21,8 +21,15 @@ SILENT_CAPACITY_CATCH = re.compile(
     r"\.(?:ensureTotalCapacity|ensureUnusedCapacity)\s*\([^;]*?\)\s*catch\s*\{\s*\}",
     re.DOTALL,
 )
+EMPTY_CATCH = re.compile(r"catch\s*\{\s*\}")
 SCAN_ROOTS = ("src", "examples")
 SCAN_FILES = ("build.zig",)
+CRITICAL_EMPTY_CATCH_FILES = {
+    Path("src/event/event.zig"),
+    Path("src/render/render.zig"),
+    Path("src/terminal/terminal.zig"),
+    Path("src/widget/accessibility.zig"),
+}
 
 
 def repo_root() -> Path:
@@ -44,6 +51,7 @@ def source_line_no(text: str, index: int) -> int:
 def run_self_tests() -> None:
     unsafe = "list.ensureTotalCapacity(allocator, 64) catch {};"
     safe = "try list.ensureTotalCapacity(allocator, 64);"
+    empty_catch = "optionalFeature() catch {};"
     multiline_unsafe = """
 list.ensureUnusedCapacity(
     allocator,
@@ -56,6 +64,8 @@ list.ensureUnusedCapacity(
         raise AssertionError("multiline silent capacity catch fixture was not detected")
     if SILENT_CAPACITY_CATCH.search(safe) is not None:
         raise AssertionError("propagated capacity error fixture was incorrectly rejected")
+    if EMPTY_CATCH.search(empty_catch) is None:
+        raise AssertionError("empty catch fixture was not detected")
 
 
 def main() -> int:
@@ -63,15 +73,21 @@ def main() -> int:
     root = repo_root()
     failures: list[tuple[Path, int, str]] = []
     silent_capacity_failures: list[tuple[Path, int, str]] = []
+    critical_empty_catches: list[tuple[Path, int, str]] = []
 
     for path in zig_files(root):
         text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(root)
         for current_line_no, line in enumerate(text.splitlines(), start=1):
             if PATTERN in line:
-                failures.append((path.relative_to(root), current_line_no, line.strip()))
+                failures.append((rel, current_line_no, line.strip()))
         for match in SILENT_CAPACITY_CATCH.finditer(text):
             snippet = " ".join(match.group(0).split())
-            silent_capacity_failures.append((path.relative_to(root), source_line_no(text, match.start()), snippet))
+            silent_capacity_failures.append((rel, source_line_no(text, match.start()), snippet))
+        if rel in CRITICAL_EMPTY_CATCH_FILES:
+            for match in EMPTY_CATCH.finditer(text):
+                snippet = " ".join(match.group(0).split())
+                critical_empty_catches.append((rel, source_line_no(text, match.start()), snippet))
 
     if failures:
         sys.stderr.write("recoverable errors must not be converted to `catch unreachable`:\n")
@@ -82,6 +98,12 @@ def main() -> int:
     if silent_capacity_failures:
         sys.stderr.write("capacity reservation failures must be propagated or handled explicitly:\n")
         for path, line_no, line in silent_capacity_failures:
+            sys.stderr.write(f"  {path}:{line_no}: {line}\n")
+        return 1
+
+    if critical_empty_catches:
+        sys.stderr.write("critical source modules must not silently swallow errors with `catch {}`:\n")
+        for path, line_no, line in critical_empty_catches:
             sys.stderr.write(f"  {path}:{line_no}: {line}\n")
         return 1
 

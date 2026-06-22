@@ -187,6 +187,16 @@ pub const Size = struct {
     height: u16,
 };
 
+pub const OptionalFeatureOperation = enum {
+    kitty_keyboard_enable,
+    kitty_keyboard_disable,
+};
+
+pub const OptionalFeatureFailure = struct {
+    operation: OptionalFeatureOperation,
+    err: anyerror,
+};
+
 fn changedSize(old_width: u16, old_height: u16, new_width: u16, new_height: u16) ?Size {
     if (old_width == new_width and old_height == new_height) return null;
     return .{ .width = new_width, .height = new_height };
@@ -250,6 +260,10 @@ pub const Terminal = struct {
     windows_vt_enabled: bool,
     /// Whether this terminal instance owns one reference to the SIGWINCH handler.
     sigwinch_registered: bool,
+    /// Number of optional terminal feature setup/teardown failures.
+    optional_feature_failure_count: usize = 0,
+    /// Last optional terminal feature setup/teardown failure.
+    last_optional_feature_failure: ?OptionalFeatureFailure = null,
 
     // Cross-platform terminal attribute storage
     const OriginalTermAttrs = union(enum) {
@@ -370,6 +384,27 @@ pub const Terminal = struct {
         }
     }
 
+    pub fn optionalFeatureFailureCount(self: *const Terminal) usize {
+        return self.optional_feature_failure_count;
+    }
+
+    pub fn lastOptionalFeatureFailure(self: *const Terminal) ?OptionalFeatureFailure {
+        return self.last_optional_feature_failure;
+    }
+
+    pub fn resetOptionalFeatureFailures(self: *Terminal) void {
+        self.optional_feature_failure_count = 0;
+        self.last_optional_feature_failure = null;
+    }
+
+    fn recordOptionalFeatureFailure(self: *Terminal, operation: OptionalFeatureOperation, err: anyerror) void {
+        self.optional_feature_failure_count += 1;
+        self.last_optional_feature_failure = .{
+            .operation = operation,
+            .err = err,
+        };
+    }
+
     fn rollbackUnixRawModeSetup(self: *Terminal, original: std.posix.termios) void {
         if (builtin.os.tag == .windows) return;
 
@@ -460,7 +495,7 @@ pub const Terminal = struct {
 
         // Try to enable the Kitty keyboard protocol for better key handling
         if (self.capabilities.kitty_keyboard) {
-            self.enableKittyKeyboardProtocol() catch {};
+            self.enableKittyKeyboardProtocol() catch |err| self.recordOptionalFeatureFailure(.kitty_keyboard_enable, err);
         }
 
         self.is_raw_mode = true;
@@ -473,7 +508,7 @@ pub const Terminal = struct {
 
         // Disable the Kitty keyboard protocol first
         if (self.capabilities.kitty_keyboard) {
-            self.disableKittyKeyboardProtocol() catch {};
+            self.disableKittyKeyboardProtocol() catch |err| self.recordOptionalFeatureFailure(.kitty_keyboard_disable, err);
         }
 
         const is_windows = builtin.os.tag == .windows;
@@ -953,6 +988,40 @@ test "terminal releases SIGWINCH reference without terminal output" {
 
     try std.testing.expect(!term.sigwinch_registered);
     try std.testing.expectEqual(before_count, sigwinchInstallCountForTest());
+}
+
+test "terminal optional feature failures are observable and resettable" {
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = std.Io.File.stdout().handle,
+        .original_termios = .none,
+        .original_stdin_flags = null,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .sigwinch_registered = false,
+    };
+
+    try std.testing.expectEqual(@as(usize, 0), term.optionalFeatureFailureCount());
+    try std.testing.expect(term.lastOptionalFeatureFailure() == null);
+
+    term.recordOptionalFeatureFailure(.kitty_keyboard_enable, error.OptionalFeatureTestFailure);
+    try std.testing.expectEqual(@as(usize, 1), term.optionalFeatureFailureCount());
+    const failure = term.lastOptionalFeatureFailure().?;
+    try std.testing.expectEqual(OptionalFeatureOperation.kitty_keyboard_enable, failure.operation);
+    try std.testing.expectEqual(error.OptionalFeatureTestFailure, failure.err);
+
+    term.resetOptionalFeatureFailures();
+    try std.testing.expectEqual(@as(usize, 0), term.optionalFeatureFailureCount());
+    try std.testing.expect(term.lastOptionalFeatureFailure() == null);
 }
 
 fn ensureWindowsUnicodeSupport() void {

@@ -25,7 +25,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **macOS raw mode**: The driver uses a simplified raw-mode path via `stty` for macOS; avoid mixing external `stty` changes while Zit is active.
 - **POSIX resize signals**: Zit installs a reference-counted SIGWINCH handler while `Terminal` instances are live and restores the prior handler after the last `Terminal.deinit`.
 - **Linux console/dumb**: Unicode and italic are disabled; stick to ASCII, avoid emoji, and use single-line borders.
-- **Kitty/WezTerm**: Kitty keyboard protocol is enabled when available; ensure applications handle extended key codes gracefully.
+- **Kitty/WezTerm**: Kitty keyboard protocol is attempted when available; setup/teardown write failures are non-fatal and can be inspected with `Terminal.optionalFeatureFailureCount()` / `Terminal.lastOptionalFeatureFailure()`. Ensure applications handle extended key codes gracefully.
 - **Nested terminals**: When running inside SSH or a container, rely on the outer terminal’s exports; avoid forcing `TERM` to xterm-256color unless you know the host supports it.
 
 ## Runtime Checks
