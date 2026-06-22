@@ -371,6 +371,10 @@ pub fn build(b: *std.Build) void {
     const owned_alloc_patterns_step = b.step("owned-allocation-patterns", "Check owned allocations are transactional");
     owned_alloc_patterns_step.dependOn(&owned_alloc_patterns_cmd.step);
 
+    const io_event_ownership_docs_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_io_event_ownership_docs.py" });
+    const io_event_ownership_docs_step = b.step("io-event-ownership-docs", "Check I/O event ownership docs avoid stale manager-owned cleanup");
+    io_event_ownership_docs_step.dependOn(&io_event_ownership_docs_cmd.step);
+
     const unreachable_catches_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_unreachable_catches.py" });
     const unreachable_catches_step = b.step("unreachable-catches", "Check recoverable errors are not converted to panics");
     unreachable_catches_step.dependOn(&unreachable_catches_cmd.step);
@@ -423,6 +427,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(mouse_coordinate_contract_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(owned_alloc_patterns_step);
+    quality_step.dependOn(io_event_ownership_docs_step);
     quality_step.dependOn(unreachable_catches_step);
     quality_step.dependOn(example_coverage_step);
     quality_step.dependOn(interactive_alt_screen_step);

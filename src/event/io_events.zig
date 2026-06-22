@@ -88,7 +88,7 @@ pub const FileWatchContext = struct {
     /// Errors: allocation failures when duplicating the path or allocating the context.
     /// Example:
     /// ```
-    /// const watcher = try manager.watchFile("log.txt", null);
+    /// const watcher = try FileWatchContext.init(alloc, "log.txt", &queue, 1, null);
     /// defer watcher.deinit();
     /// ```
     pub fn init(allocator: std.mem.Allocator, path: []const u8, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*FileWatchContext {
@@ -109,7 +109,7 @@ pub const FileWatchContext = struct {
     ///
     /// Parameters:
     /// - `self`: watcher to tear down.
-    /// Safety: Idempotent; safe to call after `stop`.
+    /// Safety: Safe to call after `stop`; consumes and destroys `self`.
     pub fn deinit(self: *FileWatchContext) void {
         self.stop();
         self.allocator.free(self.path);
@@ -295,7 +295,7 @@ pub const NetworkContext = struct {
     /// Errors: allocation failures for the context, address, or buffer.
     /// Example:
     /// ```
-    /// const conn = try manager.connectToServer("127.0.0.1", 8080, null);
+    /// const conn = try NetworkContext.init(alloc, "127.0.0.1", 8080, &queue, 1, null);
     /// defer conn.deinit();
     /// ```
     pub fn init(allocator: std.mem.Allocator, address: []const u8, port: u16, event_queue: *event.EventQueue, event_id: u32, target: ?*event.widget.Widget) !*NetworkContext {
@@ -320,7 +320,7 @@ pub const NetworkContext = struct {
     ///
     /// Parameters:
     /// - `self`: network context to destroy.
-    /// Safety: Idempotent; ensures socket is closed and thread joined.
+    /// Safety: Safe to call after `disconnect`; consumes and destroys `self`.
     pub fn deinit(self: *NetworkContext) void {
         self.disconnect();
         self.allocator.free(self.address);

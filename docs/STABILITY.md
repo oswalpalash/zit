@@ -64,6 +64,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_application_input_binding.py`
 - `python3 scripts/check_example_coverage.py`
 - `python3 scripts/check_interactive_alt_screen.py`
+- `python3 scripts/check_io_event_ownership_docs.py`
 - `python3 scripts/check_mouse_coordinate_contract.py` to require terminal mouse protocol decoders to route raw one-based positions through `MouseEvent.fromTerminalCoordinates` instead of open-coding normalization.
 - `python3 scripts/check_owned_allocation_patterns.py`
 - `python3 scripts/check_terminal_state_cleanup.py`
@@ -80,6 +81,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_application_input_binding.py` requires examples that initialize `Application` and `InputHandler` together to route polling through `Application.bindInput` / `pollInputOnce`.
 - `python3 scripts/check_example_coverage.py` keeps the build target list, interactive PTY smoke manifest, public build-step classification, and repeated visual target manifest in sync.
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
+- `python3 scripts/check_io_event_ownership_docs.py` rejects stale examples that call `deinit()` directly on manager-owned file watchers or network contexts returned by `watchFile` / `connectToServer`.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable, and rejects empty `catch {}` blocks on terminal cleanup paths.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
