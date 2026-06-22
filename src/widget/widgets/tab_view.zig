@@ -548,8 +548,8 @@ pub const TabView = struct {
             return;
         }
 
-        self.active_tab = clamped;
         _ = try self.ensureTabLoaded(clamped);
+        self.active_tab = clamped;
         self.syncVisibility();
         self.tab_bar.setActive(clamped);
 
@@ -807,7 +807,12 @@ pub const TabView = struct {
     fn onTabSelected(index: usize, ctx: ?*anyopaque) void {
         const self = @as(*TabView, @ptrCast(@alignCast(ctx orelse return)));
         self.setActiveTab(index) catch |err| {
-            std.log.err("zit.widget: tab activation failed: {s}", .{@errorName(err)});
+            const builtin = @import("builtin");
+            if (!builtin.is_test) {
+                std.log.err("zit.widget: tab activation failed: {s}", .{@errorName(err)});
+            }
+            self.tab_bar.setActive(self.active_tab);
+            self.widget.markDirty();
         };
     }
 
@@ -919,6 +924,79 @@ test "tab view lazy content layout failure preserves unloaded state" {
     try std.testing.expectError(error.LayoutFailed, tab_view.setActiveTab(0));
     try std.testing.expect(!tab_view.tabs.items[0].loaded);
     try std.testing.expect(tab_view.tabs.items[0].content == null);
+    try std.testing.expect(Lazy.failing.widget.parent == null);
+}
+
+test "tab view activation failure preserves previous tab state" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var eager = try @import("block.zig").Block.init(alloc);
+    defer eager.deinit();
+
+    const Lazy = struct {
+        var failing = FailingLayoutWidget.init();
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return &failing.widget;
+        }
+    };
+
+    try tab_view.addTab("ready", &eager.widget);
+    try tab_view.addLazyTab("broken", Lazy.build, false);
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+
+    const Selection = struct {
+        var calls: usize = 0;
+        fn cb(_: usize) void {
+            calls += 1;
+        }
+    };
+    Selection.calls = 0;
+    tab_view.setOnTabSelect(Selection.cb);
+
+    try std.testing.expectError(error.LayoutFailed, tab_view.setActiveTab(1));
+    try std.testing.expectEqual(@as(usize, 0), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tab_bar.active_tab);
+    try std.testing.expectEqualStrings("ready", tab_view.tabs.items[tab_view.active_tab].title);
+    try std.testing.expect(eager.widget.visible);
+    try std.testing.expect(!tab_view.tabs.items[1].loaded);
+    try std.testing.expect(tab_view.tabs.items[1].content == null);
+    try std.testing.expect(Lazy.failing.widget.parent == null);
+    try std.testing.expectEqual(@as(usize, 0), Selection.calls);
+}
+
+test "tab view tab bar activation failure restores selected header" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var eager = try @import("block.zig").Block.init(alloc);
+    defer eager.deinit();
+
+    const Lazy = struct {
+        var failing = FailingLayoutWidget.init();
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return &failing.widget;
+        }
+    };
+
+    try tab_view.addTab("ready", &eager.widget);
+    try tab_view.addLazyTab("broken", Lazy.build, false);
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    tab_view.tab_bar.widget.focused = true;
+
+    try std.testing.expect(try tab_view.tab_bar.widget.handleEvent(.{
+        .key = input.KeyEvent.init(input.KeyCode.RIGHT, input.KeyModifiers{}),
+    }));
+    try std.testing.expectEqual(@as(usize, 0), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tab_bar.active_tab);
+    try std.testing.expectEqualStrings("ready", tab_view.tabs.items[tab_view.active_tab].title);
+    try std.testing.expect(eager.widget.visible);
+    try std.testing.expect(!tab_view.tabs.items[1].loaded);
+    try std.testing.expect(tab_view.tabs.items[1].content == null);
     try std.testing.expect(Lazy.failing.widget.parent == null);
 }
 
