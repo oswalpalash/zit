@@ -136,8 +136,33 @@ pub const MemorySafety = struct {
 
             if (new_backing_size > check.backing_size) {
                 const success = self.parent_allocator.rawResize(check.ptr[0..check.backing_size], check.alignment, new_backing_size, ret_addr);
-                if (!success) return null;
-                check.backing_size = new_backing_size;
+                if (success) {
+                    check.backing_size = new_backing_size;
+                } else {
+                    const current = check.*;
+                    // Reserve tracking space before the parent may move the allocation.
+                    self.checks.ensureUnusedCapacity(1) catch return null;
+
+                    const new_ptr = self.parent_allocator.rawRemap(current.ptr[0..current.backing_size], current.alignment, new_backing_size, ret_addr) orelse return null;
+                    var moved = current;
+                    moved.ptr = new_ptr;
+                    moved.size = new_len;
+                    moved.backing_size = new_backing_size;
+                    writeCanary(&moved.canary, moved);
+
+                    if (new_ptr == current.ptr) {
+                        if (self.checks.getPtr(current.ptr)) |entry| {
+                            entry.* = moved;
+                        } else {
+                            unreachable;
+                        }
+                    } else {
+                        _ = self.checks.remove(current.ptr);
+                        self.checks.putAssumeCapacityNoClobber(new_ptr, moved);
+                    }
+
+                    return new_ptr;
+                }
             }
 
             check.size = new_len;

@@ -3,6 +3,58 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const MemorySafety = @import("../safety.zig").MemorySafety;
 
+const MovingRemapAllocator = struct {
+    const Self = @This();
+
+    child: Allocator,
+    resize_calls: usize = 0,
+    remap_calls: usize = 0,
+
+    fn allocator(self: *Self) Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return self.child.rawAlloc(len, alignment, ret_addr);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        _ = memory;
+        _ = alignment;
+        _ = new_len;
+        _ = ret_addr;
+
+        self.resize_calls += 1;
+        return false;
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.remap_calls += 1;
+
+        const new_ptr = self.child.rawAlloc(new_len, alignment, ret_addr) orelse return null;
+        const copy_len = @min(memory.len, new_len);
+        @memcpy(new_ptr[0..copy_len], memory[0..copy_len]);
+        self.child.rawFree(memory, alignment, ret_addr);
+        return new_ptr;
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.child.rawFree(memory, alignment, ret_addr);
+    }
+};
+
 test "MemorySafety basic operations" {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -155,6 +207,33 @@ test "MemorySafety remap can grow when backing allocation resizes in place" {
         try safety.checkAllocations();
         safe_allocator.free(ptr);
     }
+}
+
+test "MemorySafety remap tracks parent-relocated allocation" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    var moving = MovingRemapAllocator{ .child = gpa.allocator() };
+    var safety = try MemorySafety.init(moving.allocator());
+    defer safety.deinit();
+
+    const safe_allocator = safety.allocator();
+
+    const ptr = try safe_allocator.alloc(u8, 13);
+    @memset(ptr, 0x5d);
+
+    const remapped = safe_allocator.remap(ptr, 96) orelse return error.UnexpectedRemapFailure;
+    try testing.expect(moving.resize_calls > 0);
+    try testing.expect(moving.remap_calls > 0);
+    try testing.expect(ptr.ptr != remapped.ptr);
+    try testing.expectEqual(@as(usize, 96), remapped.len);
+    try testing.expectEqual(@as(u8, 0x5d), remapped[0]);
+    try testing.expect(!safety.validatePointer(ptr.ptr, 13));
+    try testing.expect(safety.validatePointer(remapped.ptr, 96));
+    try testing.expect(!safety.validatePointer(remapped.ptr, 97));
+    try safety.checkAllocations();
+
+    safe_allocator.free(remapped);
 }
 
 test "MemorySafety forwards untracked remap to parent allocator" {
