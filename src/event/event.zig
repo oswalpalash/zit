@@ -1178,6 +1178,7 @@ pub const DragManager = struct {
     queue: *EventQueue,
     allocator: std.mem.Allocator,
     targets: std.ArrayList(DropTarget) = std.ArrayList(DropTarget).empty,
+    retained_payloads: std.ArrayList(DragPayload) = std.ArrayList(DragPayload).empty,
 
     pub fn init(queue: *EventQueue, allocator: std.mem.Allocator) DragManager {
         return DragManager{
@@ -1189,15 +1190,16 @@ pub const DragManager = struct {
     pub fn deinit(self: *DragManager) void {
         self.targets.deinit(self.allocator);
         self.cleanupPayload();
+        self.cleanupRetainedPayloads();
+        self.retained_payloads.deinit(self.allocator);
     }
 
     pub fn begin(self: *DragManager, source: ?*widget.Widget, x: u16, y: u16, button: u8, payload: DragPayload) !void {
+        self.reapRetainedPayloads();
+        try self.ensureCurrentPayloadReleaseCapacity();
         try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 1);
-        if (self.active) {
-            self.cancel();
-        } else {
-            self.cleanupPayload();
-        }
+        self.releaseCurrentPayloadAssumeCapacity();
+
         self.active = true;
         self.source = source;
         self.payload = payload;
@@ -1222,6 +1224,9 @@ pub const DragManager = struct {
     pub fn end(self: *DragManager, x: u16, y: u16, drop_target: ?*widget.Widget) !void {
         if (!self.active) return;
         try self.queue.queue.ensureUnusedCapacity(self.queue.allocator, 2);
+        if (payloadNeedsCleanup(self.payload)) {
+            try self.retained_payloads.ensureUnusedCapacity(self.allocator, 1);
+        }
         self.last_x = x;
         self.last_y = y;
         const resolved = self.resolveTarget(x, y, drop_target);
@@ -1236,15 +1241,14 @@ pub const DragManager = struct {
             }
         }
 
-        // Queued drag_end/drop events carry this payload by value. Release the
-        // backing storage when the manager is reused, cancelled, or deinitialized.
         self.active = false;
+        self.releaseCurrentPayloadAssumeCapacity();
     }
 
     pub fn cancel(self: *DragManager) void {
         if (!self.active and self.payload.kind == .none) return;
-        self.cleanupPayload();
         self.active = false;
+        self.releaseCurrentPayloadBestEffort();
     }
 
     fn eventData(self: *const DragManager, x: u16, y: u16, accepted: bool) DragEventData {
@@ -1262,6 +1266,77 @@ pub const DragManager = struct {
 
     fn cleanupPayload(self: *DragManager) void {
         self.payload.deinit();
+    }
+
+    fn cleanupRetainedPayloads(self: *DragManager) void {
+        for (self.retained_payloads.items) |*payload| {
+            payload.deinit();
+        }
+        self.retained_payloads.clearRetainingCapacity();
+    }
+
+    fn ensureCurrentPayloadReleaseCapacity(self: *DragManager) !void {
+        if (payloadNeedsCleanup(self.payload) and self.payloadReferencedByPendingEvents(self.payload)) {
+            try self.retained_payloads.ensureUnusedCapacity(self.allocator, 1);
+        }
+    }
+
+    fn releaseCurrentPayloadAssumeCapacity(self: *DragManager) void {
+        if (!payloadNeedsCleanup(self.payload)) {
+            self.payload = .{};
+            return;
+        }
+
+        if (self.payloadReferencedByPendingEvents(self.payload)) {
+            self.retained_payloads.appendAssumeCapacity(self.payload);
+            self.payload = .{};
+            return;
+        }
+
+        self.cleanupPayload();
+    }
+
+    fn releaseCurrentPayloadBestEffort(self: *DragManager) void {
+        if (!payloadNeedsCleanup(self.payload)) {
+            self.payload = .{};
+            return;
+        }
+
+        if (self.payloadReferencedByPendingEvents(self.payload)) {
+            self.retained_payloads.append(self.allocator, self.payload) catch {
+                return;
+            };
+            self.payload = .{};
+            return;
+        }
+
+        self.cleanupPayload();
+    }
+
+    fn reapRetainedPayloads(self: *DragManager) void {
+        var i: usize = 0;
+        while (i < self.retained_payloads.items.len) {
+            if (self.payloadReferencedByPendingEvents(self.retained_payloads.items[i])) {
+                i += 1;
+                continue;
+            }
+
+            self.retained_payloads.items[i].deinit();
+            _ = self.retained_payloads.orderedRemove(i);
+        }
+    }
+
+    fn payloadReferencedByPendingEvents(self: *DragManager, payload: DragPayload) bool {
+        if (!payloadNeedsCleanup(payload)) return false;
+        if (self.queue.head >= self.queue.queue.items.len) return false;
+
+        for (self.queue.queue.items[self.queue.head..]) |event_item| {
+            if (dragPayloadFromEvent(event_item)) |queued_payload| {
+                if (samePayloadStorage(payload, queued_payload)) return true;
+            }
+        }
+
+        return false;
     }
 
     /// Register a widget as a drop target with accept + optional on-drop callbacks.
@@ -1341,6 +1416,37 @@ pub const DragManager = struct {
         return x_u32 >= rect_x and y_u32 >= rect_y and x_u32 < rect_right and y_u32 < rect_bottom;
     }
 };
+
+fn payloadNeedsCleanup(payload: DragPayload) bool {
+    return switch (payload.kind) {
+        .text => payload.storage.text.allocator != null,
+        .custom => payload.storage.custom.ptr != null and payload.storage.custom.destructor != null,
+        else => false,
+    };
+}
+
+fn dragPayloadFromEvent(event_item: Event) ?DragPayload {
+    return switch (event_item.type) {
+        .drag_start => event_item.data.drag_start.payload,
+        .drag_update => event_item.data.drag_update.payload,
+        .drag_end => event_item.data.drag_end.payload,
+        .drop => event_item.data.drop.payload,
+        else => null,
+    };
+}
+
+fn samePayloadStorage(a: DragPayload, b: DragPayload) bool {
+    if (a.kind != b.kind) return false;
+
+    return switch (a.kind) {
+        .none => true,
+        .widget => a.storage.widget == b.storage.widget,
+        .text => a.storage.text.bytes.ptr == b.storage.text.bytes.ptr and
+            a.storage.text.bytes.len == b.storage.text.bytes.len,
+        .custom => a.storage.custom.ptr == b.storage.custom.ptr and
+            a.storage.custom.destructor == b.storage.custom.destructor,
+    };
+}
 
 /// Helper utilities for painting drop target feedback.
 pub const DropVisuals = struct {
@@ -1828,12 +1934,13 @@ test "drag manager keeps ended payload alive for queued drop events" {
     try std.testing.expectEqual(@as(usize, 3), queue.queue.items.len);
     try std.testing.expectEqual(EventType.drop, queue.queue.items[2].type);
     try std.testing.expectEqual(@as(?*anyopaque, @ptrCast(&cleanup_count)), queue.queue.items[2].data.drop.payload.storage.custom.ptr);
+    try std.testing.expectEqual(@as(usize, 1), mgr.retained_payloads.items.len);
 
     mgr.deinit();
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
 }
 
-test "drag manager releases ended payload before next drag" {
+test "drag manager retains ended payload until queued events drain" {
     const alloc = std.testing.allocator;
     var queue = EventQueue.init(alloc);
     defer queue.deinit();
@@ -1852,11 +1959,46 @@ test "drag manager releases ended payload before next drag" {
     try mgr.begin(null, 1, 2, 1, DragPayload.fromOpaque(@ptrCast(&cleanup_count), Hooks.cleanup, "counter"));
     try mgr.end(3, 4, null);
     try std.testing.expectEqual(@as(usize, 0), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 1), mgr.retained_payloads.items.len);
 
     try mgr.begin(null, 5, 6, 1, .{});
+    try std.testing.expectEqual(@as(usize, 0), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 1), mgr.retained_payloads.items.len);
+
+    try queue.processEvents();
+
+    try mgr.begin(null, 7, 8, 1, .{});
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 0), mgr.retained_payloads.items.len);
     mgr.cancel();
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+}
+
+test "drag manager retains cancelled payload until queued events drain" {
+    const alloc = std.testing.allocator;
+    var queue = EventQueue.init(alloc);
+    defer queue.deinit();
+
+    var cleanup_count: usize = 0;
+    const Hooks = struct {
+        fn cleanup(data: *anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(data)));
+            counter.* += 1;
+        }
+    };
+
+    var mgr = DragManager.init(&queue, alloc);
+    defer mgr.deinit();
+
+    try mgr.begin(null, 1, 2, 1, DragPayload.fromOpaque(@ptrCast(&cleanup_count), Hooks.cleanup, "counter"));
+    mgr.cancel();
+    try std.testing.expectEqual(@as(usize, 0), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 1), mgr.retained_payloads.items.len);
+
+    try queue.processEvents();
+    try mgr.begin(null, 3, 4, 1, .{});
+    try std.testing.expectEqual(@as(usize, 1), cleanup_count);
+    try std.testing.expectEqual(@as(usize, 0), mgr.retained_payloads.items.len);
 }
 
 test "drag manager hit testing accepts edge coordinates above u16 rect end" {
