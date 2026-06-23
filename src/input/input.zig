@@ -91,6 +91,8 @@ pub const KeyCode = struct {
     pub const F10 = 1020;
     pub const F11 = 1021;
     pub const F12 = 1022;
+    pub const BRACKETED_PASTE_START = 1023;
+    pub const BRACKETED_PASTE_END = 1024;
 };
 
 /// Represents a keyboard event
@@ -150,7 +152,9 @@ pub const KeyEvent = struct {
             self.key == KeyCode.F9 or
             self.key == KeyCode.F10 or
             self.key == KeyCode.F11 or
-            self.key == KeyCode.F12)
+            self.key == KeyCode.F12 or
+            self.key == KeyCode.BRACKETED_PASTE_START or
+            self.key == KeyCode.BRACKETED_PASTE_END)
         {
             return false;
         }
@@ -203,6 +207,8 @@ pub const KeyEvent = struct {
             KeyCode.F10 => "F10",
             KeyCode.F11 => "F11",
             KeyCode.F12 => "F12",
+            KeyCode.BRACKETED_PASTE_START => "BracketedPasteStart",
+            KeyCode.BRACKETED_PASTE_END => "BracketedPasteEnd",
             else => "Unknown",
         };
         return try allocator.dupe(u8, name);
@@ -1746,6 +1752,8 @@ fn decodeCSIKey(final_char: u8, params: []const u16) ?KeyEvent {
                 21 => KeyCode.F10,
                 23 => KeyCode.F11,
                 24 => KeyCode.F12,
+                200 => KeyCode.BRACKETED_PASTE_START,
+                201 => KeyCode.BRACKETED_PASTE_END,
                 else => null,
             };
 
@@ -1980,6 +1988,22 @@ test "parse CSI shift tab" {
     try std.testing.expect(key_event.modifiers.shift);
 }
 
+test "parse bracketed paste delimiters as special keys" {
+    const start = try decodeEventFromBytes("\x1b[200~");
+    try std.testing.expect(start != null);
+    try std.testing.expectEqual(@as(EventType, .key), std.meta.activeTag(start.?));
+    try std.testing.expectEqual(@as(u21, KeyCode.BRACKETED_PASTE_START), start.?.key.key);
+    try std.testing.expect(start.?.key.isSpecialKey());
+    try std.testing.expect(!start.?.key.isTextInput());
+
+    const end = try decodeEventFromBytes("\x1b[201~");
+    try std.testing.expect(end != null);
+    try std.testing.expectEqual(@as(EventType, .key), std.meta.activeTag(end.?));
+    try std.testing.expectEqual(@as(u21, KeyCode.BRACKETED_PASTE_END), end.?.key.key);
+    try std.testing.expect(end.?.key.isSpecialKey());
+    try std.testing.expect(!end.?.key.isTextInput());
+}
+
 test "oversized CSI numeric params are unknown instead of trapping" {
     const parsed = try decodeEventFromBytes("\x1b[999999999999999999999999999999999999A");
     try std.testing.expect(parsed != null);
@@ -2179,6 +2203,11 @@ test "key names are allocator-owned for special keys" {
     const rendered = try chord.toString(alloc);
     defer alloc.free(rendered);
     try std.testing.expectEqualStrings("Ctrl+Up → F1", rendered);
+
+    const paste_start = KeyEvent.init(KeyCode.BRACKETED_PASTE_START, .{});
+    const paste_start_name = try paste_start.getName(alloc);
+    defer alloc.free(paste_start_name);
+    try std.testing.expectEqualStrings("BracketedPasteStart", paste_start_name);
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {

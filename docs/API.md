@@ -4,7 +4,7 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 
 ## Core Modules
 - `terminal` – `Terminal.init(allocator)`, `enableRawMode/disableRawMode`, `moveCursor`, `clear`, `enterAlternateScreen`, `beginSynchronizedOutput/endSynchronizedOutput`, and `reportCleanupError(action, err)` for deferred cleanup paths that cannot return errors.
-- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, decoded mouse events in zero-based render coordinates, plus key codes (`KeyCode.*`) and modifiers.
+- `input` – `InputHandler.init(allocator, &terminal)`, `enableMouse/disableMouse`, `pollEvent(timeout_ms)`, resize detection via SIGWINCH plus periodic geometry polling, decoded mouse events in zero-based render coordinates, bracketed paste delimiters as `KeyCode.BRACKETED_PASTE_START` / `KeyCode.BRACKETED_PASTE_END`, plus key codes (`KeyCode.*`) and modifiers.
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
 - `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, `bindInput(&input)`, and `bindResize(&renderer, &reflow)` for automatic terminal resize handling.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement` adapters let widgets participate in container layouts.

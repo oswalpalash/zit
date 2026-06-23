@@ -1249,6 +1249,20 @@ test "input field inserts and deletes UTF-8 text input atomically" {
     try std.testing.expectEqual(@as(usize, 0), field.cursor);
 }
 
+test "input field ignores bracketed paste delimiter keys" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.widget.focused = true;
+
+    try field.setText("safe");
+
+    try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expectEqualStrings("safe", field.getText());
+    try std.testing.expectEqual(@as(usize, 4), field.cursor);
+}
+
 test "input field capacity does not split UTF-8 sequences" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 3);

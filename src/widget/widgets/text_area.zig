@@ -1612,6 +1612,20 @@ test "text area inserts moves and deletes UTF-8 text input atomically" {
     try std.testing.expectEqual(@as(usize, 1), area.cursor);
 }
 
+test "text area ignores bracketed paste delimiter keys" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 32);
+    defer area.deinit();
+    area.widget.focused = true;
+
+    try area.setText("safe");
+
+    try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expectEqualStrings("safe", area.getText());
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+}
+
 test "text area max bytes does not split UTF-8 input" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 3);
