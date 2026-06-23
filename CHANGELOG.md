@@ -64,6 +64,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget owner-cast checker (`scripts/check_widget_owner_casts.py`, `zig build widget-owner-casts`) rejects unsafe vtable callback patterns that raw-cast embedded `Widget` pointers to concrete widget types.
 
 ### Fixed
+- Preferred system clipboard copy now pipes text into host clipboard commands (`pbcopy`, `clip`, `wl-copy`, `xclip`, or `xsel`) instead of silently falling back to memory-only state, and system paste now ignores failed helper commands.
 - `InputHandler` now decodes bracketed paste delimiters (`ESC[200~` / `ESC[201~`) into explicit special key codes, and editable widgets consume those delimiters so single-line paste newlines do not accidentally submit the field.
 - `InputField` and `TextArea` now preserve the last validation result when a later validation run fails during allocation.
 - `UndoRedoStack` now cleans up duplicated snapshots when capture fails and preserves undo/redo history if allocator pressure prevents moving entries between stacks.

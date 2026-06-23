@@ -733,6 +733,7 @@ pub const Clipboard = struct {
         const os_tag = builtin.os.tag;
         const commands = switch (os_tag) {
             .macos => &[_][]const []const u8{&[_][]const u8{"pbcopy"}},
+            .windows => &[_][]const []const u8{&[_][]const u8{"clip"}},
             else => &[_][]const []const u8{
                 &[_][]const u8{"wl-copy"},
                 &[_][]const u8{ "xclip", "-selection", "clipboard" },
@@ -751,6 +752,9 @@ pub const Clipboard = struct {
         const os_tag = builtin.os.tag;
         const commands = switch (os_tag) {
             .macos => &[_][]const []const u8{&[_][]const u8{"pbpaste"}},
+            .windows => &[_][]const []const u8{
+                &[_][]const u8{ "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw" },
+            },
             else => &[_][]const []const u8{
                 &[_][]const u8{ "wl-paste", "-n" },
                 &[_][]const u8{ "xclip", "-selection", "clipboard", "-o" },
@@ -767,10 +771,31 @@ pub const Clipboard = struct {
     }
 
     fn pipeToCommand(self: *Clipboard, argv: []const []const u8, data: []const u8) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        return self.pipeToCommandWithIo(io, argv, data);
+    }
+
+    fn pipeToCommandWithIo(self: *Clipboard, io: std.Io, argv: []const []const u8, data: []const u8) bool {
         _ = self;
-        _ = argv;
-        _ = data;
-        return false;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .pipe,
+            .stdout = .ignore,
+            .stderr = .ignore,
+            .create_no_window = true,
+        }) catch return false;
+        defer child.kill(io);
+
+        const stdin = child.stdin orelse return false;
+        std.Io.File.writeStreamingAll(stdin, io, data) catch return false;
+        stdin.close(io);
+        child.stdin = null;
+
+        const term = child.wait(io) catch return false;
+        return switch (term) {
+            .exited => |code| code == 0,
+            else => false,
+        };
     }
 
     fn readFromCommand(self: *Clipboard, argv: []const []const u8) ![]u8 {
@@ -781,9 +806,32 @@ pub const Clipboard = struct {
             .stderr_limit = .limited(0),
         });
         self.allocator.free(result.stderr);
+        errdefer self.allocator.free(result.stdout);
+        switch (result.term) {
+            .exited => |code| if (code != 0) return error.CommandFailed,
+            else => return error.CommandFailed,
+        }
         return result.stdout;
     }
 };
+
+test "clipboard pipe to command reports spawn failure" {
+    var clipboard = Clipboard.init(std.testing.allocator);
+    defer clipboard.deinit();
+
+    const missing = &[_][]const u8{"zit-missing-clipboard-command-for-test"};
+    try std.testing.expect(!clipboard.pipeToCommandWithIo(std.testing.io, missing, "ignored"));
+}
+
+test "clipboard pipe to command writes stdin on POSIX" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var clipboard = Clipboard.init(std.testing.allocator);
+    defer clipboard.deinit();
+
+    const sink = &[_][]const u8{ "sh", "-c", "cat >/dev/null" };
+    try std.testing.expect(clipboard.pipeToCommandWithIo(std.testing.io, sink, "copied bytes"));
+}
 
 /// Track multiple cursors using a lightweight value object.
 pub const MultiCursor = struct {
