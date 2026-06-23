@@ -61,6 +61,13 @@ REQUIRED_STABILITY_GATES = REQUIRED_PR_GATES + (
 )
 
 REQUIRED_RELEASE_VERIFY_GATES = (
+    "def resolve_zig(configured: str | None) -> str:",
+    "zig = resolve_zig(args.zig)",
+    'env["ZIG"] = zig',
+    '"quality", (zig, "build", "quality")',
+    '"test", (zig, "build", "test")',
+    '"linux cross smoke", (zig, "build", "smoke", "-Dtarget=x86_64-linux")',
+    '"windows cross smoke", (zig, "build", "smoke", "-Dtarget=x86_64-windows")',
     '"contribution gates", ("python3", "scripts/check_contribution_gates.py")',
     '"docs commands", ("python3", "scripts/check_docs_commands.py")',
     '"docs links", ("python3", "scripts/check_docs_links.py")',

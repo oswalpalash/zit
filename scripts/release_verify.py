@@ -58,6 +58,18 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def resolve_zig(configured: str | None) -> str:
+    requested = configured or os.environ.get("ZIG")
+    if requested:
+        resolved = shutil.which(requested)
+        candidate = resolved or requested
+    else:
+        candidate = shutil.which("zig")
+    if not candidate:
+        raise RuntimeError("zig executable not found; install Zig 0.16.0 or set ZIG=/absolute/path/to/zig")
+    return candidate
+
+
 def run(root: Path, command: Command, env: dict[str, str]) -> None:
     print(f"==> {command.label}", flush=True)
     start = time.monotonic()
@@ -76,6 +88,8 @@ def run(root: Path, command: Command, env: dict[str, str]) -> None:
         output = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", errors="replace")
         sys.stderr.write(output[-6000:])
         raise RuntimeError(f"{command.label} timed out after {command.timeout}s")
+    except OSError as err:
+        raise RuntimeError(f"{command.label} could not start `{command.argv[0]}`: {err}") from err
 
     elapsed = time.monotonic() - start
     if proc.stdout:
@@ -87,17 +101,17 @@ def run(root: Path, command: Command, env: dict[str, str]) -> None:
     print(f"<== {command.label} ok elapsed={elapsed:.1f}s", flush=True)
 
 
-def commands(args: argparse.Namespace, docs_dir: Path) -> list[Command]:
+def commands(args: argparse.Namespace, docs_dir: Path, zig: str) -> list[Command]:
     out: list[Command] = [
-        Command("format", ("zig", "fmt", "--check", "src/", "examples/", "build.zig"), 120),
+        Command("format", (zig, "fmt", "--check", "src/", "examples/", "build.zig"), 120),
         Command("python script compile", ("python3", "-m", "py_compile", *SCRIPT_COMPILE_TARGETS), 120),
-        Command("quality", ("zig", "build", "quality"), 300),
-        Command("smoke", ("zig", "build", "smoke"), 300),
-        Command("test", ("zig", "build", "test"), 300),
-        Command("bench", ("zig", "build", "bench"), 300),
-        Command("docs", ("zig", "build-lib", "src/main.zig", f"-femit-docs={docs_dir}", "-fno-emit-bin"), 300),
-        Command("linux cross smoke", ("zig", "build", "smoke", "-Dtarget=x86_64-linux"), 300),
-        Command("windows cross smoke", ("zig", "build", "smoke", "-Dtarget=x86_64-windows"), 300),
+        Command("quality", (zig, "build", "quality"), 300),
+        Command("smoke", (zig, "build", "smoke"), 300),
+        Command("test", (zig, "build", "test"), 300),
+        Command("bench", (zig, "build", "bench"), 300),
+        Command("docs", (zig, "build-lib", "src/main.zig", f"-femit-docs={docs_dir}", "-fno-emit-bin"), 300),
+        Command("linux cross smoke", (zig, "build", "smoke", "-Dtarget=x86_64-linux"), 300),
+        Command("windows cross smoke", (zig, "build", "smoke", "-Dtarget=x86_64-windows"), 300),
         Command("public build steps", ("python3", "scripts/check_build_steps.py", "--skip", "release-check", "--timeout", str(args.step_timeout)), max(args.step_timeout * 35, 300)),
         Command("debug allocator cleanup", ("python3", "scripts/check_debug_allocator_cleanup.py"), 120),
         Command("docs commands", ("python3", "scripts/check_docs_commands.py"), 120),
@@ -153,6 +167,7 @@ def main() -> int:
     parser.add_argument("--skip-visual", action="store_true", help="skip repeated visual captures")
     parser.add_argument("--visual-count", type=int, default=4, help="captures per visual target")
     parser.add_argument("--step-timeout", type=int, default=120, help="seconds per public build step")
+    parser.add_argument("--zig", default=None, help="Zig executable to use; defaults to $ZIG or zig on PATH")
     args = parser.parse_args()
 
     if args.visual_count < 2:
@@ -168,7 +183,10 @@ def main() -> int:
     env.setdefault("TERM", "xterm-256color")
     env.setdefault("COLORTERM", "truecolor")
 
-    for command in commands(args, docs_dir):
+    zig = resolve_zig(args.zig)
+    env["ZIG"] = zig
+
+    for command in commands(args, docs_dir, zig):
         run(root, command, env)
 
     verify_artifacts(root, docs_dir, args.skip_visual)

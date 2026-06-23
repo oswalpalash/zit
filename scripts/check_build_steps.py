@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -51,15 +52,30 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def discover_steps(root: Path) -> list[str]:
-    proc = subprocess.run(
-        ["zig", "build", "--help"],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
-    )
+def resolve_zig(configured: str | None) -> str:
+    requested = configured or os.environ.get("ZIG")
+    if requested:
+        resolved = shutil.which(requested)
+        candidate = resolved or requested
+    else:
+        candidate = shutil.which("zig")
+    if not candidate:
+        raise RuntimeError("zig executable not found; install Zig 0.16.0 or set ZIG=/absolute/path/to/zig")
+    return candidate
+
+
+def discover_steps(root: Path, zig: str) -> list[str]:
+    try:
+        proc = subprocess.run(
+            [zig, "build", "--help"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except OSError as err:
+        raise RuntimeError(f"`{zig} build --help` could not start: {err}") from err
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout)
         raise RuntimeError("`zig build --help` failed")
@@ -87,11 +103,11 @@ def tail(text: str, max_chars: int = 4000) -> str:
     return text[-max_chars:]
 
 
-def run_step(root: Path, step: str, timeout: int, env: dict[str, str]) -> tuple[bool, str, float]:
+def run_step(root: Path, zig: str, step: str, timeout: int, env: dict[str, str]) -> tuple[bool, str, float]:
     start = time.monotonic()
     try:
         proc = subprocess.run(
-            ["zig", "build", step],
+            [zig, "build", step],
             cwd=root,
             env=env,
             stdout=subprocess.PIPE,
@@ -100,6 +116,8 @@ def run_step(root: Path, step: str, timeout: int, env: dict[str, str]) -> tuple[
             timeout=timeout,
             check=False,
         )
+    except OSError as err:
+        return False, f"`{zig} build {step}` could not start: {err}", time.monotonic() - start
     except subprocess.TimeoutExpired as exc:
         output = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", errors="replace")
         return False, f"timeout after {timeout}s\n{tail(output)}", time.monotonic() - start
@@ -117,10 +135,17 @@ def main() -> int:
     parser.add_argument("--skip-interactive", action="store_true", help="skip TUI run steps that require reliable PTY/non-TTY behavior")
     parser.add_argument("--only", action="append", default=[], help="step to run; may be repeated")
     parser.add_argument("--quiet", action="store_true", help="only print failures and final status")
+    parser.add_argument("--zig", default=None, help="Zig executable to use; defaults to $ZIG or zig on PATH")
     args = parser.parse_args()
 
     root = repo_root()
-    discovered = discover_steps(root)
+    try:
+        zig = resolve_zig(args.zig)
+        discovered = discover_steps(root, zig)
+    except RuntimeError as err:
+        sys.stderr.write(f"error: {err}\n")
+        return 2
+
     selected = args.only or discovered
     skip = DEFAULT_SKIP | set(args.skip)
     if args.skip_interactive:
@@ -140,7 +165,7 @@ def main() -> int:
     for step in steps:
         if not args.quiet:
             print(f"==> zig build {step}", flush=True)
-        ok, output, elapsed = run_step(root, step, args.timeout, env)
+        ok, output, elapsed = run_step(root, zig, step, args.timeout, env)
         if ok:
             if not args.quiet:
                 lines = output.strip().splitlines()
