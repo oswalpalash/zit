@@ -73,6 +73,8 @@ pub const InputField = struct {
     clipboard: *input.Clipboard,
     /// Whether the clipboard is owned by this widget
     owns_clipboard: bool = true,
+    /// Whether bracketed paste delimiters indicate pasted bytes are in flight.
+    bracketed_paste_active: bool = false,
 
     /// Virtual method table for InputField
     pub const vtable = base.Widget.VTable{
@@ -761,6 +763,14 @@ pub const InputField = struct {
         // Only handle keyboard events when focused
         if (event == .key and self.widget.focused) {
             const key_event = event.key;
+            if (key_event.key == input.KeyCode.BRACKETED_PASTE_START) {
+                self.bracketed_paste_active = true;
+                return true;
+            }
+            if (key_event.key == input.KeyCode.BRACKETED_PASTE_END) {
+                self.bracketed_paste_active = false;
+                return true;
+            }
             const profiles = [_]input.KeybindingProfile{
                 input.KeybindingProfile.commonEditing(),
                 input.KeybindingProfile.emacs(),
@@ -778,6 +788,7 @@ pub const InputField = struct {
 
             switch (key_event.key) {
                 input.KeyCode.ENTER => {
+                    if (self.bracketed_paste_active) return true;
                     if (self.on_submit) |callback| {
                         callback(self.currentText());
                     }
@@ -1249,7 +1260,13 @@ test "input field inserts and deletes UTF-8 text input atomically" {
     try std.testing.expectEqual(@as(usize, 0), field.cursor);
 }
 
-test "input field ignores bracketed paste delimiter keys" {
+var test_input_field_submit_calls: usize = 0;
+
+fn recordInputFieldSubmit(_: []const u8) void {
+    test_input_field_submit_calls += 1;
+}
+
+test "input field consumes bracketed paste delimiter keys" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 16);
     defer field.deinit();
@@ -1257,10 +1274,32 @@ test "input field ignores bracketed paste delimiter keys" {
 
     try field.setText("safe");
 
-    try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
-    try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(field.bracketed_paste_active);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expect(!field.bracketed_paste_active);
     try std.testing.expectEqualStrings("safe", field.getText());
     try std.testing.expectEqual(@as(usize, 4), field.cursor);
+}
+
+test "input field does not submit newline inside bracketed paste" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.widget.focused = true;
+    field.setOnSubmit(recordInputFieldSubmit);
+    test_input_field_submit_calls = 0;
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), test_input_field_submit_calls);
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), test_input_field_submit_calls);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
+    try std.testing.expectEqual(@as(usize, 2), test_input_field_submit_calls);
 }
 
 test "input field capacity does not split UTF-8 sequences" {

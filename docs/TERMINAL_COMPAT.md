@@ -24,7 +24,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **tmux/screen**: Ensure `TERM` inside is `tmux-256color`/`screen-256color` and enable `set -g default-terminal` accordingly; pass-through truecolor with `terminal-overrides` (`Tc`). Sync output (DEC 2026) is usually safe.
 - **macOS raw mode**: The driver uses a simplified raw-mode path via `stty` for macOS; avoid mixing external `stty` changes while Zit is active.
 - **POSIX resize signals**: Zit installs a reference-counted SIGWINCH handler while `Terminal` instances are live and restores the prior handler after the last `Terminal.deinit`.
-- **Bracketed paste**: When enabled, `InputHandler` decodes `ESC[200~` and `ESC[201~` into `KeyCode.BRACKETED_PASTE_START` / `KeyCode.BRACKETED_PASTE_END`; pasted text bytes continue through normal UTF-8 key decoding.
+- **Bracketed paste**: When enabled, `InputHandler` decodes `ESC[200~` and `ESC[201~` into `KeyCode.BRACKETED_PASTE_START` / `KeyCode.BRACKETED_PASTE_END`; pasted text bytes continue through normal UTF-8 key decoding. `InputField` and `TextArea` consume the delimiters so single-line paste newlines do not accidentally submit the field.
 - **Linux console/dumb**: Unicode and italic are disabled; stick to ASCII, avoid emoji, and use single-line borders.
 - **Kitty/WezTerm**: Kitty keyboard protocol is attempted when available; setup/teardown write failures are non-fatal and can be inspected with `Terminal.optionalFeatureFailureCount()` / `Terminal.lastOptionalFeatureFailure()`. Ensure applications handle extended key codes gracefully.
 - **Nested terminals**: When running inside SSH or a container, rely on the outer terminal’s exports; avoid forcing `TERM` to xterm-256color unless you know the host supports it.

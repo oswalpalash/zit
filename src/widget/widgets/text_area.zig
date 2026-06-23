@@ -50,6 +50,7 @@ pub const TextArea = struct {
     clipboard_storage: input.Clipboard,
     clipboard: *input.Clipboard,
     owns_clipboard: bool = true,
+    bracketed_paste_active: bool = false,
     allocator: std.mem.Allocator,
 
     pub const vtable = base.Widget.VTable{
@@ -1110,6 +1111,14 @@ pub const TextArea = struct {
         switch (event) {
             .key => |key_event| {
                 if (!self.widget.focused) return false;
+                if (key_event.key == input.KeyCode.BRACKETED_PASTE_START) {
+                    self.bracketed_paste_active = true;
+                    return true;
+                }
+                if (key_event.key == input.KeyCode.BRACKETED_PASTE_END) {
+                    self.bracketed_paste_active = false;
+                    return true;
+                }
                 const profiles = [_]input.KeybindingProfile{
                     input.KeybindingProfile.commonEditing(),
                     input.KeybindingProfile.emacs(),
@@ -1612,7 +1621,7 @@ test "text area inserts moves and deletes UTF-8 text input atomically" {
     try std.testing.expectEqual(@as(usize, 1), area.cursor);
 }
 
-test "text area ignores bracketed paste delimiter keys" {
+test "text area consumes bracketed paste delimiter keys" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 32);
     defer area.deinit();
@@ -1620,10 +1629,28 @@ test "text area ignores bracketed paste delimiter keys" {
 
     try area.setText("safe");
 
-    try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
-    try std.testing.expect(!try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(area.bracketed_paste_active);
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+    try std.testing.expect(!area.bracketed_paste_active);
     try std.testing.expectEqualStrings("safe", area.getText());
     try std.testing.expectEqual(@as(usize, 4), area.cursor);
+}
+
+test "text area inserts newline inside bracketed paste" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 32);
+    defer area.deinit();
+    area.widget.focused = true;
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init('a', .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init('b', .{}) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_END, .{}) }));
+
+    try std.testing.expectEqualStrings("a\nb", area.getText());
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
 }
 
 test "text area max bytes does not split UTF-8 input" {
