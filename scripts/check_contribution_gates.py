@@ -86,6 +86,12 @@ REQUIRED_RELEASE_VERIFY_GATES = (
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
 )
 
+REQUIRED_BUILD_GATES = (
+    'const ci_script_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_ci_script_coverage.py" });',
+    'const ci_script_coverage_step = b.step("ci-script-coverage", "Check CI compiles release verification scripts");',
+    "quality_step.dependOn(ci_script_coverage_step);",
+)
+
 REQUIRED_CONTRIBUTING_GATES = (
     "zig fmt --check src/ examples/ build.zig",
     "zig build quality",
@@ -169,6 +175,7 @@ def main() -> int:
         (root / "CONTRIBUTING.md", REQUIRED_CONTRIBUTING_GATES),
         (root / "docs" / "STABILITY.md", REQUIRED_STABILITY_GATES),
         (root / "scripts" / "release_verify.py", REQUIRED_RELEASE_VERIFY_GATES),
+        (root / "build.zig", REQUIRED_BUILD_GATES),
     )
 
     failed = False

@@ -399,6 +399,10 @@ pub fn build(b: *std.Build) void {
     const contribution_gates_step = b.step("contribution-gates", "Check contribution docs and CI release-gate metadata");
     contribution_gates_step.dependOn(&contribution_gates_cmd.step);
 
+    const ci_script_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_ci_script_coverage.py" });
+    const ci_script_coverage_step = b.step("ci-script-coverage", "Check CI compiles release verification scripts");
+    ci_script_coverage_step.dependOn(&ci_script_coverage_cmd.step);
+
     const resize_smoke_cmd = b.addSystemCommand(&.{ "python3", "scripts/resize_smoke.py", "--no-build" });
     resize_smoke_cmd.step.dependOn(b.getInstallStep());
     const resize_smoke_step = b.step("resize-smoke", "Run PTY resize smoke against input handling");
@@ -434,4 +438,5 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(terminal_state_cleanup_step);
     quality_step.dependOn(memory_cleanup_step);
     quality_step.dependOn(contribution_gates_step);
+    quality_step.dependOn(ci_script_coverage_step);
 }
