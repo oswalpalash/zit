@@ -59,6 +59,7 @@ pub const TextArea = struct {
         .layout = layoutFn,
         .get_preferred_size = getPreferredSizeFn,
         .can_focus = canFocusFn,
+        .on_state_change = stateChangeFn,
     };
 
     pub fn init(allocator: std.mem.Allocator, max_bytes: usize) !*TextArea {
@@ -249,6 +250,11 @@ pub const TextArea = struct {
 
     pub fn preferSystemClipboard(self: *TextArea, enable: bool) void {
         self.clipboard.preferSystem(enable);
+    }
+
+    /// Cancel any in-flight bracketed paste sequence tracked by this editor.
+    pub fn cancelBracketedPaste(self: *TextArea) void {
+        self.bracketed_paste_active = false;
     }
 
     pub fn undo(self: *TextArea) bool {
@@ -1200,6 +1206,14 @@ pub const TextArea = struct {
         const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
+
+    fn stateChangeFn(widget_ptr: *anyopaque) void {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *TextArea = @fieldParentPtr("widget", widget_ref);
+        if (!self.widget.focused or !self.widget.visible or !self.widget.enabled) {
+            self.cancelBracketedPaste();
+        }
+    }
 };
 
 test "text area inserts newlines and supports undo" {
@@ -1651,6 +1665,19 @@ test "text area inserts newline inside bracketed paste" {
 
     try std.testing.expectEqualStrings("a\nb", area.getText());
     try std.testing.expectEqual(@as(usize, 3), area.cursor);
+}
+
+test "text area cancels bracketed paste when focus is lost" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 32);
+    defer area.deinit();
+
+    area.widget.setFocus(true);
+    try std.testing.expect(try area.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(area.bracketed_paste_active);
+
+    area.widget.setFocus(false);
+    try std.testing.expect(!area.bracketed_paste_active);
 }
 
 test "text area max bytes does not split UTF-8 input" {

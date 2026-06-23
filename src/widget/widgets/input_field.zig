@@ -83,6 +83,7 @@ pub const InputField = struct {
         .layout = layoutFn,
         .get_preferred_size = getPreferredSizeFn,
         .can_focus = canFocusFn,
+        .on_state_change = stateChangeFn,
     };
 
     /// Initialize a new input field
@@ -336,6 +337,11 @@ pub const InputField = struct {
     /// Toggle integration with the system clipboard when supported by the host.
     pub fn preferSystemClipboard(self: *InputField, enable: bool) void {
         self.clipboard.preferSystem(enable);
+    }
+
+    /// Cancel any in-flight bracketed paste sequence tracked by this field.
+    pub fn cancelBracketedPaste(self: *InputField) void {
+        self.bracketed_paste_active = false;
     }
 
     /// Limit undo history growth.
@@ -870,6 +876,14 @@ pub const InputField = struct {
         const self: *InputField = @fieldParentPtr("widget", widget_ref);
         return self.widget.enabled;
     }
+
+    fn stateChangeFn(widget_ptr: *anyopaque) void {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *InputField = @fieldParentPtr("widget", widget_ref);
+        if (!self.widget.focused or !self.widget.visible or !self.widget.enabled) {
+            self.cancelBracketedPaste();
+        }
+    }
 };
 
 fn u16Coord(value: u32) ?u16 {
@@ -1300,6 +1314,25 @@ test "input field does not submit newline inside bracketed paste" {
 
     try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
     try std.testing.expectEqual(@as(usize, 2), test_input_field_submit_calls);
+}
+
+test "input field cancels bracketed paste when focus is lost" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.setOnSubmit(recordInputFieldSubmit);
+    test_input_field_submit_calls = 0;
+
+    field.widget.setFocus(true);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(field.bracketed_paste_active);
+
+    field.widget.setFocus(false);
+    try std.testing.expect(!field.bracketed_paste_active);
+
+    field.widget.setFocus(true);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
+    try std.testing.expectEqual(@as(usize, 1), test_input_field_submit_calls);
 }
 
 test "input field capacity does not split UTF-8 sequences" {

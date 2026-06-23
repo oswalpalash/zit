@@ -82,6 +82,8 @@ pub const Widget = struct {
         get_preferred_size: *const fn (widget: *anyopaque) anyerror!layout_module.Size,
         /// Can focus
         can_focus: *const fn (widget: *anyopaque) bool,
+        /// Optional hook invoked after focus, visibility, or enabled state changes.
+        on_state_change: ?*const fn (widget: *anyopaque) void = null,
     };
 
     /// Initialize a new widget
@@ -142,6 +144,7 @@ pub const Widget = struct {
     pub fn setFocus(self: *Widget, focused: bool) void {
         if (self.focused == focused) return;
         self.focused = focused;
+        if (self.vtable.on_state_change) |callback| callback(self);
         self.markDirty();
     }
 
@@ -150,6 +153,7 @@ pub const Widget = struct {
         if (self.visible == visible) return;
         self.visible = visible;
         self.visibility_transition.snap(visible);
+        if (self.vtable.on_state_change) |callback| callback(self);
         self.markDirty();
     }
 
@@ -157,6 +161,7 @@ pub const Widget = struct {
     pub fn setEnabled(self: *Widget, enabled: bool) void {
         if (self.enabled == enabled) return;
         self.enabled = enabled;
+        if (self.vtable.on_state_change) |callback| callback(self);
         self.markDirty();
     }
 

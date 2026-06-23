@@ -26,6 +26,7 @@ pub const AutocompleteInput = struct {
         .layout = layoutFn,
         .get_preferred_size = getPreferredSizeFn,
         .can_focus = canFocusFn,
+        .on_state_change = stateChangeFn,
     };
 
     pub fn init(allocator: std.mem.Allocator, max_length: usize) !*AutocompleteInput {
@@ -313,8 +314,14 @@ pub const AutocompleteInput = struct {
     }
 
     fn syncFocusState(self: *AutocompleteInput) void {
-        self.input_field.widget.focused = self.widget.focused;
-        self.input_field.widget.enabled = self.widget.enabled;
+        self.input_field.widget.setFocus(self.widget.focused);
+        self.input_field.widget.setEnabled(self.widget.enabled);
+    }
+
+    fn stateChangeFn(widget_ptr: *anyopaque) void {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *AutocompleteInput = @fieldParentPtr("widget", widget_ref);
+        self.syncFocusState();
     }
 };
 
@@ -500,6 +507,19 @@ test "autocomplete accepts clamped stale selection" {
     const enter_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ENTER, input.KeyModifiers{}) };
     try std.testing.expect(try ac.widget.handleEvent(enter_event));
     try std.testing.expectEqualStrings("alpine", ac.input_field.getText());
+}
+
+test "autocomplete focus loss clears embedded input bracketed paste state" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    ac.widget.setFocus(true);
+    try std.testing.expect(try ac.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(ac.input_field.bracketed_paste_active);
+
+    ac.widget.setFocus(false);
+    try std.testing.expect(!ac.input_field.bracketed_paste_active);
 }
 
 test "autocomplete clips popup edge coordinates before u16 overflow" {
