@@ -41,6 +41,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ### Fixed
 - Animated visibility transitions and container-managed visibility changes now reach widget lifecycle hooks when the logical visibility state changes, so hidden editable widgets cannot retain bracketed-paste state.
 - Collection containers now reject cross-parent child attachment before mutating either collection, preventing stale duplicate ownership after a failed or accidental reparent.
+- `TabView` now rejects eager or lazy content that is already attached, including duplicate content in multiple tabs, before committing tab metadata.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
 - Documentation now has a maintained `docs/README.md` entry point with learning paths for app builders, widget authors, integrators, and maintainers.

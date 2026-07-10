@@ -438,8 +438,15 @@ pub const TabView = struct {
 
     /// Create a tab from a specification.
     pub fn addTabSpec(self: *TabView, spec: TabSpec) !void {
+        if (spec.content) |content| {
+            try self.validateNewContent(content);
+        }
         try self.tabs.ensureUnusedCapacity(self.allocator, 1);
         const title_copy = try self.allocator.dupe(u8, spec.title);
+        errdefer self.allocator.free(title_copy);
+        if (spec.content) |content| {
+            try content.attachTo(&self.widget);
+        }
         self.tabs.appendAssumeCapacity(TabItem{
             .title = title_copy,
             .content = spec.content,
@@ -447,9 +454,6 @@ pub const TabView = struct {
             .closable = spec.closable,
             .loaded = spec.content != null,
         });
-        if (spec.content) |content| {
-            content.parent = &self.widget;
-        }
         self.syncHeader();
 
         if (self.tabs.items.len == 1) {
@@ -623,7 +627,8 @@ pub const TabView = struct {
 
         const builder = tab.loader.?;
         const content = try builder(self.allocator);
-        content.parent = &self.widget;
+        try self.validateNewContent(content);
+        try content.attachTo(&self.widget);
         errdefer {
             if (content.parent == &self.widget) content.parent = null;
         }
@@ -633,6 +638,19 @@ pub const TabView = struct {
         tab.content = content;
         tab.loaded = true;
         return true;
+    }
+
+    fn validateNewContent(self: *const TabView, content: *const base.Widget) !void {
+        if (content.parent != null or self.contentIndex(content) != null) {
+            return error.WidgetAlreadyAttached;
+        }
+    }
+
+    fn contentIndex(self: *const TabView, content: *const base.Widget) ?usize {
+        for (self.tabs.items, 0..) |tab, idx| {
+            if (tab.content == content) return idx;
+        }
+        return null;
     }
 
     fn detachTabContent(self: *TabView, tab: *TabItem) void {
@@ -1016,6 +1034,72 @@ test "tab view add tab preserves state on allocation failure" {
     try std.testing.expectError(error.OutOfMemory, tab_view.addTab("leaky", &block.widget));
     try std.testing.expectEqual(@as(usize, 0), tab_view.tabs.items.len);
     try std.testing.expect(block.widget.parent == null);
+}
+
+test "tab view rejects eager content attached to another parent" {
+    const alloc = std.testing.allocator;
+    var first = try TabView.init(alloc);
+    var second = try TabView.init(alloc);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        first.deinit();
+        second.deinit();
+        child.deinit();
+    }
+
+    try first.addTab("first", &child.widget);
+    try std.testing.expectError(error.WidgetAlreadyAttached, second.addTab("second", &child.widget));
+
+    try std.testing.expectEqual(@as(usize, 1), first.tabs.items.len);
+    try std.testing.expectEqual(&child.widget, first.tabs.items[0].content.?);
+    try std.testing.expectEqual(@as(usize, 0), second.tabs.items.len);
+    try std.testing.expectEqual(&first.widget, child.widget.parent.?);
+}
+
+test "tab view rejects duplicate eager content" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        tab_view.deinit();
+        child.deinit();
+    }
+
+    try tab_view.addTab("first", &child.widget);
+    try std.testing.expectError(error.WidgetAlreadyAttached, tab_view.addTab("duplicate", &child.widget));
+
+    try std.testing.expectEqual(@as(usize, 1), tab_view.tabs.items.len);
+    try std.testing.expectEqualStrings("first", tab_view.tabs.items[0].title);
+    try std.testing.expectEqual(&child.widget, tab_view.tabs.items[0].content.?);
+    try std.testing.expectEqual(&tab_view.widget, child.widget.parent.?);
+}
+
+test "tab view rejects lazy content attached to another parent" {
+    const alloc = std.testing.allocator;
+    var owner = try TabView.init(alloc);
+    var target = try TabView.init(alloc);
+    defer {
+        owner.deinit();
+        target.deinit();
+    }
+
+    const Lazy = struct {
+        var content = FailingLayoutWidget.init();
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return &content.widget;
+        }
+    };
+
+    Lazy.content = FailingLayoutWidget.init();
+    try owner.addTab("owner", &Lazy.content.widget);
+    try target.addLazyTab("lazy", Lazy.build, false);
+    try std.testing.expectError(error.WidgetAlreadyAttached, target.setActiveTab(0));
+
+    try std.testing.expectEqual(@as(usize, 1), owner.tabs.items.len);
+    try std.testing.expectEqual(&owner.widget, Lazy.content.widget.parent.?);
+    try std.testing.expect(!target.tabs.items[0].loaded);
+    try std.testing.expect(target.tabs.items[0].content == null);
 }
 
 test "tab view reorders tabs and keeps active index in sync" {
