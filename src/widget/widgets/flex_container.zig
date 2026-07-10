@@ -60,13 +60,12 @@ pub const FlexContainer = struct {
             try self.layout.children.ensureUnusedCapacity(self.layout.base.allocator, 1);
         }
 
-        // Avoid duplicates by removing existing entries first.
-        self.removeChild(child);
+        try child.attachTo(&self.widget);
+        _ = self.removeChildEntries(child);
 
         self.layout.children.appendAssumeCapacity(layout_module.FlexChild.init(child.asLayoutElement(), flex));
         self.layout.cache.valid = false;
         self.children.appendAssumeCapacity(child);
-        child.parent = &self.widget;
         self.widget.markDirty();
     }
 
@@ -86,11 +85,18 @@ pub const FlexContainer = struct {
     }
 
     pub fn removeChild(self: *FlexContainer, child: *base.Widget) void {
+        const changed = self.removeChildEntries(child);
+        if (changed and child.parent == &self.widget) {
+            child.parent = null;
+        }
+        if (changed) self.widget.markDirty();
+    }
+
+    fn removeChildEntries(self: *FlexContainer, child: *base.Widget) bool {
         var changed = false;
         for (self.children.items, 0..) |entry, idx| {
             if (entry == child) {
                 _ = self.children.orderedRemove(idx);
-                child.parent = null;
                 changed = true;
                 break;
             }
@@ -105,7 +111,7 @@ pub const FlexContainer = struct {
                 break;
             }
         }
-        if (changed) self.widget.markDirty();
+        return changed;
     }
 
     pub fn clearChildren(self: *FlexContainer) void {
@@ -452,4 +458,25 @@ test "flex container re-adds existing child without growing child list" {
     try std.testing.expectEqual(@as(usize, 1), flex.layout.children.items.len);
     try std.testing.expectEqual(@as(u16, 3), flex.layout.children.items[0].flex_grow);
     try std.testing.expectEqual(&flex.widget, child.widget.parent.?);
+}
+
+test "flex container rejects child attached to another collection parent" {
+    const alloc = std.testing.allocator;
+    var first = try FlexContainer.init(alloc, .row);
+    var second = try FlexContainer.init(alloc, .row);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        first.deinit();
+        second.deinit();
+        child.deinit();
+    }
+
+    try first.addChild(&child.widget, 2);
+    try std.testing.expectError(error.WidgetAlreadyAttached, second.addChild(&child.widget, 1));
+
+    try std.testing.expectEqual(@as(usize, 1), first.children.items.len);
+    try std.testing.expectEqual(@as(usize, 1), first.layout.children.items.len);
+    try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
+    try std.testing.expectEqual(@as(usize, 0), second.layout.children.items.len);
+    try std.testing.expectEqual(&first.widget, child.widget.parent.?);
 }

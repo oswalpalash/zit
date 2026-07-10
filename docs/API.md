@@ -154,6 +154,8 @@ The `widget` module exposes direct factory helpers for quick construction plus a
 
 State helpers operate on any `BaseWidget` pointer through lifecycle-aware setters: `focusWidget(widget)`, `enableWidget(widget)`, `disableWidget(widget)`, `showWidget(widget)`, and `hideWidget(widget)`.
 
+Collection containers (`Container`, `FlexContainer`, and `GridContainer`) require explicit single-parent ownership. Their fallible `addChild` methods return `error.WidgetAlreadyAttached` without modifying either container when a child still belongs to another parent; remove it from the current owner before attaching it elsewhere.
+
 ### Typeahead Lists/Tables
 ```zig
 list.setTypeaheadTimeout(900);

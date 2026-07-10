@@ -67,11 +67,11 @@ pub const Container = struct {
 
         const was_last = if (existing_index) |idx| idx + 1 == self.children.items.len else false;
         const parent_changed = child.parent != &self.widget;
+        try child.attachTo(&self.widget);
         if (existing_index) |idx| {
             _ = self.children.orderedRemove(idx);
         }
         self.children.appendAssumeCapacity(child);
-        child.parent = &self.widget;
         if (parent_changed or !was_last) self.widget.markDirty();
     }
 
@@ -576,4 +576,24 @@ test "container deinit detaches child parent links" {
     container.deinit();
 
     try std.testing.expect(child.widget.parent == null);
+}
+
+test "container rejects child attached to another collection parent" {
+    const alloc = std.testing.allocator;
+    var first = try Container.init(alloc);
+    var second = try Container.init(alloc);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        first.deinit();
+        second.deinit();
+        child.deinit();
+    }
+
+    try first.addChild(&child.widget);
+    try std.testing.expectError(error.WidgetAlreadyAttached, second.addChild(&child.widget));
+
+    try std.testing.expectEqual(@as(usize, 1), first.children.items.len);
+    try std.testing.expectEqual(&child.widget, first.children.items[0]);
+    try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
+    try std.testing.expectEqual(&first.widget, child.widget.parent.?);
 }

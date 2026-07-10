@@ -65,11 +65,11 @@ pub const GridContainer = struct {
             try self.children.ensureUnusedCapacity(self.allocator, 1);
         }
 
-        self.removeChild(child);
+        try child.attachTo(&self.widget);
+        self.removeChildForReplacement(child);
         self.removeChildAt(column, row);
         try self.layout.addChild(child.asLayoutElement(), column, row);
         self.children.appendAssumeCapacity(Child{ .widget = child, .column = column, .row = row });
-        child.parent = &self.widget;
         self.widget.markDirty();
     }
 
@@ -94,6 +94,16 @@ pub const GridContainer = struct {
                 child.parent = null;
                 _ = self.clearCell(entry.column, entry.row);
                 self.widget.markDirty();
+                break;
+            }
+        }
+    }
+
+    fn removeChildForReplacement(self: *GridContainer, child: *base.Widget) void {
+        for (self.children.items, 0..) |entry, idx| {
+            if (entry.widget == child) {
+                _ = self.children.orderedRemove(idx);
+                _ = self.clearCell(entry.column, entry.row);
                 break;
             }
         }
@@ -557,6 +567,27 @@ test "grid container replaces occupied cell without growing child list" {
     try std.testing.expect(old_child.widget.parent == null);
     try std.testing.expectEqual(&grid.widget, new_child.widget.parent.?);
     try std.testing.expect(grid.layout.cells.items[0].?.ctx == @as(*anyopaque, @ptrCast(&new_child.widget)));
+}
+
+test "grid container rejects child attached to another collection parent" {
+    const alloc = std.testing.allocator;
+    var first = try GridContainer.init(alloc, 1, 1);
+    var second = try GridContainer.init(alloc, 1, 1);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        first.deinit();
+        second.deinit();
+        child.deinit();
+    }
+
+    try first.addChild(&child.widget, 0, 0);
+    try std.testing.expectError(error.WidgetAlreadyAttached, second.addChild(&child.widget, 0, 0));
+
+    try std.testing.expectEqual(@as(usize, 1), first.children.items.len);
+    try std.testing.expect(first.layout.cells.items[0].?.ctx == @as(*anyopaque, @ptrCast(&child.widget)));
+    try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
+    try std.testing.expect(second.layout.cells.items[0] == null);
+    try std.testing.expectEqual(&first.widget, child.widget.parent.?);
 }
 
 test "grid container moves existing child without duplicate ownership" {

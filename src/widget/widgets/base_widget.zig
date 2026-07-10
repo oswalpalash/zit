@@ -315,6 +315,15 @@ pub const Widget = struct {
         self.parent = parent;
     }
 
+    /// Attach this widget to a collection parent without silently reparenting it.
+    /// Callers that own child collections must detach from the current parent first.
+    pub fn attachTo(self: *Widget, parent: *Widget) !void {
+        if (self.parent) |current| {
+            if (current != parent) return error.WidgetAlreadyAttached;
+        }
+        self.parent = parent;
+    }
+
     /// Traverse widget children depth-first and invoke a callback for each child.
     pub fn traverseChildren(widget: *Widget, callback: *const fn (*Widget) void) void {
         traverseChildrenImpl(widget, callback);
