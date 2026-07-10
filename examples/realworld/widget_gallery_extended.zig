@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     try input_field.setPlaceholder("Search commands");
     try input_field.setText("status --watch");
     input_field.setBorder(.rounded);
-    input_field.widget.focused = true;
+    input_field.widget.setFocus(true);
     try input_field.widget.layout(Rect.init(2, 6, 28, 3));
     try input_field.widget.draw(&mock.renderer);
 
@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
     defer autocomplete.deinit();
     try autocomplete.input_field.setText("zi");
     try autocomplete.setSuggestions(&[_][]const u8{ "zig build test", "zig build quality", "zls check", "zit gallery" });
-    autocomplete.widget.focused = true;
+    autocomplete.widget.setFocus(true);
     try autocomplete.widget.layout(Rect.init(2, 10, 28, 5));
     try autocomplete.widget.draw(&mock.renderer);
 

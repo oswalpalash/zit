@@ -196,11 +196,7 @@ pub const Modal = struct {
 
     /// Close the modal
     pub fn close(self: *Modal) void {
-        const was_visible = self.widget.visible;
-        self.widget.visible = false;
-        if (was_visible) {
-            self.widget.markDirty();
-        }
+        self.widget.setVisible(false);
 
         if (self.on_close != null) {
             self.on_close.?();
@@ -451,7 +447,7 @@ test "modal visible mutations mark dirty" {
     modal.setCentered(false);
     try std.testing.expect(!modal.widget.dirty);
 
-    modal.widget.visible = true;
+    modal.widget.setVisible(true);
     modal.widget.clearDirty();
     modal.close();
     try std.testing.expect(modal.widget.dirty);
@@ -471,7 +467,7 @@ test "modal closes on escape and fires callback" {
     }.call;
     modal.setOnClose(callback);
 
-    modal.widget.visible = true;
+    modal.widget.setVisible(true);
     const escape_event = input.Event{ .key = input.KeyEvent.init(input.KeyCode.ESCAPE, input.KeyModifiers{}) };
     try std.testing.expect(try modal.widget.handleEvent(escape_event));
     try std.testing.expect(!modal.widget.visible);

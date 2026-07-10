@@ -224,7 +224,7 @@ pub const ScreenManager = struct {
         if (entering_idx) |idx| {
             var entry = &self.screens.items[idx];
             entry.state = .entering;
-            entry.screen.widget.visible = true;
+            entry.screen.widget.setVisible(true);
             entry.screen.widget.visibility_transition.snap(false);
             try entry.screen.widget.animateVisibility(&self.animator, true, pushInFor(self.transitions, kind));
         }
@@ -318,7 +318,7 @@ pub const ScreenManager = struct {
             try entry.screen.widget.layout(rect);
         }
         entry.screen.widget.visibility_transition.snap(false);
-        entry.screen.widget.visible = false;
+        entry.screen.widget.setVisible(false);
     }
 
     fn topEntry(self: *ScreenManager) ?*ScreenEntry {

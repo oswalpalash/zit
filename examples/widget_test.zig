@@ -368,7 +368,7 @@ var g_modal: ?*zit.widget.Modal = null;
 // Show modal callback
 fn showModal() void {
     if (g_modal) |modal| {
-        modal.widget.visible = true;
+        modal.widget.setVisible(true);
     }
 }
 

@@ -666,7 +666,7 @@ pub const TabView = struct {
     fn syncVisibility(self: *TabView) void {
         for (self.tabs.items, 0..) |tab, i| {
             if (tab.content) |content| {
-                content.visible = (i == self.active_tab);
+                content.setVisible(i == self.active_tab);
             }
         }
     }

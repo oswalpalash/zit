@@ -8,6 +8,7 @@ const form = @import("../form.zig");
 const input_mask = @import("../input_mask.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const animation = @import("../animation.zig");
 
 /// Input field widget for text entry
 pub const InputField = struct {
@@ -1333,6 +1334,42 @@ test "input field cancels bracketed paste when focus is lost" {
     field.widget.setFocus(true);
     try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.ENTER, .{}) }));
     try std.testing.expectEqual(@as(usize, 1), test_input_field_submit_calls);
+}
+
+test "input field cancels bracketed paste when animated hide completes" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    var animator = animation.Animator.init(alloc);
+    defer animator.deinit();
+
+    field.widget.setFocus(true);
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BRACKETED_PASTE_START, .{}) }));
+    try std.testing.expect(field.bracketed_paste_active);
+
+    try field.widget.animateVisibility(&animator, false, .{ .duration_ms = 1 });
+    try std.testing.expect(field.widget.visible);
+    try std.testing.expect(field.bracketed_paste_active);
+
+    animator.tick(1);
+    try std.testing.expect(!field.widget.visible);
+    try std.testing.expect(!field.bracketed_paste_active);
+}
+
+test "input field show animation preserves hidden transition state" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    var animator = animation.Animator.init(alloc);
+    defer animator.deinit();
+
+    field.widget.setVisible(false);
+    try field.widget.animateVisibility(&animator, true, .{ .duration_ms = 1 });
+    try std.testing.expect(field.widget.visible);
+    try std.testing.expectEqual(@as(f32, 0), field.widget.visibilityAlpha());
+
+    animator.tick(1);
+    try std.testing.expectEqual(@as(f32, 1), field.widget.visibilityAlpha());
 }
 
 test "input field capacity does not split UTF-8 sequences" {

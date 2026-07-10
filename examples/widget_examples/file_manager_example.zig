@@ -35,7 +35,7 @@ fn setStatus(status: *StatusLine, comptime fmt: []const u8, args: anytype) void 
 
 fn loadFiles(list: *widget.List, folder_name: []const u8) !void {
     list.clear();
-    list.widget.enabled = true;
+    list.widget.setEnabled(true);
     for (folders) |entry| {
         if (std.mem.eql(u8, entry.name, folder_name)) {
             for (entry.files) |file| {
@@ -47,7 +47,7 @@ fn loadFiles(list: *widget.List, folder_name: []const u8) !void {
     }
 
     try list.addItem("(empty folder)");
-    list.widget.enabled = false;
+    list.widget.setEnabled(false);
     list.setSelectedIndex(0);
 }
 

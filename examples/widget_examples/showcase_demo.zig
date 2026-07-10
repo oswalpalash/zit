@@ -374,7 +374,7 @@ fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     autocomplete.setMaxVisible(6);
     try autocomplete.input_field.setPlaceholder("Search metrics...");
     try autocomplete.input_field.setText("latency");
-    autocomplete.widget.focused = true;
+    autocomplete.widget.setFocus(true);
 
     var ctx_menu = try widget.ContextMenu.init(allocator);
     defer ctx_menu.deinit();
@@ -547,7 +547,7 @@ pub fn main(init: std.process.Init) !void {
     try autocomplete.setSuggestions(&suggestions);
     autocomplete.setMaxVisible(6);
     try autocomplete.input_field.setPlaceholder("Search metrics...");
-    autocomplete.widget.focused = true;
+    autocomplete.widget.setFocus(true);
     autocomplete.setOnSelect(handleAutocompleteSelection);
 
     var ctx_menu = try widget.ContextMenu.init(memory_manager.getWidgetPoolAllocator());

@@ -63,7 +63,7 @@ pub fn main(init: std.process.Init) !void {
     defer flex_a.deinit();
     var flex_b = try zit.widget.Button.init(allocator, "Verify");
     defer flex_b.deinit();
-    flex_b.widget.focused = true;
+    flex_b.widget.setFocus(true);
     var flex = try zit.widget.FlexContainer.init(allocator, .row);
     defer flex.deinit();
     flex.setPadding(zit.layout.EdgeInsets.all(0));
@@ -185,7 +185,7 @@ pub fn main(init: std.process.Init) !void {
     var picker = try zit.widget.DateTimePicker.init(allocator);
     defer picker.deinit();
     picker.setDateTime(.{ .year = 2026, .month = 6, .day = 17, .hour = 9, .minute = 30 });
-    picker.widget.focused = true;
+    picker.widget.setFocus(true);
     try picker.widget.layout(Rect.init(2, 38, 26, 3));
     try picker.widget.draw(&mock.renderer);
 

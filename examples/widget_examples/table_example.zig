@@ -38,7 +38,7 @@ pub fn main() !void {
 
     var table = try zit.widget.Table.init(allocator);
     defer table.deinit();
-    table.widget.focused = true;
+    table.widget.setFocus(true);
     table.setShowHeaders(true);
     table.setBorder(.single);
     const ui_theme = theme.Theme.dark();

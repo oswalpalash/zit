@@ -36,6 +36,10 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Interactive example PTY smoke checker (`scripts/interactive_example_smoke.py`) launches every interactive example in a pseudo-terminal, waits for rendered content, sends `q`, fails on allocator/panic diagnostics, and verifies clean exit.
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, drives every public interactive example through rapid tiny-size stress down to 1x1, and requires each example to recover by redrawing a visible `resize: WxH` marker with the final dimensions.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
+- Widget lifecycle mutation checker (`scripts/check_widget_lifecycle_mutation.py`, `zig build widget-lifecycle-mutation`) prevents widgets and examples from bypassing state-change hooks with direct focus, enabled, or visibility assignments.
+
+### Fixed
+- Animated visibility transitions and container-managed visibility changes now reach widget lifecycle hooks when the logical visibility state changes, so hidden editable widgets cannot retain bracketed-paste state.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
 - Documentation now has a maintained `docs/README.md` entry point with learning paths for app builders, widget authors, integrators, and maintainers.

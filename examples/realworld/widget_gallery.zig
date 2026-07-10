@@ -45,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
     var button = try zit.widget.Button.init(allocator, "Deploy");
     defer button.deinit();
     button.setBorder(.rounded);
-    button.widget.focused = true;
+    button.widget.setFocus(true);
     try button.widget.layout(Rect.init(2, 9, 16, 3));
     try button.widget.draw(&mock.renderer);
 
@@ -57,7 +57,7 @@ pub fn main(init: std.process.Init) !void {
 
     var checkbox_disabled = try zit.widget.Checkbox.init(allocator, "Safe mode");
     defer checkbox_disabled.deinit();
-    checkbox_disabled.widget.enabled = false;
+    checkbox_disabled.widget.setEnabled(false);
     try checkbox_disabled.widget.layout(Rect.init(3, 15, 22, 1));
     try checkbox_disabled.widget.draw(&mock.renderer);
 

@@ -289,15 +289,31 @@ pub const VisibilityController = struct {
     start_progress: f32 = 1.0,
     options: VisibilityOptions = .{},
     handle: ?AnimationHandle = null,
+    completion_callback: ?*const fn (?*anyopaque, bool) void = null,
+    completion_context: ?*anyopaque = null,
 
     pub fn snap(self: *VisibilityController, visible: bool) void {
         self.target_visible = visible;
         self.progress = if (visible) 1 else 0;
         self.start_progress = self.progress;
         self.handle = null;
+        self.completion_callback = null;
+        self.completion_context = null;
     }
 
     pub fn animate(self: *VisibilityController, animator: *Animator, visible: bool, opts: VisibilityOptions) !AnimationHandle {
+        return self.animateWithCompletion(animator, visible, opts, null, null);
+    }
+
+    /// Animate visibility and invoke the callback once the target is reached.
+    pub fn animateWithCompletion(
+        self: *VisibilityController,
+        animator: *Animator,
+        visible: bool,
+        opts: VisibilityOptions,
+        completion_callback: ?*const fn (?*anyopaque, bool) void,
+        completion_context: ?*anyopaque,
+    ) !AnimationHandle {
         const previous = self.*;
         if (self.handle) |h| {
             _ = animator.cancel(h);
@@ -307,6 +323,8 @@ pub const VisibilityController = struct {
         self.target_visible = visible;
         self.start_progress = self.progress;
         self.options = opts;
+        self.completion_callback = completion_callback;
+        self.completion_context = completion_context;
 
         const spec = AnimationSpec{
             .duration_ms = opts.duration_ms,
@@ -321,6 +339,8 @@ pub const VisibilityController = struct {
             self.progress = previous.progress;
             self.start_progress = previous.start_progress;
             self.options = previous.options;
+            self.completion_callback = null;
+            self.completion_context = null;
             self.handle = null;
             return err;
         };
@@ -334,6 +354,8 @@ pub const VisibilityController = struct {
             _ = animator.cancel(h);
             self.handle = null;
         }
+        self.completion_callback = null;
+        self.completion_context = null;
     }
 
     pub fn isAnimating(self: VisibilityController) bool {
@@ -379,6 +401,12 @@ pub const VisibilityController = struct {
         const self = @as(*VisibilityController, @ptrCast(@alignCast(ctx.?)));
         self.progress = if (self.target_visible) 1 else 0;
         self.handle = null;
+
+        const callback = self.completion_callback;
+        const callback_context = self.completion_context;
+        self.completion_callback = null;
+        self.completion_context = null;
+        if (callback) |cb| cb(callback_context, self.target_visible);
     }
 };
 

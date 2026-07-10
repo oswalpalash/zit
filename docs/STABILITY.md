@@ -72,6 +72,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_unreachable_catches.py`
 - `python3 scripts/check_widget_coverage.py` to require every public widget export to have a catalog row, coverage reference, valid documented file paths, and every public widget factory/helper to appear in `docs/API.md`.
 - `python3 scripts/check_widget_owner_casts.py`
+- `python3 scripts/check_widget_lifecycle_mutation.py` to require production widget code and public examples to use lifecycle setters instead of direct focus, enabled, or visibility mutation.
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.
 - `python3 scripts/mouse_alignment_smoke.py --no-build` to verify real SGR mouse input maps terminal 1-based coordinates to Zit screen coordinates and clicks the rendered demo button only at its actual row.

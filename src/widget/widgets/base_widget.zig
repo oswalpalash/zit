@@ -150,9 +150,17 @@ pub const Widget = struct {
 
     /// Set visibility
     pub fn setVisible(self: *Widget, visible: bool) void {
+        self.setVisibleWithTransition(visible, true);
+    }
+
+    fn setVisibleForAnimation(self: *Widget, visible: bool) void {
+        self.setVisibleWithTransition(visible, false);
+    }
+
+    fn setVisibleWithTransition(self: *Widget, visible: bool, snap_transition: bool) void {
         if (self.visible == visible) return;
         self.visible = visible;
-        self.visibility_transition.snap(visible);
+        if (snap_transition) self.visibility_transition.snap(visible);
         if (self.vtable.on_state_change) |callback| callback(self);
         self.markDirty();
     }
@@ -264,10 +272,10 @@ pub const Widget = struct {
     pub fn animateVisibility(self: *Widget, animator: *animation.Animator, visible: bool, opts: animation.VisibilityOptions) !void {
         const previous_visible = self.visible;
         if (visible) {
-            self.visible = true;
+            self.setVisibleForAnimation(true);
         }
-        _ = self.visibility_transition.animate(animator, visible, opts) catch |err| {
-            self.visible = previous_visible;
+        _ = self.visibility_transition.animateWithCompletion(animator, visible, opts, visibilityAnimationComplete, self) catch |err| {
+            self.setVisible(previous_visible);
             return err;
         };
         self.markDirty();
@@ -802,11 +810,11 @@ fn widgetRenderAdapter(ctx: *anyopaque, renderer: *render.Renderer, rect: layout
             }
         }
     }
+}
 
-    // When the hide animation completes, stop drawing and reject input.
-    if (!widget.visibility_transition.target_visible and alpha <= 0.001) {
-        widget.visible = false;
-    }
+fn visibilityAnimationComplete(ctx: ?*anyopaque, visible: bool) void {
+    const widget = @as(*Widget, @ptrCast(@alignCast(ctx.?)));
+    if (!visible) widget.setVisible(false);
 }
 
 fn clippedEndExclusive(start: u16, size: u16, limit: u16) u16 {

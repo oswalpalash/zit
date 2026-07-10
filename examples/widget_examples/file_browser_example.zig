@@ -26,7 +26,7 @@ pub fn main() !void {
 
     var browser = try zit.widget.FileBrowser.init(allocator, ".");
     defer browser.deinit();
-    browser.widget.focused = true;
+    browser.widget.setFocus(true);
     const ui_theme = theme.Theme.dark();
     const bg = ui_theme.color(.background);
     const text = ui_theme.color(.text);

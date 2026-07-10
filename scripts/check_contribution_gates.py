@@ -29,6 +29,7 @@ REQUIRED_WORKFLOW_GATES = (
     "python3 scripts/check_terminal_state_cleanup.py",
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
+    "python3 scripts/check_widget_lifecycle_mutation.py",
     "zig build release-check",
 )
 
@@ -53,6 +54,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/check_terminal_state_cleanup.py",
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
+    "python3 scripts/check_widget_lifecycle_mutation.py",
     "zig build release-check",
 )
 
@@ -84,6 +86,7 @@ REQUIRED_RELEASE_VERIFY_GATES = (
     '"unreachable catch patterns", ("python3", "scripts/check_unreachable_catches.py")',
     '"mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build")',
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
+    '"widget lifecycle mutations", ("python3", "scripts/check_widget_lifecycle_mutation.py")',
 )
 
 REQUIRED_BUILD_GATES = (
@@ -113,6 +116,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/check_terminal_state_cleanup.py",
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
+    "python3 scripts/check_widget_lifecycle_mutation.py",
     "zig build release-check",
 )
 

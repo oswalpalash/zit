@@ -22,8 +22,8 @@ const Common = struct {
 
     fn apply(self: Common, widget: *base.Widget) void {
         if (self.id) |id| widget.id = id;
-        widget.enabled = self.enabled;
-        widget.visible = self.visible;
+        widget.setEnabled(self.enabled);
+        widget.setVisible(self.visible);
         widget.style_class = self.class;
         if (self.focus_ring) |ring| widget.setFocusRing(ring);
     }

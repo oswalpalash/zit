@@ -281,27 +281,27 @@ pub fn createBlock(allocator: std.mem.Allocator) !*Block {
 
 /// Convenience function to focus a widget
 pub fn focusWidget(widget: *BaseWidget) void {
-    widget.focused = true;
+    widget.setFocus(true);
 }
 
 /// Convenience function to enable a widget
 pub fn enableWidget(widget: *BaseWidget) void {
-    widget.enabled = true;
+    widget.setEnabled(true);
 }
 
 /// Convenience function to disable a widget
 pub fn disableWidget(widget: *BaseWidget) void {
-    widget.enabled = false;
+    widget.setEnabled(false);
 }
 
 /// Convenience function to show a widget
 pub fn showWidget(widget: *BaseWidget) void {
-    widget.visible = true;
+    widget.setVisible(true);
 }
 
 /// Convenience function to hide a widget
 pub fn hideWidget(widget: *BaseWidget) void {
-    widget.visible = false;
+    widget.setVisible(false);
 }
 
 test "widget" {

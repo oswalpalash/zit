@@ -140,7 +140,7 @@ fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
 
     var table = try widget.Table.init(allocator);
     defer table.deinit();
-    table.widget.focused = true;
+    table.widget.setFocus(true);
     table.setShowHeaders(true);
     table.setBorder(.none);
     table.show_grid = false;
@@ -274,7 +274,7 @@ pub fn main(init: std.process.Init) !void {
 
     var table = try widget.Table.init(memory_manager.getWidgetPoolAllocator());
     defer table.deinit();
-    table.widget.focused = true;
+    table.widget.setFocus(true);
     table.setShowHeaders(true);
     table.setBorder(.none);
     table.show_grid = false;
