@@ -193,7 +193,7 @@ pub fn main() !void {
         &layout_split.widget,
     };
     var current_focus: usize = 0;
-    widgets[current_focus].*.focused = true;
+    widgets[current_focus].setFocus(true);
 
     // Clear screen
     try term.clear();
@@ -317,9 +317,9 @@ pub fn main() !void {
                     }
                     // Tab key to switch focus
                     else if (key.key == '\t' and !modal.widget.visible) {
-                        widgets[current_focus].*.focused = false;
+                        widgets[current_focus].setFocus(false);
                         current_focus = (current_focus + 1) % widgets.len;
-                        widgets[current_focus].*.focused = true;
+                        widgets[current_focus].setFocus(true);
                     } else {
                         // Pass event to the modal first if visible
                         if (modal.widget.visible) {
@@ -343,9 +343,9 @@ pub fn main() !void {
                             if (try widget.*.handleEvent(e)) {
                                 // If a widget handled the event, focus on it
                                 if (!handled) {
-                                    widgets[current_focus].*.focused = false;
+                                    widgets[current_focus].setFocus(false);
                                     current_focus = idx;
-                                    widgets[current_focus].*.focused = true;
+                                    widgets[current_focus].setFocus(true);
                                     handled = true;
                                 }
                             }

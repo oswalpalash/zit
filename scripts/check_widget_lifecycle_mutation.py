@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = (Path("src/widget"), Path("examples"))
 SKIP_PATHS = {Path("src/widget/widgets/base_widget.zig")}
 DIRECT_WIDGET_STATE = re.compile(
-    r"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)*widget\.(?:focused|enabled|visible)\s*=",
+    r"(?:\b(?:[A-Za-z_][A-Za-z0-9_]*\.)*widget|\]\s*\.\s*\*)\.(?:focused|enabled|visible)\s*=",
 )
 
 
@@ -81,11 +81,14 @@ def iter_files() -> list[Path]:
 
 def run_self_tests() -> None:
     production = "fn show(subject: anytype) void { subject.widget.visible = false; }\n"
+    production_pointer = "fn focus(widgets: anytype, index: usize) void { widgets[index].*.focused = true; }\n"
     test_only = 'test "setup" {\n    subject.widget.visible = false;\n}\n'
     nested_test = 'test "nested" {\n    if (true) { subject.widget.enabled = false; }\n}\n'
 
     if not DIRECT_WIDGET_STATE.search(production):
         raise AssertionError("direct production widget mutation was not detected")
+    if not DIRECT_WIDGET_STATE.search(production_pointer):
+        raise AssertionError("direct production Widget pointer mutation was not detected")
     for source in (test_only, nested_test):
         ranges = test_body_ranges(source)
         match = DIRECT_WIDGET_STATE.search(source)

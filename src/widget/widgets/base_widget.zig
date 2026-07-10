@@ -955,6 +955,57 @@ test "focus ring clamps edge coordinates and oversized insets" {
     widget.drawFocusRing(&renderer);
 }
 
+test "generic Widget pointers notify lifecycle hooks when focus changes" {
+    const TestWidget = struct {
+        widget: Widget = Widget.init(&vtable),
+        state_changes: usize = 0,
+
+        const vtable = Widget.VTable{
+            .draw = draw,
+            .handle_event = handleEvent,
+            .layout = layout,
+            .get_preferred_size = getPreferredSize,
+            .can_focus = canFocus,
+            .on_state_change = stateChange,
+        };
+
+        fn draw(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+        fn handleEvent(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+
+        fn layout(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+
+        fn getPreferredSize(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.zero();
+        }
+
+        fn canFocus(_: *anyopaque) bool {
+            return true;
+        }
+
+        fn stateChange(widget_ptr: *anyopaque) void {
+            const widget_ref: *Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            self.state_changes += 1;
+        }
+    };
+
+    var first = TestWidget{};
+    var second = TestWidget{};
+    const widgets = [_]*Widget{ &first.widget, &second.widget };
+
+    widgets[0].setFocus(true);
+    widgets[0].setFocus(false);
+    widgets[1].setFocus(true);
+
+    try std.testing.expect(!first.widget.focused);
+    try std.testing.expect(second.widget.focused);
+    try std.testing.expectEqual(@as(usize, 2), first.state_changes);
+    try std.testing.expectEqual(@as(usize, 1), second.state_changes);
+}
+
 test "layout adapter fade clips edge rect without u16 overflow" {
     const fade_vtable = Widget.VTable{
         .draw = struct {

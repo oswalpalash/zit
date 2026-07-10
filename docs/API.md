@@ -152,7 +152,7 @@ The `widget` module exposes direct factory helpers for quick construction plus a
 | `createParagraph(allocator, text)` | `Paragraph` |
 | `createBlock(allocator)` | `Block` |
 
-State helpers operate on any `BaseWidget` pointer and mark simple lifecycle state directly: `focusWidget(widget)`, `enableWidget(widget)`, `disableWidget(widget)`, `showWidget(widget)`, and `hideWidget(widget)`.
+State helpers operate on any `BaseWidget` pointer through lifecycle-aware setters: `focusWidget(widget)`, `enableWidget(widget)`, `disableWidget(widget)`, `showWidget(widget)`, and `hideWidget(widget)`.
 
 ### Typeahead Lists/Tables
 ```zig
