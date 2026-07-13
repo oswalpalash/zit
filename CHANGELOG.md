@@ -49,6 +49,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Renderer text can no longer inject terminal controls through glyph data: C0/C1 codepoints are isolated and replaced before ANSI output. Shared allocation-free boundary rules now keep measurement, clipping, rendering, and editing consistent for CRLF, emoji ZWJ sequences, regional-indicator flag pairs, and composed or decomposed Hangul.
 - Renderer cells no longer retain truncated UTF-8 when a grapheme exceeds their 32-byte inline capacity; they preserve full-cluster width metadata with a deterministic valid fallback, and disabled Unicode, emoji, or double-width capabilities now produce ASCII instead of emitting unsupported glyphs with incorrect cell geometry.
 - `InputField` now navigates and deletes complete grapheme clusters and horizontally scrolls by terminal-cell width to keep the focused caret visible for long CJK, emoji, and combining text without draw-time allocation.
 - Renderer grapheme scratch admission now counts graphemes instead of UTF-8 bytes, avoiding unnecessary fallback for multibyte text; prepared and allocation-free over-capacity paths now use capability-adjusted widths, preserve combining clusters, and clear stale continuation cells when overlays replace wide glyphs.

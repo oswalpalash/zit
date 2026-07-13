@@ -168,6 +168,7 @@ const combining_ranges = [_]Range{
     .{ .start = 0xFE00, .end = 0xFE0F },
     .{ .start = 0xFE20, .end = 0xFE2F },
     .{ .start = 0xE0100, .end = 0xE01EF },
+    .{ .start = 0xE0020, .end = 0xE007F }, // Emoji tag sequences
     .{ .start = 0x1F3FB, .end = 0x1F3FF }, // Emoji skin tone modifiers
 };
 
@@ -241,16 +242,12 @@ const emoji_ranges = [_]Range{
 
 /// wcwidth implementation tuned for terminals: returns 0, 1, or 2 cells.
 pub fn wcwidth(cp: u21) u3 {
-    // Control characters have zero width.
-    if (cp == 0) return 0;
-    if (cp < 32 or (cp >= 0x7F and cp < 0xA0)) return 0;
+    return wcwidthClassified(cp, classifyGrapheme(cp));
+}
 
-    if (inRange(cp, combining_ranges[0..])) return 0;
-    if (cp == 0x200D) return 0; // Zero width joiner
-
-    if (inRange(cp, wide_ranges[0..])) return 2;
-
-    return 1;
+/// Return whether a codepoint is a terminal control byte/codepoint.
+pub fn isControl(cp: u21) bool {
+    return cp <= 0x1F or (cp >= 0x7F and cp <= 0x9F);
 }
 
 /// Identify whether a codepoint is right-to-left or bidi-relevant.
@@ -258,10 +255,27 @@ pub fn isBidi(cp: u21) bool {
     return (cp >= 0x0590 and cp <= 0x08FF) or (cp >= 0xFB1D and cp <= 0xFEFC);
 }
 
+pub const EmojiProperties = struct {
+    emoji: bool,
+    extended_pictographic: bool,
+};
+
+/// Classify the emoji properties needed by capability and grapheme handling.
+pub fn emojiProperties(cp: u21) EmojiProperties {
+    const emoji = inRange(cp, emoji_ranges[0..]) or
+        (cp >= 0x1F1E6 and cp <= 0x1F1FF) or
+        (cp >= 0x1F300 and cp <= 0x1FAFF);
+    const bmp_pictographic = cp == 0x00A9 or cp == 0x00AE or cp == 0x203C or cp == 0x2049 or
+        cp == 0x2122 or cp == 0x2139 or (cp >= 0x2194 and cp <= 0x2199) or
+        (cp >= 0x21A9 and cp <= 0x21AA) or (cp >= 0x2300 and cp <= 0x23FF) or
+        (cp >= 0x25A0 and cp <= 0x27BF) or (cp >= 0x2B00 and cp <= 0x2BFF) or
+        cp == 0x3030 or cp == 0x303D or cp == 0x3297 or cp == 0x3299;
+    return .{ .emoji = emoji, .extended_pictographic = emoji or bmp_pictographic };
+}
+
 /// Identify if a codepoint is commonly rendered as emoji.
 pub fn isEmoji(cp: u21) bool {
-    if (inRange(cp, emoji_ranges[0..])) return true;
-    return (cp >= 0x1F1E6 and cp <= 0x1F1FF) or (cp >= 0x1F300 and cp <= 0x1FAFF);
+    return emojiProperties(cp).emoji;
 }
 
 /// Identify combining/zero-width marks that should not advance width.
@@ -269,35 +283,130 @@ pub fn isCombining(cp: u21) bool {
     return cp == 0x200D or inRange(cp, combining_ranges[0..]);
 }
 
+pub const GraphemeClass = enum {
+    other,
+    cr,
+    lf,
+    control,
+    extend,
+    zwj,
+    regional_indicator,
+    hangul_l,
+    hangul_v,
+    hangul_t,
+    hangul_lv,
+    hangul_lvt,
+};
+
+pub fn classifyGrapheme(cp: u21) GraphemeClass {
+    if (cp == '\r') return .cr;
+    if (cp == '\n') return .lf;
+    if (isControl(cp)) return .control;
+    if (cp == 0x200D) return .zwj;
+    if (cp >= 0x1F1E6 and cp <= 0x1F1FF) return .regional_indicator;
+    if ((cp >= 0x1100 and cp <= 0x115F) or (cp >= 0xA960 and cp <= 0xA97C)) return .hangul_l;
+    if ((cp >= 0x1160 and cp <= 0x11A7) or (cp >= 0xD7B0 and cp <= 0xD7C6)) return .hangul_v;
+    if ((cp >= 0x11A8 and cp <= 0x11FF) or (cp >= 0xD7CB and cp <= 0xD7FB)) return .hangul_t;
+    if (cp >= 0xAC00 and cp <= 0xD7A3) {
+        return if ((cp - 0xAC00) % 28 == 0) .hangul_lv else .hangul_lvt;
+    }
+    if (isCombining(cp)) return .extend;
+    return .other;
+}
+
+pub fn wcwidthClassified(cp: u21, class: GraphemeClass) u3 {
+    return switch (class) {
+        .cr, .lf, .control, .extend, .zwj => 0,
+        else => if (inRange(cp, wide_ranges[0..])) 2 else 1,
+    };
+}
+
+fn isBreakControl(class: GraphemeClass) bool {
+    return class == .cr or class == .lf or class == .control;
+}
+
+/// Allocation-free state for the terminal-focused subset of Unicode grapheme
+/// boundary rules used by both measurement and renderer cell iteration.
+pub const GraphemeBreakState = struct {
+    previous: ?GraphemeClass = null,
+    regional_count: u8 = 0,
+    pictograph_before_extends: bool = false,
+    join_next_pictograph: bool = false,
+
+    pub fn breaksBefore(self: GraphemeBreakState, next: GraphemeClass, next_is_pictographic: bool) bool {
+        const previous = self.previous orelse return false;
+
+        if (previous == .cr and next == .lf) return false;
+        if (isBreakControl(previous) or isBreakControl(next)) return true;
+
+        if (previous == .hangul_l and (next == .hangul_l or next == .hangul_v or next == .hangul_lv or next == .hangul_lvt)) return false;
+        if ((previous == .hangul_lv or previous == .hangul_v) and (next == .hangul_v or next == .hangul_t)) return false;
+        if ((previous == .hangul_lvt or previous == .hangul_t) and next == .hangul_t) return false;
+
+        if (next == .extend or next == .zwj) return false;
+        if (previous == .zwj and self.join_next_pictograph and next_is_pictographic) return false;
+        if (previous == .regional_indicator and next == .regional_indicator) {
+            return self.regional_count % 2 == 0;
+        }
+        return true;
+    }
+
+    pub fn advance(self: *GraphemeBreakState, class: GraphemeClass, is_pictographic: bool) void {
+        if (class == .regional_indicator) {
+            self.regional_count +|= 1;
+        } else {
+            self.regional_count = 0;
+        }
+
+        switch (class) {
+            .extend => {},
+            .zwj => {
+                self.join_next_pictograph = self.pictograph_before_extends;
+                self.pictograph_before_extends = false;
+            },
+            else => {
+                self.pictograph_before_extends = is_pictographic;
+                self.join_next_pictograph = false;
+            },
+        }
+        self.previous = class;
+    }
+};
+
 /// Measure a UTF-8 string using wcwidth semantics.
 pub fn measure(str: []const u8) Metrics {
     var utf8 = std.unicode.Utf8Iterator{ .bytes = str, .i = 0 };
     var width: u16 = 0;
+    var cluster_width: u3 = 0;
+    var cluster_started = false;
+    var boundaries = GraphemeBreakState{};
     var has_bidi = false;
     var has_emoji = false;
     var has_ligatures = false;
-    var pending_join = false;
     var has_combining = false;
 
     while (utf8.nextCodepoint()) |cp| {
-        if (cp == 0x200D) { // ZWJ
-            pending_join = true;
-            continue;
+        const class = classifyGrapheme(cp);
+        const emoji = emojiProperties(cp);
+        if (cluster_started and boundaries.breaksBefore(class, emoji.extended_pictographic)) {
+            width = addWidthSaturating(width, if (cluster_width == 0) 1 else cluster_width);
+            cluster_width = 0;
+            cluster_started = false;
+            boundaries = .{};
         }
 
-        const cp_width: u3 = wcwidth(cp);
-        const emoji_cp = isEmoji(cp);
-        if (cp_width == 0) has_combining = true;
-        if (pending_join and emoji_cp) {
-            pending_join = false;
-        } else {
-            width = addWidthSaturating(width, cp_width);
-            pending_join = false;
-        }
+        const cp_width = wcwidthClassified(cp, class);
+        cluster_width = @max(cluster_width, cp_width);
+        cluster_started = true;
+        boundaries.advance(class, emoji.extended_pictographic);
 
-        if (emoji_cp) has_emoji = true;
+        if (emoji.emoji) has_emoji = true;
+        if (class == .extend or class == .zwj) has_combining = true;
         if (!has_bidi and isBidi(cp)) has_bidi = true;
         if (!has_ligatures and (cp == 'f' or cp == 'i' or cp == 'l')) has_ligatures = true;
+    }
+    if (cluster_started) {
+        width = addWidthSaturating(width, if (cluster_width == 0) 1 else cluster_width);
     }
 
     return Metrics{
@@ -336,9 +445,26 @@ test "combining marks add zero width" {
 test "measure collapses zwj emoji sequences" {
     const family = "👩‍👩‍👧‍👦";
     const metrics = measure(family);
-    try std.testing.expect(metrics.width <= 4);
-    try std.testing.expect(metrics.width >= 2);
+    try std.testing.expectEqual(@as(u16, 2), metrics.width);
     try std.testing.expect(metrics.has_emoji);
+}
+
+test "measure keeps BMP pictograph ZWJ sequences atomic" {
+    try std.testing.expectEqual(@as(u16, 2), measure("❤️‍🔥").width);
+}
+
+test "measure keeps regional flags and decomposed Hangul atomic" {
+    try std.testing.expectEqual(@as(u16, 2), measure("🇮🇳").width);
+    try std.testing.expectEqual(@as(u16, 4), measure("🇮🇳🇦").width);
+    try std.testing.expectEqual(@as(u16, 2), measure("각").width);
+    try std.testing.expectEqual(@as(u16, 2), measure("각").width);
+}
+
+test "control boundaries occupy sanitized cells without looking combining" {
+    const metrics = measure("A\x1b[\r\nZ");
+    try std.testing.expectEqual(@as(u16, 5), metrics.width);
+    try std.testing.expect(!metrics.has_combining);
+    try std.testing.expect(isControl(0x009B));
 }
 
 test "needsWidthAccounting flags emoji" {

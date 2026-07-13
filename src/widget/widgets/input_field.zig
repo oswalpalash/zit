@@ -1307,6 +1307,24 @@ test "input field navigation and deletion keep graphemes atomic" {
     try std.testing.expect(std.unicode.utf8ValidateSlice(field.getText()));
 }
 
+test "input field navigation and deletion keep regional flags atomic" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 16);
+    defer field.deinit();
+    field.widget.focused = true;
+    try field.setText("A🇮🇳B");
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) };
+    const delete = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DELETE, .{}) };
+
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 9), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 1), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(delete));
+    try std.testing.expectEqualStrings("AB", field.getText());
+}
+
 test "input field keeps a wide-text caret visible without draw allocation" {
     const alloc = std.testing.allocator;
     const field = try InputField.init(alloc, 32);

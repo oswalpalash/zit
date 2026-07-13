@@ -8,17 +8,23 @@ pub const TextDirection = enum { ltr, rtl, auto };
 
 /// Compact grapheme representation used for width-aware rendering.
 pub const Grapheme = struct {
+    const length_mask: u8 = 0x3F;
+    const control_mask: u8 = 0x40;
     const overflow_mask: u8 = 0x80;
 
     bytes: [32]u8 = undefined,
-    /// Low seven bits store the inline byte length; the high bit records fallback.
+    /// Low six bits store length; the high bits record control and fallback state.
     len: u8 = 0,
     width: u3 = 0,
     has_rtl: bool = false,
     has_emoji: bool = false,
 
     pub fn byteLen(self: *const Grapheme) u8 {
-        return self.len & ~overflow_mask;
+        return self.len & length_mask;
+    }
+
+    pub fn hasControl(self: *const Grapheme) bool {
+        return self.len & control_mask != 0;
     }
 
     pub fn overflowed(self: *const Grapheme) bool {
@@ -27,6 +33,10 @@ pub const Grapheme = struct {
 
     fn markOverflowed(self: *Grapheme) void {
         self.len |= overflow_mask;
+    }
+
+    fn markControl(self: *Grapheme) void {
+        self.len |= control_mask;
     }
 
     pub fn slice(self: *const Grapheme) []const u8 {
@@ -47,7 +57,7 @@ pub const Grapheme = struct {
 
 fn clusterFallbackCodepoint(first: u21) u21 {
     const width = unicode_width.wcwidth(first);
-    return if (width == 0 or first == 0x200D) '?' else first;
+    return if (width == 0 or unicode_width.isControl(first) or first == 0x200D) '?' else first;
 }
 
 pub fn graphemeFromCodepoint(cp: u21) Grapheme {
@@ -63,6 +73,7 @@ pub fn graphemeFromCodepoint(cp: u21) Grapheme {
     g.width = if (width == 0) 1 else width;
     g.has_rtl = unicode_width.isBidi(cp);
     g.has_emoji = unicode_width.isEmoji(cp);
+    if (unicode_width.isControl(cp)) g.markControl();
     return g;
 }
 
@@ -77,7 +88,7 @@ pub const GraphemeIterator = struct {
     pub fn next(self: *GraphemeIterator) ?Grapheme {
         var grapheme = Grapheme{};
         var started = false;
-        var pending_join = false;
+        var boundaries = unicode_width.GraphemeBreakState{};
         var first_codepoint: u21 = 0;
 
         while (true) {
@@ -85,10 +96,9 @@ pub const GraphemeIterator = struct {
             const next_cp = self.it.nextCodepoint() orelse break;
             const cp_end = self.it.i;
             const cp_slice = self.it.bytes[cp_start..cp_end];
-            const cp_width: u3 = unicode_width.wcwidth(next_cp);
-            const combine_like = cp_width == 0 or next_cp == 0x200D;
-
-            if (started and !pending_join and !combine_like and cp_width > 0) {
+            const class = unicode_width.classifyGrapheme(next_cp);
+            const emoji = unicode_width.emojiProperties(next_cp);
+            if (started and boundaries.breaksBefore(class, emoji.extended_pictographic)) {
                 // New grapheme starts here.
                 self.it.i = cp_start;
                 break;
@@ -105,14 +115,14 @@ pub const GraphemeIterator = struct {
                 grapheme.markOverflowed();
             }
 
-            const metrics = unicode_width.measure(cp_slice);
-            const effective_width: u3 = @intCast(@min(metrics.width, 2));
+            const effective_width = unicode_width.wcwidthClassified(next_cp, class);
             if (effective_width > 0) grapheme.width = @max(grapheme.width, effective_width);
-            grapheme.has_rtl = grapheme.has_rtl or metrics.has_bidi;
-            grapheme.has_emoji = grapheme.has_emoji or metrics.has_emoji;
+            grapheme.has_rtl = grapheme.has_rtl or unicode_width.isBidi(next_cp);
+            grapheme.has_emoji = grapheme.has_emoji or emoji.emoji;
+            if (unicode_width.isControl(next_cp)) grapheme.markControl();
 
             started = true;
-            pending_join = next_cp == 0x200D;
+            boundaries.advance(class, emoji.extended_pictographic);
         }
 
         if (!started) return null;
@@ -122,10 +132,12 @@ pub const GraphemeIterator = struct {
             const width = grapheme.width;
             const has_rtl = grapheme.has_rtl;
             const has_emoji = grapheme.has_emoji;
+            const has_control = grapheme.hasControl();
             grapheme = graphemeFromCodepoint(clusterFallbackCodepoint(first_codepoint));
             grapheme.width = width;
             grapheme.has_rtl = has_rtl;
             grapheme.has_emoji = has_emoji;
+            if (has_control) grapheme.markControl();
             grapheme.markOverflowed();
         }
         return grapheme;
@@ -451,6 +463,64 @@ test "grapheme conversions keep joined emoji atomic" {
     try std.testing.expectEqual(@as(usize, 2), cellWidthThroughByte(family, family.len));
 }
 
+test "grapheme iterator isolates controls and keeps CRLF atomic" {
+    var it = GraphemeIterator.init("A\x1b[\r\nZ");
+
+    try std.testing.expectEqualStrings("A", it.next().?.slice());
+    const escape = it.next().?;
+    try std.testing.expectEqualStrings("\x1b", escape.slice());
+    try std.testing.expect(escape.hasControl());
+    try std.testing.expectEqualStrings("[", it.next().?.slice());
+    const crlf = it.next().?;
+    try std.testing.expectEqualStrings("\r\n", crlf.slice());
+    try std.testing.expect(crlf.hasControl());
+    try std.testing.expectEqualStrings("Z", it.next().?.slice());
+    try std.testing.expect(it.next() == null);
+}
+
+test "grapheme iterator pairs regional indicators and Hangul Jamo" {
+    const flag = "🇮🇳";
+    var flag_it = GraphemeIterator.init(flag ++ "X");
+    const flag_grapheme = flag_it.next().?;
+    try std.testing.expectEqualStrings(flag, flag_grapheme.slice());
+    try std.testing.expectEqual(@as(u3, 2), flag_grapheme.width);
+    try std.testing.expectEqual(flag.len, flag_it.it.i);
+    try std.testing.expectEqualStrings("X", flag_it.next().?.slice());
+
+    const three_indicators = "🇮🇳🇦";
+    var three_it = GraphemeIterator.init(three_indicators);
+    try std.testing.expectEqualStrings(flag, three_it.next().?.slice());
+    try std.testing.expectEqualStrings("🇦", three_it.next().?.slice());
+    try std.testing.expect(three_it.next() == null);
+
+    const hangul = "각";
+    var hangul_it = GraphemeIterator.init(hangul ++ "A");
+    const syllable = hangul_it.next().?;
+    try std.testing.expectEqualStrings(hangul, syllable.slice());
+    try std.testing.expectEqual(@as(u3, 2), syllable.width);
+    try std.testing.expectEqual(hangul.len, hangul_it.it.i);
+
+    const composed_lv = "각";
+    var composed_it = GraphemeIterator.init(composed_lv ++ "A");
+    try std.testing.expectEqualStrings(composed_lv, composed_it.next().?.slice());
+}
+
+test "non-emoji text after ZWJ starts a new grapheme" {
+    const joined = "a\u{200D}";
+    var it = GraphemeIterator.init(joined ++ "b");
+    try std.testing.expectEqualStrings(joined, it.next().?.slice());
+    try std.testing.expectEqualStrings("b", it.next().?.slice());
+}
+
+test "BMP pictograph ZWJ sequence stays atomic" {
+    const heart_on_fire = "❤️‍🔥";
+    var it = GraphemeIterator.init(heart_on_fire ++ "A");
+    const grapheme = it.next().?;
+    try std.testing.expectEqualStrings(heart_on_fire, grapheme.slice());
+    try std.testing.expectEqual(@as(u3, 2), grapheme.width);
+    try std.testing.expectEqual(heart_on_fire.len, it.it.i);
+}
+
 test "overlong grapheme fallback never stores partial UTF-8" {
     var text: [81]u8 = undefined;
     text[0] = 'e';
@@ -500,4 +570,10 @@ test "clipWithEllipsis keeps utf8 valid and respects wide glyph width" {
     try std.testing.expect(std.unicode.utf8ValidateSlice(clipped.text));
     try std.testing.expect(clipped.width <= 5);
     try std.testing.expectEqualStrings("ab...", clipped.text);
+}
+
+test "truncateToWidth does not split a regional flag pair" {
+    var buffer: [16]u8 = undefined;
+    const truncated = truncateToWidth("🇮🇳A", 2, &buffer, false);
+    try std.testing.expectEqualStrings("🇮🇳", truncated);
 }

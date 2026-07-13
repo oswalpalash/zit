@@ -1196,6 +1196,7 @@ pub const Renderer = struct {
     }
 
     fn renderableGrapheme(self: *Renderer, g: text_metrics.Grapheme) text_metrics.Grapheme {
+        if (g.hasControl()) return text_metrics.graphemeFromCodepoint('?');
         if (!self.capabilities.unicode) {
             const fallback_cp = self.capabilities.bestChar(g.firstCodepoint());
             return text_metrics.graphemeFromCodepoint(fallback_cp);
@@ -1888,6 +1889,47 @@ test "renderer replaces emoji when terminal capability is disabled" {
 
     try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer replaces C0 and C1 text controls before ANSI output" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+
+    renderer.drawStr(0, 0, "A\x1b[31mZ", Color.named(.white), Color.named(.black), .{});
+    renderer.drawStr(0, 1, "\r\nA", Color.named(.white), Color.named(.black), .{});
+    renderer.drawChar(0, 2, 0x009B, Color.named(.white), Color.named(.black), .{});
+    renderer.drawChar(1, 2, 'A', Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '['), renderer.back.getCell(2, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'Z'), renderer.back.getCell(6, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 2).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 2).codepoint());
+
+    var output = std.Io.Writer.Allocating.init(alloc);
+    defer output.deinit();
+    try renderer.renderToWriter(&output.writer);
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "\x1b[31m") == null);
+}
+
+test "renderer treats a regional flag as one wide grapheme" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.emoji = true;
+    renderer.capabilities.double_width = true;
+
+    renderer.drawStr(0, 0, "🇮🇳A", Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqualStrings("🇮🇳", renderer.back.getCell(0, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(1, 0).continuation);
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 0).codepoint());
 }
 
 test "renderer stores a valid fallback for overlong graphemes" {
