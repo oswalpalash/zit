@@ -50,6 +50,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Kitty/WezTerm/Ghostty raw-mode input now decodes the flag-1 CSI-u events that `Terminal` enables, including control/Alt combinations and keypad navigation; protocol stack ownership is idempotent and the interactive PTY release gate verifies push, decode, and pop behavior.
 - Renderer text can no longer inject terminal controls through glyph data: C0/C1 codepoints are isolated and replaced before ANSI output. Shared allocation-free boundary rules now keep measurement, clipping, rendering, and editing consistent for CRLF, emoji ZWJ sequences, regional-indicator flag pairs, and composed or decomposed Hangul.
 - Grapheme iteration now handles Unicode Prepend and SpacingMark properties, Indic conjuncts, emoji/text variation selectors, and keycap sequences consistently. Plain digits remain text when emoji output is disabled, while keycaps use their required two-cell emoji geometry.
 - Terminal cell widths now use generated Unicode 17 East Asian `W/F` data plus default emoji instead of broad hand-maintained ranges, fixing one-cell Yijing symbols and other omitted wide characters while keeping ambiguous, halfwidth, and neutral characters narrow by default.

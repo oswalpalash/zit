@@ -35,6 +35,7 @@ Before a feature is promoted as stable, it needs:
 - `ScreenManager` transition rendering must preserve stack order without allocating per frame.
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
+- Any terminal input protocol enabled by `Terminal` must have matching decoder coverage, idempotent per-instance ownership, symmetric cleanup, and an end-to-end PTY release check for negotiation, input, and restoration.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
 ## Release Checklist
@@ -78,7 +79,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_widget_owner_casts.py`
 - `python3 scripts/check_widget_lifecycle_mutation.py` to require production widget code and public examples to use lifecycle setters instead of direct focus, enabled, visibility, or TreeView expansion mutation.
 - `python3 scripts/check_widget_parent_attachment.py` to require production widget code and public examples to mutate parent links through `Widget.attachTo` and owner-checked `Widget.detachFrom`, while allowing test-only invalid-state setup.
-- `python3 scripts/interactive_example_smoke.py`
+- `python3 scripts/interactive_example_smoke.py` to verify every public interactive example renders and quits cleanly, plus a Kitty-capable PTY run that requires the flag-1 push, decodes an injected CSI-u Ctrl+C event, and observes the matching protocol-stack pop on exit.
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.
 - `python3 scripts/mouse_alignment_smoke.py --no-build` to verify real SGR mouse input maps terminal 1-based coordinates to Zit screen coordinates and clicks the rendered demo button only at its actual row.
 - `InputHandler.pollEvent` and `decodeEventFromBytes` are the input boundary for terminal mouse normalization: returned mouse events must already be zero-based and aligned with renderer/widget layout rects, numeric CSI/SGR parameters must be complete and validated before arithmetic, legacy X10/normal tracking bytes must be validated before arithmetic, `translateMouseCoordinates` must remain idempotent for those events, and raw terminal coordinates must use `translateTerminalMouseCoordinates` or `MouseEvent.fromTerminalCoordinates`.

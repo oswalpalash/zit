@@ -178,7 +178,18 @@ def terminate(pid: int) -> None:
         _ = wait_for_pid(pid, 0.5)
 
 
-def run_example(root: Path, example: Example, render_timeout: float, quit_timeout: float, rows: int, cols: int) -> bytes:
+def run_example(
+    root: Path,
+    example: Example,
+    render_timeout: float,
+    quit_timeout: float,
+    rows: int,
+    cols: int,
+    *,
+    term: str = "xterm-256color",
+    interaction: tuple[bytes, str] | None = None,
+    required_raw_markers: tuple[bytes, ...] = (),
+) -> bytes:
     if pty is None:
         raise RuntimeError("PTY support is unavailable on this platform")
 
@@ -191,7 +202,8 @@ def run_example(root: Path, example: Example, render_timeout: float, quit_timeou
         os.chdir(root)
         os.execvpe(str(binary), [str(binary)], {
             **os.environ,
-            "TERM": "xterm-256color",
+            "TERM": term,
+            "TERM_PROGRAM": "",
             "COLORTERM": "truecolor",
             "COLUMNS": str(cols),
             "LINES": str(rows),
@@ -220,6 +232,30 @@ def run_example(root: Path, example: Example, render_timeout: float, quit_timeou
                 f"{example.binary} did not render markers {example.markers!r} within {render_timeout:.1f}s\n"
                 f"--- terminal tail ---\n{tail_text(bytes(output))}"
             )
+
+        if interaction is not None:
+            input_bytes, expected_marker = interaction
+            try:
+                os.write(master_fd, input_bytes)
+            except OSError as err:
+                raise RuntimeError(f"{example.binary} rejected protocol input: {err}") from err
+
+            interaction_seen = False
+            interaction_deadline = time.monotonic() + render_timeout
+            while time.monotonic() < interaction_deadline:
+                output.extend(read_available(master_fd, 0.05))
+                if expected_marker in stripped_text(bytes(output)):
+                    interaction_seen = True
+                    break
+                if wait_for_pid(pid, 0.0) is not None:
+                    break
+            if not interaction_seen:
+                terminate(pid)
+                output.extend(read_available(master_fd, 0.2))
+                raise RuntimeError(
+                    f"{example.binary} did not render protocol marker {expected_marker!r}\n"
+                    f"--- terminal tail ---\n{tail_text(bytes(output))}"
+                )
 
         exit_code = None
         quit_deadline = time.monotonic() + quit_timeout
@@ -252,6 +288,12 @@ def run_example(root: Path, example: Example, render_timeout: float, quit_timeou
             if marker in text:
                 raise RuntimeError(
                     f"{example.binary} emitted fatal diagnostic marker {marker!r}\n"
+                    f"--- terminal tail ---\n{tail_text(bytes(output))}"
+                )
+        for marker in required_raw_markers:
+            if marker not in output:
+                raise RuntimeError(
+                    f"{example.binary} omitted terminal protocol bytes {marker!r}\n"
                     f"--- terminal tail ---\n{tail_text(bytes(output))}"
                 )
         return bytes(output)
@@ -303,6 +345,20 @@ def main() -> int:
     for example in examples:
         data = run_example(root, example, args.render_timeout, args.quit_timeout, args.rows, args.cols)
         print(f"ok {example.binary}: rendered markers and quit on q ({len(data)} bytes)")
+
+    if not args.targets or "input_test" in args.targets:
+        kitty_data = run_example(
+            root,
+            Example("input_test", ("Input Handler Test", "Press keys")),
+            args.render_timeout,
+            args.quit_timeout,
+            args.rows,
+            args.cols,
+            term="xterm-kitty",
+            interaction=(b"\x1b[99;5u", "Key: Ctrl+'c' (ASCII: 99)"),
+            required_raw_markers=(b"\x1b[>1u", b"\x1b[<u"),
+        )
+        print(f"ok input_test: Kitty CSI-u decoded and protocol stack restored ({len(kitty_data)} bytes)")
 
     print(f"interactive PTY smoke passed for {len(examples)} example(s)")
     return 0

@@ -361,6 +361,18 @@ pub fn decodeEventFromBytes(bytes: []const u8) !?Event {
         return Event{ .key = KeyEvent.init(KeyCode.ENTER, KeyModifiers{}) };
     }
 
+    if (first == KeyCode.BACKSPACE or first == 8) {
+        return Event{ .key = KeyEvent.init(KeyCode.BACKSPACE, KeyModifiers{}) };
+    }
+
+    if (first == KeyCode.TAB) {
+        return Event{ .key = KeyEvent.init(KeyCode.TAB, KeyModifiers{}) };
+    }
+
+    if (first < 32) {
+        return Event{ .key = KeyEvent.init(first, KeyModifiers{ .ctrl = true }) };
+    }
+
     if (first >= 0x80) {
         if (try readUtf8Key(first, &reader, &sink)) |cp| {
             return Event{ .key = KeyEvent.init(cp, KeyModifiers{}) };
@@ -1752,6 +1764,42 @@ fn modifiersFromParams(params: []const u16) KeyModifiers {
     return decodeModifierParam(params[params.len - 1]);
 }
 
+fn decodeKittyModifierParam(param: u16) ?KeyModifiers {
+    if (param == 0) return null;
+
+    const value = param - 1;
+    if ((value & ~@as(u16, 0xff)) != 0) return null;
+    const unsupported_semantic_modifiers = 0x38; // super, hyper, and meta
+    if ((value & unsupported_semantic_modifiers) != 0) return null;
+
+    return KeyModifiers{
+        .shift = (value & 0x1) != 0,
+        .alt = (value & 0x2) != 0,
+        .ctrl = (value & 0x4) != 0,
+    };
+}
+
+fn decodeKittyKeyCode(code: u16) ?u21 {
+    return switch (code) {
+        8, 127 => KeyCode.BACKSPACE,
+        9 => KeyCode.TAB,
+        13 => KeyCode.ENTER,
+        27 => KeyCode.ESCAPE,
+        57414 => KeyCode.ENTER,
+        57417 => KeyCode.LEFT,
+        57418 => KeyCode.RIGHT,
+        57419 => KeyCode.UP,
+        57420 => KeyCode.DOWN,
+        57421 => KeyCode.PAGE_UP,
+        57422 => KeyCode.PAGE_DOWN,
+        57423 => KeyCode.HOME,
+        57424 => KeyCode.END,
+        57425 => KeyCode.INSERT,
+        57426 => KeyCode.DELETE,
+        else => if (code <= 127) @as(u21, code) else null,
+    };
+}
+
 fn decodeCSIKey(final_char: u8, params: []const u16) ?KeyEvent {
     switch (final_char) {
         'A', 'B', 'C', 'D', 'H', 'F' => {
@@ -1811,6 +1859,12 @@ fn decodeCSIKey(final_char: u8, params: []const u16) ?KeyEvent {
                     .modifiers = modifiers,
                 };
             }
+        },
+        'u' => {
+            if (params.len == 0 or params.len > 2) return null;
+            const modifiers = decodeKittyModifierParam(if (params.len == 2) params[1] else 1) orelse return null;
+            const key_code = decodeKittyKeyCode(params[0]) orelse return null;
+            return KeyEvent.init(key_code, modifiers);
         },
         else => {},
     }
@@ -2034,6 +2088,54 @@ test "parse CSI shift tab" {
     const key_event = event.key;
     try std.testing.expectEqual(@as(u21, KeyCode.TAB), key_event.key);
     try std.testing.expect(key_event.modifiers.shift);
+}
+
+test "parse Kitty keyboard protocol flag one keys" {
+    const ctrl_c = (try decodeEventFromBytes("\x1b[99;5u")).?;
+    try std.testing.expectEqual(EventType.key, std.meta.activeTag(ctrl_c));
+    try std.testing.expectEqual(@as(u21, 'c'), ctrl_c.key.key);
+    try std.testing.expect(ctrl_c.key.modifiers.ctrl);
+
+    const alt_x = (try decodeEventFromBytes("\x1b[120;3u")).?;
+    try std.testing.expectEqual(@as(u21, 'x'), alt_x.key.key);
+    try std.testing.expect(alt_x.key.modifiers.alt);
+
+    const escape = (try decodeEventFromBytes("\x1b[27u")).?;
+    try std.testing.expectEqual(@as(u21, KeyCode.ESCAPE), escape.key.key);
+
+    const shifted_left = (try decodeEventFromBytes("\x1b[57417;2u")).?;
+    try std.testing.expectEqual(@as(u21, KeyCode.LEFT), shifted_left.key.key);
+    try std.testing.expect(shifted_left.key.modifiers.shift);
+
+    const caps_ctrl_c = (try decodeEventFromBytes("\x1b[99;69u")).?;
+    try std.testing.expect(caps_ctrl_c.key.modifiers.ctrl);
+}
+
+test "unsupported Kitty keyboard protocol keys are unknown" {
+    const unsupported_private_key = (try decodeEventFromBytes("\x1b[57358u")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(unsupported_private_key));
+
+    const super_modifier = (try decodeEventFromBytes("\x1b[99;9u")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(super_modifier));
+
+    const zero_modifier = (try decodeEventFromBytes("\x1b[99;0u")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(zero_modifier));
+
+    const undefined_modifier = (try decodeEventFromBytes("\x1b[99;257u")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(undefined_modifier));
+
+    const extended_event = (try decodeEventFromBytes("\x1b[99;5;1u")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(extended_event));
+}
+
+test "synthetic decoder normalizes legacy control keys" {
+    const legacy_ctrl_c = (try decodeEventFromBytes("\x03")).?;
+    const kitty_ctrl_c = (try decodeEventFromBytes("\x1b[99;5u")).?;
+    try std.testing.expect(legacy_ctrl_c.key.equals(kitty_ctrl_c.key));
+
+    const backspace = (try decodeEventFromBytes("\x08")).?;
+    try std.testing.expectEqual(@as(u21, KeyCode.BACKSPACE), backspace.key.key);
+    try std.testing.expect(!backspace.key.modifiers.ctrl);
 }
 
 test "parse bracketed paste delimiters as special keys" {

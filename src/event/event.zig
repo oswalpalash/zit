@@ -3578,6 +3578,7 @@ test "application input binding stores non-blocking poll configuration" {
         .is_sync_output = false,
         .is_alt_screen = false,
         .is_bracketed_paste = false,
+        .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
         .sigwinch_registered = false,
     };

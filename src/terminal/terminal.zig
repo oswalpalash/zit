@@ -256,6 +256,8 @@ pub const Terminal = struct {
     is_alt_screen: bool,
     /// Whether bracketed paste mode is active
     is_bracketed_paste: bool,
+    /// Whether this instance owns a Kitty keyboard protocol stack entry.
+    is_kitty_keyboard_enabled: bool = false,
     /// Whether Windows virtual terminal processing is available
     windows_vt_enabled: bool,
     /// Whether this terminal instance owns one reference to the SIGWINCH handler.
@@ -326,6 +328,7 @@ pub const Terminal = struct {
             .is_sync_output = false,
             .is_alt_screen = false,
             .is_bracketed_paste = false,
+            .is_kitty_keyboard_enabled = false,
             .windows_vt_enabled = windows_vt_enabled,
             .sigwinch_registered = false,
         };
@@ -347,6 +350,13 @@ pub const Terminal = struct {
 
         if (self.is_raw_mode) {
             self.disableRawMode() catch |err| rememberFirstError(&first_error, err);
+        }
+
+        if (self.is_kitty_keyboard_enabled) {
+            self.disableKittyKeyboardProtocol() catch |err| {
+                self.recordOptionalFeatureFailure(.kitty_keyboard_disable, err);
+                rememberFirstError(&first_error, err);
+            };
         }
 
         if (!self.is_cursor_visible) {
@@ -507,7 +517,7 @@ pub const Terminal = struct {
         var first_error: ?anyerror = null;
 
         // Disable the Kitty keyboard protocol first
-        if (self.capabilities.kitty_keyboard) {
+        if (self.is_kitty_keyboard_enabled) {
             self.disableKittyKeyboardProtocol() catch |err| self.recordOptionalFeatureFailure(.kitty_keyboard_disable, err);
         }
 
@@ -827,18 +837,18 @@ pub const Terminal = struct {
 
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
-        if (!self.capabilities.kitty_keyboard) return;
+        if (!self.capabilities.kitty_keyboard or self.is_kitty_keyboard_enabled) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        // Enable Kitty keyboard protocol (if the terminal supports it)
         try compat.stdoutWriteAll("\x1b[>1u");
+        self.is_kitty_keyboard_enabled = true;
     }
 
     /// Disable Kitty keyboard protocol
     pub fn disableKittyKeyboardProtocol(self: *Terminal) !void {
-        if (!self.capabilities.kitty_keyboard) return;
-        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        // Disable Kitty keyboard protocol
-        try compat.stdoutWriteAll("\x1b[<1u");
+        if (!self.is_kitty_keyboard_enabled) return;
+        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return error.VirtualTerminalUnavailable;
+        try compat.stdoutWriteAll("\x1b[<u");
+        self.is_kitty_keyboard_enabled = false;
     }
 
     /// Handle Unicode output
@@ -977,6 +987,7 @@ test "terminal releases SIGWINCH reference without terminal output" {
         .is_sync_output = false,
         .is_alt_screen = false,
         .is_bracketed_paste = false,
+        .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
         .sigwinch_registered = installSigwinchHandler(),
     };
@@ -1006,6 +1017,7 @@ test "terminal optional feature failures are observable and resettable" {
         .is_sync_output = false,
         .is_alt_screen = false,
         .is_bracketed_paste = false,
+        .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
         .sigwinch_registered = false,
     };
