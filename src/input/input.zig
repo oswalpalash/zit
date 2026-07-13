@@ -11,6 +11,7 @@ const windows_sync = struct {
 };
 
 const default_resize_poll_interval_ms: u64 = 125;
+const default_sequence_timeout_ms: u16 = 25;
 
 fn terminalMouseCoordToScreenCoord(value: u16) u16 {
     return if (value > 0) value - 1 else 0;
@@ -1263,11 +1264,25 @@ const FileByteReader = struct {
     }
 };
 
-const PosixByteReader = struct {
+const PosixTimedByteReader = struct {
     fd: std.posix.fd_t,
+    timeout_ms: u16,
 
-    fn readByte(self: *PosixByteReader) !u8 {
+    fn readByte(self: *PosixTimedByteReader) !u8 {
         if (builtin.os.tag == .windows) return error.Unsupported;
+
+        var poll_fds = [_]std.posix.pollfd{
+            .{
+                .fd = self.fd,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+        };
+        const ready = try std.posix.poll(&poll_fds, @intCast(self.timeout_ms));
+        if (ready <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+            return error.WouldBlock;
+        }
+
         var buf: [1]u8 = undefined;
         const amount = std.posix.read(self.fd, buf[0..1]) catch |err| {
             if (isNonBlockingError(err)) return error.WouldBlock;
@@ -1314,6 +1329,8 @@ pub const InputHandler = struct {
     resize_poll_interval_ms: u64,
     /// Last terminal-size poll timestamp.
     last_resize_poll_ms: i64,
+    /// Maximum POSIX wait for each byte continuing an input sequence.
+    sequence_timeout_ms: u16,
 
     /// Initialize a new input handler
     pub fn init(allocator: std.mem.Allocator, term: *terminal.Terminal) InputHandler {
@@ -1329,6 +1346,7 @@ pub const InputHandler = struct {
             .last_key_time = 0,
             .resize_poll_interval_ms = default_resize_poll_interval_ms,
             .last_resize_poll_ms = 0,
+            .sequence_timeout_ms = default_sequence_timeout_ms,
         };
     }
 
@@ -1338,6 +1356,15 @@ pub const InputHandler = struct {
     /// resize events are still consumed immediately.
     pub fn setResizePollInterval(self: *InputHandler, interval_ms: u64) void {
         self.resize_poll_interval_ms = interval_ms;
+    }
+
+    /// Configure the POSIX wait for bytes continuing ESC, CSI, and UTF-8 input.
+    ///
+    /// Complete sequences do not wait. Set `timeout_ms` to 0 for immediate
+    /// non-blocking reads; larger values tolerate fragmented SSH or PTY input
+    /// at the cost of the same maximum delay when distinguishing a lone Escape.
+    pub fn setSequenceTimeout(self: *InputHandler, timeout_ms: u16) void {
+        self.sequence_timeout_ms = timeout_ms;
     }
 
     /// Enable mouse tracking
@@ -1411,7 +1438,11 @@ pub const InputHandler = struct {
 
             // Check for escape sequence
             if (buffer[0] == 0x1b) {
-                return try self.parseEscapeSequenceMac(&sink);
+                var sequence_reader = PosixTimedByteReader{
+                    .fd = self.term.stdin_fd,
+                    .timeout_ms = self.sequence_timeout_ms,
+                };
+                return try self.parseEscapeSequence(&sequence_reader, &sink);
             }
 
             if (buffer[0] == KeyCode.BACKSPACE or buffer[0] == 8) {
@@ -1455,7 +1486,10 @@ pub const InputHandler = struct {
             }
 
             if (buffer[0] >= 0x80) {
-                var utf8_reader = PosixByteReader{ .fd = self.term.stdin_fd };
+                var utf8_reader = PosixTimedByteReader{
+                    .fd = self.term.stdin_fd,
+                    .timeout_ms = self.sequence_timeout_ms,
+                };
                 if (try readUtf8Key(buffer[0], &utf8_reader, &sink)) |cp| {
                     return Event{
                         .key = KeyEvent{
@@ -1494,7 +1528,14 @@ pub const InputHandler = struct {
 
         // Check for escape sequence
         if (byte == 0x1b) {
-            return try self.parseEscapeSequenceStandard(&reader, &sink);
+            if (builtin.os.tag == .windows) {
+                return try self.parseEscapeSequence(&reader, &sink);
+            }
+            var sequence_reader = PosixTimedByteReader{
+                .fd = self.term.stdin_fd,
+                .timeout_ms = self.sequence_timeout_ms,
+            };
+            return try self.parseEscapeSequence(&sequence_reader, &sink);
         }
 
         if (byte == KeyCode.BACKSPACE or byte == 8) {
@@ -1538,7 +1579,16 @@ pub const InputHandler = struct {
         }
 
         if (byte >= 0x80) {
-            if (try readUtf8Key(byte, &reader, &sink)) |cp| {
+            const codepoint = if (builtin.os.tag == .windows)
+                try readUtf8Key(byte, &reader, &sink)
+            else blk: {
+                var sequence_reader = PosixTimedByteReader{
+                    .fd = self.term.stdin_fd,
+                    .timeout_ms = self.sequence_timeout_ms,
+                };
+                break :blk try readUtf8Key(byte, &sequence_reader, &sink);
+            };
+            if (codepoint) |cp| {
                 return Event{
                     .key = KeyEvent{
                         .key = cp,
@@ -1558,56 +1608,7 @@ pub const InputHandler = struct {
         };
     }
 
-    fn parseEscapeSequenceMac(self: *InputHandler, sink: anytype) !Event {
-        const escape_event = Event{
-            .key = KeyEvent{
-                .key = KeyCode.ESCAPE,
-                .modifiers = KeyModifiers{},
-            },
-        };
-
-        var buffer: [1]u8 = undefined;
-        var poll_fds = [_]std.posix.pollfd{
-            .{
-                .fd = self.term.stdin_fd,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            },
-        };
-
-        // Poll with a very short timeout (5ms) to distinguish solo ESC from sequences
-        const poll_result = std.posix.poll(&poll_fds, 5) catch {
-            return escape_event;
-        };
-
-        if (poll_result <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
-            return escape_event;
-        }
-
-        const amount = std.posix.read(self.term.stdin_fd, buffer[0..1]) catch {
-            return escape_event;
-        };
-
-        if (amount == 0) {
-            return escape_event;
-        }
-
-        sink.put(buffer[0]);
-
-        if (buffer[0] == '[') {
-            var reader = PosixByteReader{ .fd = self.term.stdin_fd };
-            return try parseCSISequence(&reader, sink);
-        }
-
-        return Event{
-            .key = KeyEvent{
-                .key = buffer[0],
-                .modifiers = KeyModifiers{ .alt = true },
-            },
-        };
-    }
-
-    fn parseEscapeSequenceStandard(_: *InputHandler, reader: anytype, sink: anytype) !Event {
+    fn parseEscapeSequence(_: *InputHandler, reader: anytype, sink: anytype) !Event {
         const escape_event = Event{
             .key = KeyEvent{
                 .key = KeyCode.ESCAPE,
@@ -2402,6 +2403,17 @@ test "resize polling throttle handles first poll interval and clock movement" {
     try std.testing.expect(!shouldPollResize(1000, 1100, 125));
     try std.testing.expect(shouldPollResize(1000, 1125, 125));
     try std.testing.expect(shouldPollResize(1000, 900, 125));
+}
+
+test "input sequence timeout is configurable" {
+    var term: terminal.Terminal = undefined;
+    var handler = InputHandler.init(std.testing.allocator, &term);
+
+    try std.testing.expectEqual(default_sequence_timeout_ms, handler.sequence_timeout_ms);
+    handler.setSequenceTimeout(0);
+    try std.testing.expectEqual(@as(u16, 0), handler.sequence_timeout_ms);
+    handler.setSequenceTimeout(80);
+    try std.testing.expectEqual(@as(u16, 80), handler.sequence_timeout_ms);
 }
 
 test "input terminal modes are restored by terminal deinit before raw cleanup" {

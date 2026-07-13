@@ -36,6 +36,7 @@ Before a feature is promoted as stable, it needs:
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
 - Any terminal input protocol enabled by `Terminal` must have matching decoder coverage, idempotent per-instance ownership, symmetric cleanup, and an end-to-end PTY release check for negotiation, input, and restoration.
+- POSIX input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait; the PTY gate injects protocol bytes individually to preserve this contract.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
 ## Release Checklist
@@ -79,7 +80,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_widget_owner_casts.py`
 - `python3 scripts/check_widget_lifecycle_mutation.py` to require production widget code and public examples to use lifecycle setters instead of direct focus, enabled, visibility, or TreeView expansion mutation.
 - `python3 scripts/check_widget_parent_attachment.py` to require production widget code and public examples to mutate parent links through `Widget.attachTo` and owner-checked `Widget.detachFrom`, while allowing test-only invalid-state setup.
-- `python3 scripts/interactive_example_smoke.py` to verify every public interactive example renders and quits cleanly, plus a Kitty-capable PTY run that requires the flag-1 and focus-reporting setup, decodes injected focus-in/focus-out and CSI-u Ctrl+C events, and observes both matching cleanup sequences on exit.
+- `python3 scripts/interactive_example_smoke.py` to verify every public interactive example renders and quits cleanly, plus a Kitty-capable PTY run that injects focus-in/focus-out and CSI-u Ctrl+C one byte at a time, requires their decoding, and observes matching flag-1 and focus-reporting setup and cleanup sequences.
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.
 - `python3 scripts/mouse_alignment_smoke.py --no-build` to verify real SGR mouse input maps terminal 1-based coordinates to Zit screen coordinates and clicks the rendered demo button only at its actual row.
 - `InputHandler.pollEvent` and `decodeEventFromBytes` are the input boundary for terminal mouse normalization: returned mouse events must already be zero-based and aligned with renderer/widget layout rects, numeric CSI/SGR parameters must be complete and validated before arithmetic, legacy X10/normal tracking bytes must be validated before arithmetic, `translateMouseCoordinates` must remain idempotent for those events, and raw terminal coordinates must use `translateTerminalMouseCoordinates` or `MouseEvent.fromTerminalCoordinates`.
@@ -91,7 +92,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
 - `python3 scripts/check_io_event_ownership_docs.py` rejects stale examples that call `deinit()` directly on manager-owned file watchers or network contexts returned by `watchFile` / `connectToServer`.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
-- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable; rejects empty `catch {}` blocks on terminal cleanup paths; and enforces instance-handle output, terminal-owned mouse state, pre-write cleanup obligations, and VT-mode teardown before raw-mode restoration.
+- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable; rejects empty `catch {}` blocks on terminal cleanup paths; and enforces instance-handle output, terminal-owned mouse state, bounded POSIX input continuations with fragmented PTY coverage, pre-write cleanup obligations, and VT-mode teardown before raw-mode restoration.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
 - `python3 scripts/check_draw_layout_boundary.py` rejects child layout calls from production widget draw callbacks so redraws cannot republish geometry or accessibility bounds.
 - `python3 scripts/check_widget_parent_attachment.py` rejects direct `Widget.parent` assignments outside the guarded ownership primitives so new composite widgets cannot silently reparent children or clear links owned elsewhere.

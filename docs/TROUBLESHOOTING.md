@@ -69,6 +69,16 @@ python3 scripts/mouse_alignment_smoke.py --no-build
 
 Reference: [API.md](API.md#mouse-coordinates).
 
+## Escape Sequences or UTF-8 Keys Decode Incorrectly
+
+Zit waits up to 25 ms for each byte continuing a POSIX ESC, CSI, mouse, or UTF-8 sequence. If a high-latency SSH, tmux, or nested-terminal connection still splits sequences beyond that interval, increase the bound before entering the event loop:
+
+```zig
+input_handler.setSequenceTimeout(80);
+```
+
+Lowering the value reduces lone-Escape latency. A value of `0` disables continuation waiting and is appropriate only when the input transport delivers complete sequences atomically.
+
 ## Terminal State Is Not Restored
 
 Likely causes:

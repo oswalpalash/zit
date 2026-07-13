@@ -153,6 +153,32 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
     return failures
 
 
+def validate_fragmented_input_contract(root: Path) -> list[str]:
+    failures: list[str] = []
+    input_text = (root / "src/input/input.zig").read_text(encoding="utf-8")
+    smoke_text = (root / "scripts/interactive_example_smoke.py").read_text(encoding="utf-8")
+
+    for marker in (
+        "default_sequence_timeout_ms",
+        "PosixTimedByteReader",
+        "setSequenceTimeout",
+    ):
+        if marker not in input_text:
+            failures.append(f"src/input/input.zig: missing fragmented-input contract marker {marker}")
+
+    if "parseEscapeSequenceMac" in input_text or "parseEscapeSequenceStandard" in input_text:
+        failures.append("src/input/input.zig: POSIX escape parsing must use the shared timed continuation path")
+
+    for marker in (
+        "interaction_byte_delay",
+        "interaction_byte_delay=0.002",
+    ):
+        if marker not in smoke_text:
+            failures.append(f"scripts/interactive_example_smoke.py: missing fragmented PTY input marker {marker}")
+
+    return failures
+
+
 def main() -> int:
     root = repo_root()
     failures: list[str] = []
@@ -187,6 +213,7 @@ def main() -> int:
 
     failures.extend(validate_no_silent_cleanup(root))
     failures.extend(validate_terminal_driver_ownership(root))
+    failures.extend(validate_fragmented_input_contract(root))
 
     if failures:
         sys.stderr.write("interactive examples must restore terminal state they enable and report cleanup failures:\n")
@@ -196,7 +223,7 @@ def main() -> int:
 
     print(
         f"checked {checked} interactive example(s) for terminal-state cleanup symmetry, "
-        "driver ownership, and silent cleanup catches"
+        "driver ownership, fragmented input, and silent cleanup catches"
     )
     return 0
 

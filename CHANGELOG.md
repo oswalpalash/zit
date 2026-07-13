@@ -51,6 +51,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- POSIX input now applies a configurable bounded wait to every ESC, CSI, mouse, and UTF-8 continuation byte, preventing SSH, tmux, and PTY fragmentation from turning complete sequences into `.unknown` events; the interactive PTY release gate injects Kitty and focus protocol input one byte at a time.
 - Terminal ANSI operations now honor each instance's `stdout_fd`; failed mode setup retains a cleanup obligation, VT modes restore before raw Windows console modes, and `InputHandler` delegates mouse tracking to terminal-owned state instead of maintaining a second unsynchronized owner.
 - Kitty/WezTerm/Ghostty raw-mode input now decodes the flag-1 CSI-u events that `Terminal` enables, including control/Alt combinations and keypad navigation; protocol stack ownership is idempotent and the interactive PTY release gate verifies push, decode, and pop behavior.
 - Renderer text can no longer inject terminal controls through glyph data: C0/C1 codepoints are isolated and replaced before ANSI output. Shared allocation-free boundary rules now keep measurement, clipping, rendering, and editing consistent for CRLF, emoji ZWJ sequences, regional-indicator flag pairs, and composed or decomposed Hangul.

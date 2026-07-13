@@ -188,6 +188,7 @@ def run_example(
     *,
     term: str = "xterm-256color",
     interaction: tuple[bytes, str] | None = None,
+    interaction_byte_delay: float = 0.0,
     required_text_markers: tuple[str, ...] = (),
     required_raw_markers: tuple[bytes, ...] = (),
 ) -> bytes:
@@ -237,7 +238,12 @@ def run_example(
         if interaction is not None:
             input_bytes, expected_marker = interaction
             try:
-                os.write(master_fd, input_bytes)
+                if interaction_byte_delay > 0:
+                    for byte in input_bytes:
+                        os.write(master_fd, bytes((byte,)))
+                        time.sleep(interaction_byte_delay)
+                else:
+                    os.write(master_fd, input_bytes)
             except OSError as err:
                 raise RuntimeError(f"{example.binary} rejected protocol input: {err}") from err
 
@@ -363,10 +369,11 @@ def main() -> int:
             args.cols,
             term="xterm-kitty",
             interaction=(b"\x1b[I\x1b[O\x1b[99;5u", "Key: Ctrl+'c' (ASCII: 99)"),
+            interaction_byte_delay=0.002,
             required_text_markers=("Focus: gained", "Focus: lost", "Focus events: 2"),
             required_raw_markers=(b"\x1b[>1u", b"\x1b[<u", b"\x1b[?1004h", b"\x1b[?1004l"),
         )
-        print(f"ok input_test: Kitty CSI-u and focus events decoded; protocol modes restored ({len(kitty_data)} bytes)")
+        print(f"ok input_test: fragmented Kitty CSI-u and focus events decoded; protocol modes restored ({len(kitty_data)} bytes)")
 
     print(f"interactive PTY smoke passed for {len(examples)} example(s)")
     return 0
