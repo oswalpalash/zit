@@ -116,11 +116,18 @@ pub const Widget = struct {
 
     /// Layout the widget
     pub fn layout(self: *Widget, rect: layout_module.Rect) !void {
-        const previous = self.rect;
+        const previous_rect = self.rect;
+        const previous_dirty = self.dirty;
+        const previous_dirty_rect = self.dirty_rect;
         self.rect = rect;
-        try self.vtable.layout(self, rect);
-        if (!rectEql(previous, self.rect)) {
-            self.markDirtyRect(rectUnion(previous, self.rect));
+        self.vtable.layout(self, rect) catch |err| {
+            self.rect = previous_rect;
+            self.dirty = previous_dirty;
+            self.dirty_rect = previous_dirty_rect;
+            return err;
+        };
+        if (!rectEql(previous_rect, self.rect)) {
+            self.markDirtyRect(rectUnion(previous_rect, self.rect));
         }
         if (self.accessibility_update_bounds) |cb| {
             cb(self.accessibility_ctx, self, self.rect);
@@ -920,6 +927,58 @@ test "layout adapter returns safe defaults on failure" {
 
     // Buffer remains untouched because draw failed gracefully.
     try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+}
+
+test "widget layout restores public geometry and dirty state on failure" {
+    const FailingWidget = struct {
+        widget: Widget = Widget.init(&vtable),
+        bounds_updates: usize = 0,
+
+        const vtable = Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, _: layout_module.Rect) anyerror!void {
+            const widget_ref: *Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            self.widget.rect = layout_module.Rect.init(20, 21, 22, 23);
+            self.widget.dirty = true;
+            self.widget.dirty_rect = layout_module.Rect.init(24, 25, 26, 27);
+            return error.ForcedLayout;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.zero();
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+        fn updateBounds(_: ?*anyopaque, widget: *Widget, _: layout_module.Rect) void {
+            const self: *@This() = @fieldParentPtr("widget", widget);
+            self.bounds_updates += 1;
+        }
+    };
+
+    var instance = FailingWidget{};
+    const previous_rect = layout_module.Rect.init(1, 2, 3, 4);
+    const previous_dirty_rect = layout_module.Rect.init(5, 6, 7, 8);
+    instance.widget.rect = previous_rect;
+    instance.widget.dirty = false;
+    instance.widget.dirty_rect = previous_dirty_rect;
+    instance.widget.accessibility_update_bounds = FailingWidget.updateBounds;
+
+    try std.testing.expectError(error.ForcedLayout, instance.widget.layout(layout_module.Rect.init(9, 10, 11, 12)));
+    try std.testing.expect(rectEql(previous_rect, instance.widget.rect));
+    try std.testing.expect(!instance.widget.dirty);
+    try std.testing.expect(rectEql(previous_dirty_rect, instance.widget.dirty_rect.?));
+    try std.testing.expectEqual(@as(usize, 0), instance.bounds_updates);
 }
 
 test "focus ring clamps edge coordinates and oversized insets" {

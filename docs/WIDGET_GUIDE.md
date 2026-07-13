@@ -24,7 +24,7 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 5. **deinit** – free any heap-backed data you own and return the struct to the pool.
 
 ## Best Practices
-- Keep layout pure: don’t mutate state other than geometry; cache expensive measurements.
+- Keep layout pure: don’t mutate state other than geometry; cache expensive measurements. If a widget vtable layout returns an error, `Widget.layout` restores that widget's public rect and dirty-region state and does not publish accessibility bounds. Composite widgets must likewise leave private caches and any children already visited in a coherent state before returning an error.
 - Use the arena for ephemeral buffers (measurements, composed strings) and the parent allocator for long-lived assets (text content, icon caches).
 - Always check `visible`/`enabled` early in `handleEvent`; the base widget already guards but sibling helpers may call you directly.
 - Prefer propagation-friendly handlers: let parents intercept in capturing (e.g., for focus management) and bubble up unhandled events.

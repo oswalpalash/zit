@@ -94,6 +94,7 @@ Before a feature is promoted as stable, it needs:
 - Navigation stacks that own copied route/screen metadata must reserve collection and transition capacity before taking ownership, then roll back appended entries if a later hook or transition setup fails.
 - `ScreenManager` rapid navigation must settle an active transition before replacing its descriptor or handles, and all fallible preflight must complete before settlement so allocation/layout failure preserves the in-flight transition.
 - Rejected `ScreenManager` candidates must recover public layout/dirty/visibility state, and candidates already owned by another visibility animator must be rejected before attachment.
+- Failed `Widget.layout` calls must restore the widget's public rect and dirty-region state and must not publish failed accessibility bounds; composite vtables remain responsible for private cache and child-layout consistency.
 - Catalog/map-style APIs that accept caller-provided string keys must either document borrowed lifetimes explicitly or own key copies; stable public catalogs default to owning keys and values transactionally.
 - Widget initializers that allocate after `allocator.create` must use `errdefer` cleanup or a fully initialized `deinit` path before any later fallible operation; `check_owned_allocation_patterns.py` enforces this for owned string copies before `self.*` initialization.
 - Review README, API docs, examples, and changelog for claims that exceed tested behavior.
