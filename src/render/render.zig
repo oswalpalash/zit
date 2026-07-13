@@ -1282,6 +1282,34 @@ pub const Renderer = struct {
         };
     }
 
+    fn clearWideOverlaps(self: *Renderer, x: u16, y: u16, width: u16) void {
+        const min_x = if (self.viewport) |vp| vp.x else 0;
+        const max_x = if (self.viewport) |vp|
+            @min(self.back.width, saturatingAddU16(vp.x, vp.width))
+        else
+            self.back.width;
+        const end_x = @min(max_x, saturatingAddU16(x, width));
+        var target_x = x;
+        while (target_x < end_x) : (target_x += 1) {
+            const existing = self.back.getCell(target_x, y).*;
+            if (existing.continuation and target_x > min_x) {
+                const lead_x = target_x - 1;
+                const lead = self.back.getCell(lead_x, y).*;
+                if (!lead.continuation and lead.glyph.width > 1) {
+                    self.back.setCell(lead_x, y, Cell.init(' ', lead.fg, lead.bg, lead.style));
+                    self.markDirtyRect(lead_x, y, 1, 1);
+                }
+            } else if (!existing.continuation and existing.glyph.width > 1 and target_x + 1 < max_x) {
+                const continuation_x = target_x + 1;
+                const continuation = self.back.getCell(continuation_x, y).*;
+                if (continuation.continuation) {
+                    self.back.setCell(continuation_x, y, Cell.init(' ', continuation.fg, continuation.bg, continuation.style));
+                    self.markDirtyRect(continuation_x, y, 1, 1);
+                }
+            }
+        }
+    }
+
     fn drawGrapheme(self: *Renderer, x: u16, y: u16, grapheme: text_metrics.Grapheme, fg: Color, bg: Color, style: Style) void {
         const mapped = self.mapPoint(x, y) orelse return;
         const resolved_x = mapped.x;
@@ -1296,6 +1324,7 @@ pub const Renderer = struct {
             self.back.width;
         if (std.math.add(u32, @as(u32, resolved_x), @as(u32, width) - 1) catch std.math.maxInt(u32) >= max_x) return;
 
+        self.clearWideOverlaps(resolved_x, resolved_y, width);
         const cell = Cell.initGrapheme(renderable, fg, bg, style);
         self.back.setCell(resolved_x, resolved_y, cell);
         self.markDirtyRect(resolved_x, resolved_y, width, 1);
@@ -1310,28 +1339,33 @@ pub const Renderer = struct {
 
     fn prepareGraphemes(self: *Renderer, text: []const u8, direction: TextDirection) ?void {
         self.grapheme_scratch.clearRetainingCapacity();
-        if (text.len > self.grapheme_scratch.capacity) return null;
-        if (!self.capabilities.bidi or direction == .rtl) {
-            _ = text_metrics.collectVisualOrder(text, direction, &self.grapheme_scratch, self.allocator) catch return null;
-            return;
-        }
-
         var it = text_metrics.GraphemeIterator.init(text);
         while (it.next()) |g| {
-            self.grapheme_scratch.append(self.allocator, g) catch return null;
+            if (self.grapheme_scratch.items.len >= self.grapheme_scratch.capacity) return null;
+            self.grapheme_scratch.appendAssumeCapacity(g);
+        }
+
+        if (!self.capabilities.bidi or direction == .rtl) {
+            const resolved = text_metrics.resolveDirection(direction, text);
+            if (resolved == .rtl and self.grapheme_scratch.items.len > 1) {
+                std.mem.reverse(text_metrics.Grapheme, self.grapheme_scratch.items);
+            }
         }
     }
 
-    fn drawFallbackBytes(self: *Renderer, x: u16, y: u16, text: []const u8, fg: Color, bg: Color, style: Style) void {
-        var utf8_it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    fn drawFallbackGraphemes(self: *Renderer, x: u16, y: u16, text: []const u8, fg: Color, bg: Color, style: Style) void {
+        var it = text_metrics.GraphemeIterator.init(text);
         var cursor: u32 = 0;
         const use_bounds = self.viewport == null;
-        while (utf8_it.nextCodepoint()) |cp| {
+        while (it.next()) |grapheme| {
             const target_x = std.math.add(u32, @as(u32, x), @as(u32, cursor)) catch break;
             if (use_bounds and target_x >= self.back.width) break;
             if (target_x > std.math.maxInt(u16)) break;
-            self.drawGrapheme(@intCast(target_x), y, text_metrics.graphemeFromCodepoint(cp), fg, bg, style);
-            cursor += 1;
+            const renderable = self.renderableGrapheme(grapheme);
+            const width: u16 = @intCast(@min(@as(u16, renderable.width), @as(u16, 2)));
+            if (use_bounds and target_x + width > self.back.width) break;
+            self.drawGrapheme(@intCast(target_x), y, grapheme, fg, bg, style);
+            cursor += width;
         }
     }
 
@@ -1353,14 +1387,15 @@ pub const Renderer = struct {
     /// Draw text with an explicit direction override.
     pub fn drawTextDir(self: *Renderer, x: u16, y: u16, str: []const u8, direction: TextDirection, fg: Color, bg: Color, style: Style) void {
         self.prepareGraphemes(str, direction) orelse {
-            self.drawFallbackBytes(x, y, str, fg, bg, style);
+            self.drawFallbackGraphemes(x, y, str, fg, bg, style);
             return;
         };
 
         var cursor: u32 = x;
         const use_bounds = self.viewport == null;
         for (self.grapheme_scratch.items) |g| {
-            const width: u16 = @intCast(@min(@as(u16, g.width), @as(u16, 2)));
+            const renderable = self.renderableGrapheme(g);
+            const width: u16 = @intCast(@min(@as(u16, renderable.width), @as(u16, 2)));
             if (width == 0) continue;
             if (use_bounds) {
                 if (cursor >= self.back.width) break;
@@ -1801,6 +1836,78 @@ test "renderer handles double width glyphs" {
     try std.testing.expect(trail);
 }
 
+test "renderer scratch admission counts graphemes instead of UTF-8 bytes" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 44, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    const text = "界界界界界界界界界界界界界界界界界界界界界界";
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = renderer.allocator;
+    renderer.allocator = failing.allocator();
+    defer renderer.allocator = original_allocator;
+
+    renderer.drawStr(0, 0, text, Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(usize, 22), renderer.grapheme_scratch.items.len);
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(2, 0).codepoint());
+    try std.testing.expect(renderer.back.getCell(3, 0).continuation);
+}
+
+test "renderer advances by capability-adjusted grapheme width" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = false;
+
+    renderer.drawStr(0, 0, "界A", Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expect(!renderer.back.getCell(0, 0).continuation);
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer clears displaced wide glyph continuation cells" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    renderer.drawStr(0, 0, "界A", Color.named(.white), Color.named(.black), .{});
+    try std.testing.expect(renderer.back.getCell(1, 0).continuation);
+
+    renderer.drawChar(0, 0, '_', Color.named(.white), Color.named(.black), .{ .underline = true });
+
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expect(!renderer.back.getCell(1, 0).continuation);
+    try std.testing.expect(!renderer.back.getCell(1, 0).style.underline);
+
+    renderer.drawStr(0, 0, "界", Color.named(.white), Color.named(.black), .{});
+    renderer.drawChar(1, 0, 'X', Color.named(.white), Color.named(.black), .{});
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'X'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer over-capacity fallback preserves grapheme widths" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    const text = "e\u{0301}界aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    renderer.drawStr(0, 0, text, Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqualStrings("e\u{0301}", renderer.back.getCell(0, 0).glyph.slice());
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+}
+
 test "renderer preserves ASCII glyph bytes" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 8, 2);
@@ -1906,7 +2013,7 @@ test "renderer clips viewport text before u16 cursor overflow" {
     renderer.drawTextDir(std.math.maxInt(u16) - 1, 0, "WXYZ", .ltr, fg, bg, Style{});
 }
 
-test "renderer fallback text clips before u16 cursor overflow" {
+test "renderer fallback graphemes clip before u16 cursor overflow" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 2, 1);
     defer renderer.deinit();
@@ -1914,7 +2021,7 @@ test "renderer fallback text clips before u16 cursor overflow" {
     var viewport = Renderer.Viewport{ .x = 0, .y = 0, .width = 2, .height = 1 };
     renderer.setViewport(&viewport);
 
-    renderer.drawFallbackBytes(
+    renderer.drawFallbackGraphemes(
         std.math.maxInt(u16) - 1,
         0,
         "ABCD",

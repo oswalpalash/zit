@@ -96,6 +96,91 @@ pub const GraphemeIterator = struct {
     }
 };
 
+/// Clamp a byte offset to the start or end of a grapheme cluster.
+pub fn graphemeBoundaryAtOrBefore(text: []const u8, byte_offset: usize) usize {
+    const bounded = @min(byte_offset, text.len);
+    var boundary: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |_| {
+        const next = it.it.i;
+        if (next > bounded) break;
+        boundary = next;
+    }
+    return boundary;
+}
+
+/// Clamp a byte offset to the next grapheme boundary when it falls inside one.
+pub fn graphemeBoundaryAtOrAfter(text: []const u8, byte_offset: usize) usize {
+    const bounded = @min(byte_offset, text.len);
+    const before = graphemeBoundaryAtOrBefore(text, bounded);
+    if (before == bounded) return bounded;
+    return nextGraphemeBoundary(text, before);
+}
+
+/// Return the grapheme boundary immediately before a normalized byte offset.
+pub fn previousGraphemeBoundary(text: []const u8, byte_offset: usize) usize {
+    const bounded = graphemeBoundaryAtOrBefore(text, byte_offset);
+    if (bounded == 0) return 0;
+
+    var previous: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |_| {
+        const next = it.it.i;
+        if (next >= bounded) break;
+        previous = next;
+    }
+    return previous;
+}
+
+/// Return the grapheme boundary immediately after a normalized byte offset.
+pub fn nextGraphemeBoundary(text: []const u8, byte_offset: usize) usize {
+    const bounded = graphemeBoundaryAtOrBefore(text, byte_offset);
+    if (bounded >= text.len) return text.len;
+
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |_| {
+        if (it.it.i > bounded) return it.it.i;
+    }
+    return text.len;
+}
+
+/// Measure complete grapheme cells ending at or before a byte offset.
+pub fn cellWidthThroughByte(text: []const u8, byte_offset: usize) usize {
+    const bounded = @min(byte_offset, text.len);
+    var cells: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |grapheme| {
+        if (it.it.i > bounded) break;
+        cells = std.math.add(usize, cells, grapheme.width) catch std.math.maxInt(usize);
+    }
+    return cells;
+}
+
+/// Map a terminal-cell column to the last complete grapheme byte boundary.
+pub fn byteOffsetForCellColumn(text: []const u8, target_col: usize) usize {
+    var cells: usize = 0;
+    var boundary: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |grapheme| {
+        const next_cells = std.math.add(usize, cells, grapheme.width) catch std.math.maxInt(usize);
+        if (next_cells > target_col) break;
+        cells = next_cells;
+        boundary = it.it.i;
+    }
+    return boundary;
+}
+
+/// Round a terminal-cell column up when it falls inside a wide grapheme.
+pub fn cellColumnAtOrAfter(text: []const u8, target_col: usize) usize {
+    var cells: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |grapheme| {
+        if (cells >= target_col) return cells;
+        cells = std.math.add(usize, cells, grapheme.width) catch return std.math.maxInt(usize);
+    }
+    return cells;
+}
+
 /// Width calculation using wcwidth semantics to match terminal rendering.
 pub fn measureWidth(str: []const u8) Metrics {
     return unicode_width.measure(str);
@@ -299,6 +384,34 @@ test "grapheme iterator keeps emoji intact" {
     try std.testing.expectEqual(@as(u3, 1), first.width);
     const second = it.next().?;
     try std.testing.expectEqual(@as(u3, 2), second.width);
+}
+
+test "grapheme byte and cell conversions preserve cluster boundaries" {
+    const text = "A界e\u{0301}😁";
+
+    try std.testing.expectEqual(@as(usize, 1), graphemeBoundaryAtOrBefore(text, 2));
+    try std.testing.expectEqual(@as(usize, 4), graphemeBoundaryAtOrAfter(text, 2));
+    try std.testing.expectEqual(@as(usize, 4), previousGraphemeBoundary(text, 7));
+    try std.testing.expectEqual(@as(usize, 7), nextGraphemeBoundary(text, 4));
+
+    try std.testing.expectEqual(@as(usize, 1), cellWidthThroughByte(text, 1));
+    try std.testing.expectEqual(@as(usize, 3), cellWidthThroughByte(text, 4));
+    try std.testing.expectEqual(@as(usize, 4), cellWidthThroughByte(text, 7));
+    try std.testing.expectEqual(@as(usize, 6), cellWidthThroughByte(text, text.len));
+
+    try std.testing.expectEqual(@as(usize, 1), byteOffsetForCellColumn(text, 2));
+    try std.testing.expectEqual(@as(usize, 4), byteOffsetForCellColumn(text, 3));
+    try std.testing.expectEqual(@as(usize, 7), byteOffsetForCellColumn(text, 5));
+    try std.testing.expectEqual(@as(usize, text.len), byteOffsetForCellColumn(text, 6));
+    try std.testing.expectEqual(@as(usize, 3), cellColumnAtOrAfter(text, 2));
+}
+
+test "grapheme conversions keep joined emoji atomic" {
+    const family = "👩‍👩‍👧‍👦";
+    try std.testing.expectEqual(@as(usize, 0), graphemeBoundaryAtOrBefore(family, 4));
+    try std.testing.expectEqual(family.len, graphemeBoundaryAtOrAfter(family, 4));
+    try std.testing.expectEqual(family.len, nextGraphemeBoundary(family, 0));
+    try std.testing.expectEqual(@as(usize, 2), cellWidthThroughByte(family, family.len));
 }
 
 test "clipWithEllipsis preserves exact-fit text" {

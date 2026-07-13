@@ -20,6 +20,8 @@ pub const InputField = struct {
     len: usize = 0,
     /// Current cursor position
     cursor: usize = 0,
+    /// Horizontal viewport origin in terminal cells
+    scroll_col: usize = 0,
     /// Maximum text length
     max_length: usize,
     /// Foreground color
@@ -146,10 +148,6 @@ pub const InputField = struct {
         }
     }
 
-    fn isUtf8Continuation(byte: u8) bool {
-        return (byte & 0b1100_0000) == 0b1000_0000;
-    }
-
     fn utf8PrefixLen(value: []const u8, max_bytes: usize) usize {
         const limit = @min(value.len, max_bytes);
         var idx: usize = 0;
@@ -178,33 +176,16 @@ pub const InputField = struct {
         return last_valid;
     }
 
-    fn previousCodepointBoundary(bytes: []const u8, pos: usize) usize {
-        if (pos == 0) return 0;
-        var idx = @min(pos, bytes.len) - 1;
-        while (idx > 0 and isUtf8Continuation(bytes[idx])) {
-            idx -= 1;
-        }
-        return idx;
-    }
-
-    fn nextCodepointBoundary(bytes: []const u8, pos: usize) usize {
-        if (pos >= bytes.len) return bytes.len;
-        var idx = pos + 1;
-        while (idx < bytes.len and isUtf8Continuation(bytes[idx])) {
-            idx += 1;
-        }
-        return idx;
-    }
-
     fn writeText(self: *InputField, value: []const u8) void {
         const len = utf8PrefixLen(value, self.text.len);
-        const changed = self.len != len or !std.mem.eql(u8, self.currentText(), value[0..len]) or self.cursor != len;
+        const changed = self.len != len or !std.mem.eql(u8, self.currentText(), value[0..len]) or self.cursor != len or self.scroll_col != 0;
         @memset(self.text, 0);
         if (len > 0) {
             std.mem.copyForwards(u8, self.text[0..len], value[0..len]);
         }
         self.len = len;
         self.cursor = len;
+        self.scroll_col = 0;
         self.resetSentinel();
         if (changed) self.widget.markDirty();
     }
@@ -288,6 +269,7 @@ pub const InputField = struct {
         try self.applyMask();
         self.resetSentinel();
         self.clampCursor();
+        self.ensureCursorVisible(self.contentRect().width);
         if (capture_history) try self.pushHistory();
         if ((self.validate_on_change or force_validate) and self.validation_rules != null) {
             try self.runValidation();
@@ -303,12 +285,28 @@ pub const InputField = struct {
     }
 
     fn clampCursor(self: *InputField) void {
-        if (self.cursor > self.len) {
-            self.cursor = self.len;
+        self.cursor = text_metrics.graphemeBoundaryAtOrBefore(self.currentText(), self.cursor);
+    }
+
+    fn cursorColumn(self: *const InputField) usize {
+        return text_metrics.cellWidthThroughByte(self.currentText(), self.cursor);
+    }
+
+    fn ensureCursorVisible(self: *InputField, inner_width: u16) void {
+        if (inner_width == 0) return;
+
+        const previous = self.scroll_col;
+        const cursor_col = self.cursorColumn();
+        if (cursor_col < self.scroll_col) {
+            self.scroll_col = cursor_col;
+        } else {
+            const right = self.scroll_col + @as(usize, @intCast(inner_width - 1));
+            if (cursor_col > right) {
+                const candidate = cursor_col - @as(usize, @intCast(inner_width - 1));
+                self.scroll_col = text_metrics.cellColumnAtOrAfter(self.currentText(), candidate);
+            }
         }
-        while (self.cursor > 0 and self.cursor < self.len and isUtf8Continuation(self.text[self.cursor])) {
-            self.cursor -= 1;
-        }
+        if (self.scroll_col != previous) self.widget.markDirty();
     }
 
     fn pushHistory(self: *InputField) !void {
@@ -376,6 +374,7 @@ pub const InputField = struct {
         try self.undo_redo.capture(next_text);
 
         self.writeText(next_text);
+        self.ensureCursorVisible(self.contentRect().width);
         if (next_validation) |result| {
             self.commitValidationResult(result);
             next_validation = null;
@@ -454,6 +453,7 @@ pub const InputField = struct {
         owns_next_mask = false;
         self.writeText(masked[0..@min(masked.len, self.text.len)]);
         self.cursor = self.len;
+        self.ensureCursorVisible(self.contentRect().width);
         self.widget.markDirty();
     }
 
@@ -573,8 +573,6 @@ pub const InputField = struct {
             return;
         }
 
-        self.clampCursor();
-
         const rect = self.widget.rect;
 
         // Choose colors based on state
@@ -637,16 +635,17 @@ pub const InputField = struct {
         }
         // Otherwise draw text
         else if (content.len > 0 and inner_width > 0) {
-            var truncated: [256]u8 = undefined;
-            const draw_text = text_metrics.truncateToWidth(content, inner_width, &truncated, true);
+            const slice_start = text_metrics.byteOffsetForCellColumn(content, self.scroll_col);
+            const slice_end = text_metrics.byteOffsetForCellColumn(content, self.scroll_col + @as(usize, @intCast(inner_width)));
+            const draw_text = content[slice_start..slice_end];
             if (u16Coord(inner_x_u32)) |inner_x| {
                 if (u16Coord(inner_y_u32)) |inner_y| {
                     renderer.drawStr(inner_x, inner_y, draw_text, fg, bg, style);
 
                     // Draw cursor if focused
-                    if (self.widget.focused and self.cursor <= draw_text.len) {
-                        const prefix_width = text_metrics.measureWidth(draw_text[0..self.cursor]).width;
-                        const cursor_x_u32 = inner_x_u32 + @as(u32, @intCast(@min(prefix_width, inner_width - 1)));
+                    const cursor_col = self.cursorColumn();
+                    if (self.widget.focused and cursor_col >= self.scroll_col and cursor_col < self.scroll_col + @as(usize, @intCast(inner_width))) {
+                        const cursor_x_u32 = inner_x_u32 + @as(u32, @intCast(cursor_col - self.scroll_col));
                         if (u16Coord(cursor_x_u32)) |cursor_x| {
                             renderer.drawChar(cursor_x, inner_y, '_', fg, bg, render.Style{ .underline = true });
                         }
@@ -661,19 +660,23 @@ pub const InputField = struct {
     fn applyEditorAction(self: *InputField, action: input.EditorAction) anyerror!bool {
         switch (action) {
             .cursor_left => {
-                self.cursor = previousCodepointBoundary(self.currentText(), self.cursor);
+                self.cursor = text_metrics.previousGraphemeBoundary(self.currentText(), self.cursor);
+                self.ensureCursorVisible(self.contentRect().width);
                 return true;
             },
             .cursor_right => {
-                self.cursor = nextCodepointBoundary(self.currentText(), self.cursor);
+                self.cursor = text_metrics.nextGraphemeBoundary(self.currentText(), self.cursor);
+                self.ensureCursorVisible(self.contentRect().width);
                 return true;
             },
             .line_start => {
                 self.cursor = 0;
+                self.ensureCursorVisible(self.contentRect().width);
                 return true;
             },
             .line_end => {
                 self.cursor = self.len;
+                self.ensureCursorVisible(self.contentRect().width);
                 return true;
             },
             .undo => return self.performUndo(),
@@ -803,7 +806,7 @@ pub const InputField = struct {
                 },
                 input.KeyCode.BACKSPACE => {
                     if (self.cursor > 0 and self.len > 0) {
-                        const remove_start = previousCodepointBoundary(self.currentText(), self.cursor);
+                        const remove_start = text_metrics.previousGraphemeBoundary(self.currentText(), self.cursor);
                         const remove_len = self.cursor - remove_start;
                         const tail = self.len - self.cursor;
                         if (tail > 0) {
@@ -817,7 +820,7 @@ pub const InputField = struct {
                 },
                 input.KeyCode.DELETE => {
                     if (self.cursor < self.len) {
-                        const remove_end = nextCodepointBoundary(self.currentText(), self.cursor);
+                        const remove_end = text_metrics.nextGraphemeBoundary(self.currentText(), self.cursor);
                         const remove_len = remove_end - self.cursor;
                         const tail = self.len - remove_end;
                         if (tail > 0) {
@@ -856,6 +859,7 @@ pub const InputField = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *InputField = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
+        self.ensureCursorVisible(self.contentRect().width);
     }
 
     /// Get preferred size implementation for InputField
@@ -1273,6 +1277,94 @@ test "input field inserts and deletes UTF-8 text input atomically" {
     try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) }));
     try std.testing.expectEqualStrings("", field.getText());
     try std.testing.expectEqual(@as(usize, 0), field.cursor);
+}
+
+test "input field navigation and deletion keep graphemes atomic" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    field.widget.focused = true;
+    try field.setText("Ae\u{0301}😁B");
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) };
+    const right = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, .{}) };
+    const delete = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DELETE, .{}) };
+    const backspace = input.Event{ .key = input.KeyEvent.init(input.KeyCode.BACKSPACE, .{}) };
+
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 8), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 4), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 1), field.cursor);
+    try std.testing.expect(try field.widget.handleEvent(right));
+    try std.testing.expectEqual(@as(usize, 4), field.cursor);
+
+    try std.testing.expect(try field.widget.handleEvent(delete));
+    try std.testing.expectEqualStrings("Ae\u{0301}B", field.getText());
+    try std.testing.expect(try field.widget.handleEvent(backspace));
+    try std.testing.expectEqualStrings("AB", field.getText());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(field.getText()));
+}
+
+test "input field keeps a wide-text caret visible without draw allocation" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    field.setBorder(.none);
+    field.widget.focused = true;
+    try field.widget.layout(layout_module.Rect.init(0, 0, 3, 1));
+    try field.setText("界ab");
+
+    try std.testing.expectEqual(@as(usize, 2), field.scroll_col);
+
+    var renderer = try render.Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_field_allocator = field.allocator;
+    const original_renderer_allocator = renderer.allocator;
+    field.allocator = failing.allocator();
+    renderer.allocator = failing.allocator();
+    defer {
+        field.allocator = original_field_allocator;
+        renderer.allocator = original_renderer_allocator;
+    }
+
+    try field.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'b'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(2, 0).codepoint());
+
+    try std.testing.expect(try field.widget.handleEvent(.{ .key = input.KeyEvent.init(input.KeyCode.HOME, .{}) }));
+    try std.testing.expectEqual(@as(usize, 0), field.scroll_col);
+}
+
+test "input field caret clears a displaced wide continuation cell" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    field.setBorder(.none);
+    field.widget.focused = true;
+    try field.widget.layout(layout_module.Rect.init(0, 0, 2, 1));
+    try field.setText("a界b");
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, .{}) };
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expect(try field.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 1), field.scroll_col);
+
+    var renderer = try render.Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+    try field.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expect(!renderer.back.getCell(1, 0).continuation);
 }
 
 var test_input_field_submit_calls: usize = 0;

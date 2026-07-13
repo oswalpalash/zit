@@ -504,16 +504,8 @@ pub const TextArea = struct {
     fn graphemeBoundaryAtOrBefore(bytes: []const u8, pos: usize) usize {
         const bounded = @min(pos, bytes.len);
         const bounds = lineBoundsForIndex(bytes, bounded);
-        const local = bounded - bounds.start;
         const line = bytes[bounds.start..bounds.end];
-        var boundary: usize = 0;
-        var it = text_metrics.GraphemeIterator.init(line);
-        while (it.next()) |_| {
-            const next = it.it.i;
-            if (next > local) break;
-            boundary = next;
-        }
-        return bounds.start + boundary;
+        return bounds.start + text_metrics.graphemeBoundaryAtOrBefore(line, bounded - bounds.start);
     }
 
     fn graphemeBoundaryAtOrAfter(bytes: []const u8, pos: usize) usize {
@@ -529,16 +521,8 @@ pub const TextArea = struct {
 
         const bounds = lineBoundsForIndex(bytes, bounded);
         if (bounded == bounds.start) return bounded - 1;
-
-        const target = bounded - bounds.start;
-        var previous: usize = 0;
-        var it = text_metrics.GraphemeIterator.init(bytes[bounds.start..bounds.end]);
-        while (it.next()) |_| {
-            const next = it.it.i;
-            if (next >= target) break;
-            previous = next;
-        }
-        return bounds.start + previous;
+        const line = bytes[bounds.start..bounds.end];
+        return bounds.start + text_metrics.previousGraphemeBoundary(line, bounded - bounds.start);
     }
 
     fn nextGraphemeBoundary(bytes: []const u8, pos: usize) usize {
@@ -547,47 +531,8 @@ pub const TextArea = struct {
 
         const bounds = lineBoundsForIndex(bytes, bounded);
         if (bounded == bounds.end) return bounded + 1;
-
-        const target = bounded - bounds.start;
-        var it = text_metrics.GraphemeIterator.init(bytes[bounds.start..bounds.end]);
-        while (it.next()) |_| {
-            if (it.it.i > target) return bounds.start + it.it.i;
-        }
-        return bounds.end;
-    }
-
-    fn lineDisplayWidthThroughByte(line: []const u8, byte_offset: usize) usize {
-        const bounded = @min(byte_offset, line.len);
-        var cells: usize = 0;
-        var it = text_metrics.GraphemeIterator.init(line);
-        while (it.next()) |grapheme| {
-            if (it.it.i > bounded) break;
-            cells += grapheme.width;
-        }
-        return cells;
-    }
-
-    fn lineByteOffsetForColumn(line: []const u8, target_col: usize) usize {
-        var cells: usize = 0;
-        var boundary: usize = 0;
-        var it = text_metrics.GraphemeIterator.init(line);
-        while (it.next()) |grapheme| {
-            const next_cells = cells + grapheme.width;
-            if (next_cells > target_col) break;
-            cells = next_cells;
-            boundary = it.it.i;
-        }
-        return boundary;
-    }
-
-    fn lineColumnAtOrAfter(line: []const u8, target_col: usize) usize {
-        var cells: usize = 0;
-        var it = text_metrics.GraphemeIterator.init(line);
-        while (it.next()) |grapheme| {
-            if (cells >= target_col) return cells;
-            cells += grapheme.width;
-        }
-        return cells;
+        const line = bytes[bounds.start..bounds.end];
+        return bounds.start + text_metrics.nextGraphemeBoundary(line, bounded - bounds.start);
     }
 
     fn removeRange(self: *TextArea, start: usize, end: usize) void {
@@ -843,7 +788,7 @@ pub const TextArea = struct {
             if (self.buffer.items[i] == '\n') row += 1;
         }
         const line = self.buffer.items[bounds.start..bounds.end];
-        const col = lineDisplayWidthThroughByte(line, bounded - bounds.start);
+        const col = text_metrics.cellWidthThroughByte(line, bounded - bounds.start);
         return .{ .row = row, .col = col };
     }
 
@@ -892,7 +837,7 @@ pub const TextArea = struct {
             if (pos.col > right) {
                 const candidate = pos.col - @as(usize, @intCast(inner_width - 1));
                 const range = self.lineRange(pos.row).?;
-                self.scroll_col = lineColumnAtOrAfter(self.buffer.items[range.start..range.end], candidate);
+                self.scroll_col = text_metrics.cellColumnAtOrAfter(self.buffer.items[range.start..range.end], candidate);
             }
         }
     }
@@ -978,7 +923,7 @@ pub const TextArea = struct {
         const target_row: usize = @intCast(target_row_signed);
         if (self.lineRange(target_row)) |range| {
             const line = self.buffer.items[range.start..range.end];
-            self.cursor = range.start + lineByteOffsetForColumn(line, desired_col);
+            self.cursor = range.start + text_metrics.byteOffsetForCellColumn(line, desired_col);
         } else {
             self.cursor = self.buffer.items.len;
         }

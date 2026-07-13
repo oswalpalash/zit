@@ -49,6 +49,8 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- `InputField` now navigates and deletes complete grapheme clusters and horizontally scrolls by terminal-cell width to keep the focused caret visible for long CJK, emoji, and combining text without draw-time allocation.
+- Renderer grapheme scratch admission now counts graphemes instead of UTF-8 bytes, avoiding unnecessary fallback for multibyte text; prepared and allocation-free over-capacity paths now use capability-adjusted widths, preserve combining clusters, and clear stale continuation cells when overlays replace wide glyphs.
 - `TextArea` now renders and navigates by grapheme clusters and terminal-cell widths, so CJK, emoji, and combining text no longer corrupts cursor columns, vertical movement, horizontal scrolling, clipping, or deletion; focused draws remain allocation-free.
 - Animated visibility transitions and container-managed visibility changes now reach widget lifecycle hooks when the logical visibility state changes, so hidden editable widgets cannot retain bracketed-paste state.
 - Collection containers now reject cross-parent child attachment before mutating either collection, preventing stale duplicate ownership after a failed or accidental reparent.
