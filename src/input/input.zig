@@ -48,6 +48,18 @@ fn windowsWaitMilliseconds(timeout_ms: u64) std.os.windows.DWORD {
     return @intCast(@min(timeout_ms, std.math.maxInt(std.os.windows.DWORD)));
 }
 
+fn posixPollMilliseconds(timeout_ms: u64) i32 {
+    return @intCast(@min(timeout_ms, std.math.maxInt(i32)));
+}
+
+fn posixPollReadable(revents: i16) !bool {
+    if ((revents & std.posix.POLL.IN) != 0) return true;
+    if ((revents & std.posix.POLL.NVAL) != 0) return error.InvalidInputHandle;
+    if ((revents & std.posix.POLL.ERR) != 0) return error.InputPollFailure;
+    if ((revents & std.posix.POLL.HUP) != 0) return error.EndOfStream;
+    return false;
+}
+
 fn waitForWindowsHandle(handle: std.os.windows.HANDLE, timeout_ms: u64) WindowsWaitResult {
     if (builtin.os.tag != .windows) return .failed;
     return switch (windows_sync.WaitForSingleObject(handle, windowsWaitMilliseconds(timeout_ms))) {
@@ -434,7 +446,7 @@ fn readUtf8Key(first: u8, reader: anytype, sink: anytype) !?u21 {
     var idx: usize = 1;
     while (idx < expected) : (idx += 1) {
         const next = reader.readByte() catch |err| {
-            if (isNonBlockingError(err) or err == error.EndOfStream or err == error.InputOutput) return null;
+            if (isNonBlockingError(err)) return null;
             return err;
         };
         sink.put(next);
@@ -1313,8 +1325,8 @@ const PosixTimedByteReader = struct {
                 .revents = 0,
             },
         };
-        const ready = try std.posix.poll(&poll_fds, @intCast(self.timeout_ms));
-        if (ready <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+        const ready = try std.posix.poll(&poll_fds, self.timeout_ms);
+        if (ready == 0 or !try posixPollReadable(poll_fds[0].revents)) {
             return error.WouldBlock;
         }
 
@@ -1323,7 +1335,7 @@ const PosixTimedByteReader = struct {
             if (isNonBlockingError(err)) return error.WouldBlock;
             return err;
         };
-        if (amount == 0) return error.WouldBlock;
+        if (amount == 0) return error.EndOfStream;
         return buf[0];
     }
 };
@@ -1333,10 +1345,18 @@ const SliceByteReader = struct {
     index: usize = 0,
 
     fn readByte(self: *SliceByteReader) !u8 {
-        if (self.index >= self.data.len) return error.EndOfStream;
+        if (self.index >= self.data.len) return error.WouldBlock;
         const byte = self.data[self.index];
         self.index += 1;
         return byte;
+    }
+};
+
+const FailingByteReader = struct {
+    err: anyerror,
+
+    fn readByte(self: *FailingByteReader) !u8 {
+        return self.err;
     }
 };
 
@@ -1452,22 +1472,20 @@ pub const InputHandler = struct {
             };
 
             // Very short poll to check data availability
-            _ = std.posix.poll(&poll_fds, 0) catch {
-                return error.WouldBlock;
-            };
-
-            if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+            const ready = try std.posix.poll(&poll_fds, 0);
+            if (ready == 0 or !try posixPollReadable(poll_fds[0].revents)) {
                 return error.WouldBlock;
             }
 
             // Use read directly instead of going through Zig's reader abstraction
             // as it's more reliable on macOS for terminal input
-            const amount = std.posix.read(self.term.stdin_fd, buffer[0..1]) catch {
-                return error.WouldBlock;
+            const amount = std.posix.read(self.term.stdin_fd, buffer[0..1]) catch |err| {
+                if (isNonBlockingError(err)) return error.WouldBlock;
+                return err;
             };
 
             if (amount == 0) {
-                return error.WouldBlock;
+                return error.EndOfStream;
             }
 
             sink.put(buffer[0]);
@@ -1554,12 +1572,7 @@ pub const InputHandler = struct {
 
         // Read a single byte
         const byte = reader.readByte() catch |err| {
-            // Handle all possible non-blocking errors consistently
-            if (isNonBlockingError(err) or
-                err == error.InputOutput or err == error.NotOpenForReading)
-            {
-                return error.WouldBlock; // Normalize all non-blocking errors
-            }
+            if (isNonBlockingError(err)) return error.WouldBlock;
             return err;
         };
 
@@ -1664,7 +1677,7 @@ pub const InputHandler = struct {
         };
 
         const next_byte = reader.readByte() catch |err| {
-            if (isNonBlockingError(err) or err == error.InputOutput or err == error.EndOfStream) {
+            if (isNonBlockingError(err)) {
                 return escape_event;
             }
             return err;
@@ -1697,7 +1710,7 @@ pub const InputHandler = struct {
         return null;
     }
 
-    /// Poll for an event with timeout
+    /// Poll for an event with timeout. Timeouts return null; input transport failures propagate.
     pub fn pollEvent(self: *InputHandler, timeout_ms: u64) !?Event {
         if (try self.term.takeResize()) |size| {
             return Event{ .resize = ResizeEvent.init(size.width, size.height) };
@@ -1719,38 +1732,7 @@ pub const InputHandler = struct {
                 }
                 return err;
             };
-        } else if (builtin.os.tag == .macos) {
-            // On macOS we need to be extra careful about polling
-            // First check if data is available with a very short timeout
-            var poll_fds = [_]std.posix.pollfd{
-                .{
-                    .fd = self.term.stdin_fd,
-                    .events = std.posix.POLL.IN,
-                    .revents = 0,
-                },
-            };
-
-            // Use the provided timeout (converted to milliseconds)
-            const poll_result = std.posix.poll(&poll_fds, @intCast(timeout_ms)) catch {
-                return null;
-            };
-
-            if (poll_result <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
-                return try self.pollResizeIfDue();
-            }
-
-            // Try to read an event - being careful with error handling
-            return self.readEvent() catch |err| {
-                if (isNonBlockingError(err)) {
-                    // This can happen if the terminal state changes between poll and read
-                    compat.sleepMillis(1); // Small pause
-                    return try self.pollResizeIfDue();
-                }
-                // Pass through other errors
-                return err;
-            };
         } else {
-            // For other platforms, use the standard implementation
             var poll_fds = [_]std.posix.pollfd{
                 .{
                     .fd = self.term.stdin_fd,
@@ -1759,19 +1741,14 @@ pub const InputHandler = struct {
                 },
             };
 
-            // Poll with timeout - don't capture error since we don't use it
-            const ready = std.posix.poll(&poll_fds, @intCast(timeout_ms)) catch {
-                return null;
-            };
-
-            // If there's no data or an error, return null
-            if (ready <= 0 or (poll_fds[0].revents & std.posix.POLL.IN) == 0) {
+            const poll_result = try std.posix.poll(&poll_fds, posixPollMilliseconds(timeout_ms));
+            if (poll_result == 0 or !try posixPollReadable(poll_fds[0].revents)) {
                 return try self.pollResizeIfDue();
             }
 
-            // Try to read an event
             return self.readEvent() catch |err| {
                 if (isNonBlockingError(err)) {
+                    if (builtin.os.tag == .macos) compat.sleepMillis(1);
                     return try self.pollResizeIfDue();
                 }
                 return err;
@@ -1943,7 +1920,7 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
 
     while (true) {
         const next_byte = reader.readByte() catch |err| {
-            if (isNonBlockingError(err) or err == error.EndOfStream) {
+            if (isNonBlockingError(err)) {
                 return Event{ .unknown = {} };
             }
             return err;
@@ -2001,7 +1978,7 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
 
     while (idx < bytes.len) : (idx += 1) {
         const b = reader.readByte() catch |err| {
-            if (isNonBlockingError(err) or err == error.EndOfStream) {
+            if (isNonBlockingError(err)) {
                 return Event{ .unknown = {} };
             }
             return err;
@@ -2060,7 +2037,7 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
     // Parse parameters
     while (param_index < 3) {
         const c = reader.readByte() catch |err| {
-            if (isNonBlockingError(err) or err == error.EndOfStream) {
+            if (isNonBlockingError(err)) {
                 return Event{ .unknown = {} };
             }
             return err;
@@ -2459,6 +2436,34 @@ test "input sequence timeout is configurable" {
     try std.testing.expectEqual(@as(u16, 80), handler.sequence_timeout_ms);
 }
 
+test "POSIX input poll distinguishes readiness and transport failure" {
+    try std.testing.expectEqual(@as(i32, 25), posixPollMilliseconds(25));
+    try std.testing.expectEqual(std.math.maxInt(i32), posixPollMilliseconds(std.math.maxInt(u64)));
+
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    try std.testing.expect(try posixPollReadable(std.posix.POLL.IN));
+    try std.testing.expect(try posixPollReadable(std.posix.POLL.IN | std.posix.POLL.HUP));
+    try std.testing.expect(!try posixPollReadable(0));
+    try std.testing.expectError(error.InvalidInputHandle, posixPollReadable(std.posix.POLL.NVAL));
+    try std.testing.expectError(error.InputPollFailure, posixPollReadable(std.posix.POLL.ERR));
+    try std.testing.expectError(error.EndOfStream, posixPollReadable(std.posix.POLL.HUP));
+}
+
+test "input transport failures propagate through sequence decoders" {
+    var reader = FailingByteReader{ .err = error.InputOutput };
+    var sink = NullSink{};
+
+    try std.testing.expectError(error.InputOutput, readUtf8Key(0xc3, &reader, &sink));
+
+    var handler: InputHandler = undefined;
+    try std.testing.expectError(error.InputOutput, handler.parseEscapeSequence(&reader, &sink));
+
+    reader.err = error.EndOfStream;
+    try std.testing.expectError(error.EndOfStream, readUtf8Key(0xc3, &reader, &sink));
+    try std.testing.expectError(error.EndOfStream, handler.parseEscapeSequence(&reader, &sink));
+}
+
 test "Windows input wait distinguishes timeout and readiness" {
     try std.testing.expectEqual(@as(std.os.windows.DWORD, 25), windowsWaitMilliseconds(25));
     try std.testing.expectEqual(
@@ -2486,7 +2491,10 @@ test "input handler reads configured terminal stdin handle" {
     var fds: [2]std.posix.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
     defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
+    var write_open = true;
+    defer {
+        if (write_open) _ = std.c.close(fds[1]);
+    }
 
     const sequence = "\x1b[A";
     try compat.fileWriteAll(fds[1], sequence);
@@ -2516,6 +2524,12 @@ test "input handler reads configured terminal stdin handle" {
     const event = try handler.readEvent();
     try std.testing.expectEqual(EventType.key, std.meta.activeTag(event));
     try std.testing.expectEqual(KeyCode.UP, event.key.key);
+
+    _ = std.c.close(fds[1]);
+    write_open = false;
+    handler.last_resize_poll_ms = compat.nowMillis();
+    handler.resize_poll_interval_ms = std.math.maxInt(u64);
+    try std.testing.expectError(error.EndOfStream, handler.pollEvent(0));
 }
 
 test "input terminal modes are restored by terminal deinit before raw cleanup" {

@@ -213,7 +213,10 @@ def validate_fragmented_input_contract(root: Path) -> list[str]:
         "default_sequence_timeout_ms",
         "PosixTimedByteReader",
         "WindowsTimedByteReader",
+        "posixPollReadable",
         "setSequenceTimeout",
+        'test "POSIX input poll distinguishes readiness and transport failure"',
+        'test "input transport failures propagate through sequence decoders"',
         'test "Windows input wait distinguishes timeout and readiness"',
         'test "input handler reads configured terminal stdin handle"',
     ):
@@ -222,6 +225,10 @@ def validate_fragmented_input_contract(root: Path) -> list[str]:
 
     if "parseEscapeSequenceMac" in input_text or "parseEscapeSequenceStandard" in input_text:
         failures.append("src/input/input.zig: escape parsing must use the shared timed continuation path")
+    if "err == error.InputOutput" in input_text:
+        failures.append("src/input/input.zig: real input transport failures must not be normalized as incomplete input")
+    if "err == error.EndOfStream" in input_text:
+        failures.append("src/input/input.zig: terminal EOF must propagate through sequence decoders")
 
     read_event_body = function_body(input_text, "readEvent")
     if read_event_body is None:
@@ -233,6 +240,15 @@ def validate_fragmented_input_contract(root: Path) -> list[str]:
             failures.append("src/input/input.zig: InputHandler.readEvent missing terminal-owned stdin file")
         if "WindowsTimedByteReader" not in read_event_body:
             failures.append("src/input/input.zig: Windows escape and UTF-8 continuations must use the configured timeout")
+
+    poll_event_body = function_body(input_text, "pollEvent")
+    if poll_event_body is None:
+        failures.append("src/input/input.zig: missing InputHandler.pollEvent")
+    else:
+        if "posixPollReadable" not in poll_event_body:
+            failures.append("src/input/input.zig: InputHandler.pollEvent must classify POSIX poll transport states")
+        if re.search(r"std\.posix\.poll\([^;]+\)\s+catch", poll_event_body):
+            failures.append("src/input/input.zig: InputHandler.pollEvent must propagate POSIX poll errors")
 
     for marker in (
         "interaction_byte_delay",
@@ -288,7 +304,8 @@ def main() -> int:
 
     print(
         f"checked {checked} interactive example(s) for terminal-state cleanup symmetry, "
-        "driver ownership, Windows VT negotiation, fragmented input, and silent cleanup catches"
+        "driver ownership, Windows VT negotiation, fragmented input, input transport errors, "
+        "and silent cleanup catches"
     )
     return 0
 
