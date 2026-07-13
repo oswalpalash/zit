@@ -310,13 +310,8 @@ pub const Widget = struct {
         return self.visibility_transition.alpha();
     }
 
-    /// Set parent widget
-    pub fn setParent(self: *Widget, parent: ?*Widget) void {
-        self.parent = parent;
-    }
-
-    /// Attach this widget to a collection parent without silently reparenting it.
-    /// Callers that own child collections must detach from the current parent first.
+    /// Attach this widget to an owning parent without silently reparenting it.
+    /// Owners must detach the widget from its current parent first.
     pub fn attachTo(self: *Widget, parent: *Widget) !void {
         if (self.parent) |current| {
             if (current != parent) return error.WidgetAlreadyAttached;

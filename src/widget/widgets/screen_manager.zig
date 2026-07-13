@@ -109,6 +109,8 @@ pub const ScreenManager = struct {
 
     /// Push a new screen onto the stack and animate it in.
     pub fn push(self: *ScreenManager, screen: Screen) !void {
+        try self.validateNewScreen(screen.widget);
+
         if (self.active_transition != null) {
             try self.finishTransition();
         }
@@ -156,6 +158,8 @@ pub const ScreenManager = struct {
 
     /// Swap the current screen for a replacement.
     pub fn replace(self: *ScreenManager, screen: Screen) !void {
+        try self.validateNewScreen(screen.widget);
+
         if (self.screens.items.len == 0) {
             return self.push(screen);
         }
@@ -310,7 +314,7 @@ pub const ScreenManager = struct {
     }
 
     fn primeEntry(self: *ScreenManager, entry: *ScreenEntry) !void {
-        entry.screen.widget.setParent(&self.widget);
+        try entry.screen.widget.attachTo(&self.widget);
         errdefer if (entry.screen.widget.parent == &self.widget) {
             entry.screen.widget.parent = null;
         };
@@ -319,6 +323,13 @@ pub const ScreenManager = struct {
         }
         entry.screen.widget.visibility_transition.snap(false);
         entry.screen.widget.setVisible(false);
+    }
+
+    fn validateNewScreen(self: *const ScreenManager, widget: *const base.Widget) !void {
+        if (widget.parent != null) return error.WidgetAlreadyAttached;
+        for (self.screens.items) |entry| {
+            if (entry.screen.widget == widget) return error.WidgetAlreadyAttached;
+        }
     }
 
     fn topEntry(self: *ScreenManager) ?*ScreenEntry {
@@ -523,6 +534,84 @@ test "screen manager replace updates active screen" {
 
     const active_after = manager.active().?;
     try std.testing.expectEqual(&block_b.widget, active_after.widget);
+}
+
+test "screen manager rejects duplicate and cross-parent pushes before transition mutation" {
+    const alloc = std.testing.allocator;
+    var owner = try ScreenManager.init(alloc);
+    var manager = try ScreenManager.init(alloc);
+    var current = try @import("block.zig").Block.init(alloc);
+    var attached = try @import("block.zig").Block.init(alloc);
+    defer {
+        manager.deinit();
+        owner.deinit();
+        current.deinit();
+        attached.deinit();
+    }
+
+    try owner.push(.{ .widget = &attached.widget, .label = "owner" });
+    try manager.push(.{ .widget = &current.widget, .label = "current" });
+    const transition_before = manager.active_transition.?;
+    const animation_count_before = manager.animator.animations.items.len;
+    const visibility_handle_before = current.widget.visibility_transition.handle.?;
+    manager.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, manager.push(.{ .widget = &current.widget, .label = "duplicate" }));
+    try std.testing.expectError(error.WidgetAlreadyAttached, manager.push(.{ .widget = &attached.widget, .label = "foreign" }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqualStrings("current", manager.screens.items[0].label_copy);
+    try std.testing.expect(std.meta.eql(transition_before, manager.active_transition.?));
+    try std.testing.expectEqual(animation_count_before, manager.animator.animations.items.len);
+    try std.testing.expect(std.meta.eql(visibility_handle_before, current.widget.visibility_transition.handle.?));
+    try std.testing.expectEqual(&manager.widget, current.widget.parent.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!manager.widget.dirty);
+}
+
+test "screen manager rejects duplicate and cross-parent replacements before hooks" {
+    const alloc = std.testing.allocator;
+    var owner = try ScreenManager.init(alloc);
+    var manager = try ScreenManager.init(alloc);
+    var current = try @import("block.zig").Block.init(alloc);
+    var attached = try @import("block.zig").Block.init(alloc);
+    defer {
+        manager.deinit();
+        owner.deinit();
+        current.deinit();
+        attached.deinit();
+    }
+
+    const Hooks = struct {
+        var pause_count: usize = 0;
+
+        fn pause(_: *ScreenContext) anyerror!void {
+            pause_count += 1;
+        }
+    };
+    Hooks.pause_count = 0;
+
+    try owner.push(.{ .widget = &attached.widget, .label = "owner" });
+    try manager.push(.{
+        .widget = &current.widget,
+        .label = "current",
+        .lifecycle = .{ .on_pause = Hooks.pause },
+    });
+    const transition_before = manager.active_transition.?;
+    const animation_count_before = manager.animator.animations.items.len;
+    manager.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, manager.replace(.{ .widget = &current.widget, .label = "duplicate" }));
+    try std.testing.expectError(error.WidgetAlreadyAttached, manager.replace(.{ .widget = &attached.widget, .label = "foreign" }));
+
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqualStrings("current", manager.screens.items[0].label_copy);
+    try std.testing.expect(std.meta.eql(transition_before, manager.active_transition.?));
+    try std.testing.expectEqual(animation_count_before, manager.animator.animations.items.len);
+    try std.testing.expectEqual(@as(usize, 0), Hooks.pause_count);
+    try std.testing.expectEqual(&manager.widget, current.widget.parent.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!manager.widget.dirty);
 }
 
 fn screenManagerPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
