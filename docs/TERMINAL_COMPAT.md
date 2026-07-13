@@ -13,7 +13,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **Color depth**: `ColorLevel` is inferred from `COLORTERM`/`TERM` suffixes and known programs (16, 256, or truecolor).
 - **Styling flags**: booleans for italic/underline/strikethrough/ligatures/emoji/double-width. Conservative defaults on linux console and dumb terminals.
 - **Input/graphics extras**: `kitty_keyboard`, `kitty_graphics`, `synchronized_output`, `bracketed_paste`, and `iterm2_integration` are enabled when the program is known to support them.
-- **Unicode width**: `unicode_width.measure` determines grapheme cell width. When Unicode, emoji, or double-width output is disabled, the renderer stores a single-cell ASCII fallback instead of emitting a glyph whose terminal width it cannot represent safely.
+- **Unicode width**: `unicode_width.measure` determines grapheme cell width from generated Unicode 17 data. East Asian `W/F` characters and default emoji use two cells; ambiguous characters default to one cell when no language/font context is available. Emoji/text variation selectors override the base presentation. When Unicode, emoji, or double-width output is disabled, the renderer stores a single-cell ASCII fallback instead of emitting a glyph whose terminal width it cannot represent safely.
 
 ## Color Modes
 - **Truecolor (24-bit)**: Used when `color_level == .truecolor`; `render.Color.rgb` and gradients map directly to ANSI 24-bit sequences.
@@ -43,4 +43,4 @@ if (caps.bracketed_paste) try term.enableBracketedPaste();
 
 ## Updating Unicode Data
 
-Run `python3 scripts/generate_unicode_grapheme_data.py` from the repository root to download the pinned Unicode sources, verify their SHA-256 hashes, and regenerate the Zig property tables, conformance fixture, and Unicode license. Normal builds and tests use the checked-in files and do not require network access. Source URLs and hashes are recorded in [`src/terminal/testdata/README.md`](../src/terminal/testdata/README.md).
+Run `python3 scripts/generate_unicode_grapheme_data.py` from the repository root to download the pinned Unicode sources, verify their SHA-256 hashes, and regenerate the Zig property tables, grapheme and width fixtures, and Unicode license. Normal builds and tests use the checked-in files and do not require network access. Source URLs and hashes are recorded in [`src/terminal/testdata/README.md`](../src/terminal/testdata/README.md).

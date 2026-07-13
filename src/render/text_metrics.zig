@@ -70,7 +70,7 @@ pub fn graphemeFromCodepoint(cp: u21) Grapheme {
         g.len = to_copy;
     }
     const properties = unicode_width.graphemeProperties(cp);
-    const width = unicode_width.wcwidthClassified(cp, properties.class);
+    const width = unicode_width.wcwidthProperties(properties);
     g.width = if (width == 0) 1 else width;
     g.has_rtl = unicode_width.isBidi(cp);
     g.has_emoji = properties.emoji_presentation;
@@ -118,7 +118,7 @@ pub const GraphemeIterator = struct {
                 grapheme.markOverflowed();
             }
 
-            const effective_width = unicode_width.wcwidthClassified(next_cp, properties.class);
+            const effective_width = unicode_width.wcwidthProperties(properties);
             if (effective_width > 0) grapheme.width = @max(grapheme.width, effective_width);
             grapheme.has_rtl = grapheme.has_rtl or unicode_width.isBidi(next_cp);
             emoji_candidate = emoji_candidate or properties.emoji_candidate;

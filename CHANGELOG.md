@@ -13,7 +13,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Example suite and demos covering widgets, real-world dashboards, file managers, editors, and benchmarks.
 - Benchmarks and testing harness wired through `zig build` to keep render paths and layouts stable.
 - Benchmark suite now enforces conservative render, table-scroll, input-decode, and string-interning budgets so major efficiency regressions fail CI.
-- Unicode 17 grapheme-break, Indic conjunct, and emoji properties are generated from pinned, hash-verified Unicode Character Database sources; all 766 official extended-grapheme conformance cases run in `zig build test`.
+- Unicode 17 grapheme-break, Indic conjunct, East Asian width, and emoji properties are generated from pinned, hash-verified Unicode Character Database sources; all 766 official extended-grapheme conformance cases and an exhaustive East Asian width comparison run in `zig build test`.
 - Mouse-capable public widgets now require explicit hit-test coverage declarations so rendered/click-coordinate regressions cannot ship silently.
 - All public widget exports now expose accessibility metadata, with a release gate preventing new widgets from shipping without semantic roles/names.
 - `zig build quality` aggregates smoke compilation, unit/snapshot tests, and benchmarks for local pre-push verification.
@@ -52,6 +52,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ### Fixed
 - Renderer text can no longer inject terminal controls through glyph data: C0/C1 codepoints are isolated and replaced before ANSI output. Shared allocation-free boundary rules now keep measurement, clipping, rendering, and editing consistent for CRLF, emoji ZWJ sequences, regional-indicator flag pairs, and composed or decomposed Hangul.
 - Grapheme iteration now handles Unicode Prepend and SpacingMark properties, Indic conjuncts, emoji/text variation selectors, and keycap sequences consistently. Plain digits remain text when emoji output is disabled, while keycaps use their required two-cell emoji geometry.
+- Terminal cell widths now use generated Unicode 17 East Asian `W/F` data plus default emoji instead of broad hand-maintained ranges, fixing one-cell Yijing symbols and other omitted wide characters while keeping ambiguous, halfwidth, and neutral characters narrow by default.
 - Renderer cells no longer retain truncated UTF-8 when a grapheme exceeds their 32-byte inline capacity; they preserve full-cluster width metadata with a deterministic valid fallback, and disabled Unicode, emoji, or double-width capabilities now produce ASCII instead of emitting unsupported glyphs with incorrect cell geometry.
 - `InputField` now navigates and deletes complete grapheme clusters and horizontally scrolls by terminal-cell width to keep the focused caret visible for long CJK, emoji, and combining text without draw-time allocation.
 - Renderer grapheme scratch admission now counts graphemes instead of UTF-8 bytes, avoiding unnecessary fallback for multibyte text; prepared and allocation-free over-capacity paths now use capability-adjusted widths, preserve combining clusters, and clear stale continuation cells when overlays replace wide glyphs.

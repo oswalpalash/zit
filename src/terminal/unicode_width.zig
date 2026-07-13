@@ -1,7 +1,9 @@
 const std = @import("std");
 const grapheme_data = @import("unicode_grapheme_data.zig");
 
-pub const grapheme_unicode_version = grapheme_data.unicode_version;
+pub const unicode_version = grapheme_data.unicode_version;
+pub const grapheme_unicode_version = unicode_version;
+pub const width_unicode_version = unicode_version;
 
 /// Metrics describing how a string will occupy terminal cells.
 pub const Metrics = struct {
@@ -10,76 +12,6 @@ pub const Metrics = struct {
     has_emoji: bool,
     has_ligatures: bool,
     has_combining: bool,
-};
-
-const Range = struct { start: u21, end: u21 };
-
-fn inRange(cp: u21, ranges: []const Range) bool {
-    for (ranges) |r| {
-        if (cp >= r.start and cp <= r.end) return true;
-    }
-    return false;
-}
-
-// Characters typically rendered as double-width in terminals.
-const wide_ranges = [_]Range{
-    .{ .start = 0x1100, .end = 0x115F },
-    .{ .start = 0x231A, .end = 0x231B },
-    .{ .start = 0x2329, .end = 0x232A },
-    .{ .start = 0x23E9, .end = 0x23EC },
-    .{ .start = 0x23F0, .end = 0x23F0 },
-    .{ .start = 0x23F3, .end = 0x23F3 },
-    .{ .start = 0x25FD, .end = 0x25FE },
-    .{ .start = 0x2614, .end = 0x2615 },
-    .{ .start = 0x2648, .end = 0x2653 },
-    .{ .start = 0x267F, .end = 0x267F },
-    .{ .start = 0x2693, .end = 0x2693 },
-    .{ .start = 0x26A1, .end = 0x26A1 },
-    .{ .start = 0x26AA, .end = 0x26AB },
-    .{ .start = 0x26BD, .end = 0x26BE },
-    .{ .start = 0x26C4, .end = 0x26C5 },
-    .{ .start = 0x26CE, .end = 0x26CE },
-    .{ .start = 0x26D4, .end = 0x26D4 },
-    .{ .start = 0x26EA, .end = 0x26EA },
-    .{ .start = 0x26F2, .end = 0x26F3 },
-    .{ .start = 0x26F5, .end = 0x26F5 },
-    .{ .start = 0x26FA, .end = 0x26FA },
-    .{ .start = 0x26FD, .end = 0x26FD },
-    .{ .start = 0x2705, .end = 0x2705 },
-    .{ .start = 0x270A, .end = 0x270B },
-    .{ .start = 0x2728, .end = 0x2728 },
-    .{ .start = 0x274C, .end = 0x274C },
-    .{ .start = 0x274E, .end = 0x274E },
-    .{ .start = 0x2753, .end = 0x2755 },
-    .{ .start = 0x2757, .end = 0x2757 },
-    .{ .start = 0x2795, .end = 0x2797 },
-    .{ .start = 0x27B0, .end = 0x27B0 },
-    .{ .start = 0x27BF, .end = 0x27BF },
-    .{ .start = 0x2B1B, .end = 0x2B1C },
-    .{ .start = 0x2B50, .end = 0x2B50 },
-    .{ .start = 0x2B55, .end = 0x2B55 },
-    .{ .start = 0x2E80, .end = 0x2FDF },
-    .{ .start = 0x2FF0, .end = 0x303E },
-    .{ .start = 0x3040, .end = 0x3247 },
-    .{ .start = 0x3250, .end = 0x4DBF },
-    .{ .start = 0x4E00, .end = 0xA4CF },
-    .{ .start = 0xA960, .end = 0xA97C },
-    .{ .start = 0xAC00, .end = 0xD7A3 },
-    .{ .start = 0xF900, .end = 0xFAFF },
-    .{ .start = 0xFE10, .end = 0xFE6F },
-    .{ .start = 0xFF00, .end = 0xFF60 },
-    .{ .start = 0xFFE0, .end = 0xFFE6 },
-    .{ .start = 0x1F004, .end = 0x1F004 },
-    .{ .start = 0x1F0CF, .end = 0x1F0CF },
-    .{ .start = 0x1F170, .end = 0x1F251 },
-    .{ .start = 0x1F260, .end = 0x1F6D7 },
-    .{ .start = 0x1F6DC, .end = 0x1F6EC },
-    .{ .start = 0x1F6F4, .end = 0x1F6FC },
-    .{ .start = 0x1F7E0, .end = 0x1F7EB },
-    .{ .start = 0x1F7F0, .end = 0x1F7F0 },
-    .{ .start = 0x1F90C, .end = 0x1F9FF },
-    .{ .start = 0x1FA70, .end = 0x1FAFF },
-    .{ .start = 0x20000, .end = 0x3FFFD },
 };
 
 /// wcwidth implementation tuned for terminals: returns 0, 1, or 2 cells.
@@ -148,6 +80,7 @@ pub const GraphemeProperties = struct {
     emoji_candidate: bool,
     emoji_presentation: bool,
     extended_pictographic: bool,
+    terminal_wide: bool,
 };
 
 pub fn classifyGrapheme(cp: u21) GraphemeClass {
@@ -164,6 +97,7 @@ pub fn graphemeProperties(cp: u21) GraphemeProperties {
             .emoji_candidate = isKeycapBase(cp),
             .emoji_presentation = false,
             .extended_pictographic = false,
+            .terminal_wide = false,
         };
     }
 
@@ -174,13 +108,22 @@ pub fn graphemeProperties(cp: u21) GraphemeProperties {
         .emoji_candidate = emoji.emoji_candidate,
         .emoji_presentation = emoji.emoji_presentation,
         .extended_pictographic = emoji.extended_pictographic,
+        .terminal_wide = grapheme_data.isTerminalWide(cp),
     };
 }
 
 pub fn wcwidthClassified(cp: u21, class: GraphemeClass) u3 {
+    return wcwidthKnown(class, grapheme_data.isTerminalWide(cp));
+}
+
+pub fn wcwidthProperties(properties: GraphemeProperties) u3 {
+    return wcwidthKnown(properties.class, properties.terminal_wide);
+}
+
+fn wcwidthKnown(class: GraphemeClass, terminal_wide: bool) u3 {
     return switch (class) {
         .cr, .lf, .control, .extend, .zwj, .prepend, .spacing_mark => 0,
-        else => if (inRange(cp, wide_ranges[0..])) 2 else 1,
+        else => if (terminal_wide) 2 else 1,
     };
 }
 
@@ -284,7 +227,7 @@ pub fn measure(str: []const u8) Metrics {
         }
 
         if (!cluster_started) cluster_keycap_base = isKeycapBase(cp);
-        const cp_width = wcwidthClassified(cp, properties.class);
+        const cp_width = wcwidthProperties(properties);
         cluster_width = @max(cluster_width, cp_width);
         cluster_emoji_candidate = cluster_emoji_candidate or properties.emoji_candidate;
         cluster_has_emoji = cluster_has_emoji or properties.emoji_presentation;
@@ -330,6 +273,78 @@ fn addWidthSaturating(current: u16, inc: u3) u16 {
     const widened: u32 = @as(u32, current) + inc;
     if (widened > std.math.maxInt(u16)) return std.math.maxInt(u16);
     return @intCast(widened);
+}
+
+test "generated Unicode 17 East Asian width table matches official data" {
+    const fixture = @embedFile("testdata/EastAsianWidth-17.0.0.txt");
+    try std.testing.expectEqualStrings("17.0.0", width_unicode_version);
+    try std.testing.expect(std.mem.indexOf(u8, fixture, "# EastAsianWidth-17.0.0.txt") != null);
+
+    var lines = std.mem.splitScalar(u8, fixture, '\n');
+    var next_codepoint: u32 = 0;
+    var range_count: usize = 0;
+
+    while (lines.next()) |raw_line| {
+        const uncommented = raw_line[0 .. std.mem.indexOfScalar(u8, raw_line, '#') orelse raw_line.len];
+        const line = std.mem.trim(u8, uncommented, " \t\r");
+        if (line.len == 0) continue;
+
+        var fields = std.mem.splitScalar(u8, line, ';');
+        const raw_range = std.mem.trim(u8, fields.next() orelse return error.InvalidEastAsianWidthFixture, " \t");
+        const property = std.mem.trim(u8, fields.next() orelse return error.InvalidEastAsianWidthFixture, " \t");
+        if (fields.next() != null) return error.InvalidEastAsianWidthFixture;
+
+        const separator = std.mem.indexOf(u8, raw_range, "..") orelse raw_range.len;
+        const start = try std.fmt.parseInt(u21, raw_range[0..separator], 16);
+        const end = if (separator == raw_range.len)
+            start
+        else
+            try std.fmt.parseInt(u21, raw_range[separator + 2 ..], 16);
+        if (start > end or @as(u32, start) < next_codepoint) return error.InvalidEastAsianWidthFixture;
+
+        while (next_codepoint < start) : (next_codepoint += 1) {
+            if (grapheme_data.isEastAsianWide(@intCast(next_codepoint))) {
+                std.debug.print("unexpected generated wide codepoint U+{X:0>4}\n", .{next_codepoint});
+                return error.EastAsianWidthMismatch;
+            }
+        }
+
+        const expected_wide = std.mem.eql(u8, property, "W") or std.mem.eql(u8, property, "F");
+        while (next_codepoint <= end) : (next_codepoint += 1) {
+            if (grapheme_data.isEastAsianWide(@intCast(next_codepoint)) != expected_wide) {
+                std.debug.print(
+                    "generated East Asian width mismatch at U+{X:0>4}: expected {s}\n",
+                    .{ next_codepoint, if (expected_wide) "wide" else "narrow" },
+                );
+                return error.EastAsianWidthMismatch;
+            }
+        }
+        range_count += 1;
+    }
+
+    while (next_codepoint <= 0x10FFFF) : (next_codepoint += 1) {
+        if (grapheme_data.isEastAsianWide(@intCast(next_codepoint))) {
+            std.debug.print("unexpected generated wide codepoint U+{X:0>4}\n", .{next_codepoint});
+            return error.EastAsianWidthMismatch;
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 2678), range_count);
+    try std.testing.expectEqual(@as(u32, 0x110000), next_codepoint);
+}
+
+test "terminal width policy uses W and F plus default emoji" {
+    try std.testing.expectEqual(@as(u3, 2), wcwidth(0x2630)); // Trigram for Heaven, W.
+    try std.testing.expectEqual(@as(u3, 2), wcwidth(0x4DC0)); // Yijing Hexagram, W.
+    try std.testing.expectEqual(@as(u3, 2), wcwidth(0xFF01)); // Fullwidth exclamation, F.
+    try std.testing.expectEqual(@as(u3, 1), wcwidth(0xFF61)); // Halfwidth ideographic stop, H.
+    try std.testing.expectEqual(@as(u3, 1), wcwidth(0x00A1)); // Ambiguous defaults narrow.
+    try std.testing.expectEqual(@as(u3, 1), wcwidth(0x2E9A)); // Unassigned/default neutral.
+
+    try std.testing.expect(!grapheme_data.isEastAsianWide(0x1F1EE));
+    try std.testing.expect(grapheme_data.isTerminalWide(0x1F1EE));
+    try std.testing.expectEqual(@as(u3, 2), wcwidth(0x1F1EE)); // Regional indicator emoji.
+    try std.testing.expectEqual(@as(u16, 5), measure("☰䷀¡").width);
 }
 
 test "wcwidth handles emoji and CJK" {

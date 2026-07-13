@@ -12,6 +12,7 @@ const PerformanceBudget = struct {
     render_avg_ns: u64 = 50_000_000, // 20 fps floor in Debug builds.
     table_scroll_avg_ns: u64 = 20_000_000,
     input_decode_avg_ns: u64 = 1_000_000,
+    unicode_measure_avg_ns: u64 = 100_000,
     interned_unique_ratio_percent: usize = 75,
     interned_capacity_ratio_percent: usize = 100,
 };
@@ -40,13 +41,15 @@ pub fn main() !void {
     const render_result = try benchmarkRenderThroughput(allocator);
     const table_result = try benchmarkTableScroll(allocator);
     const input_result = try benchmarkInputLatency();
+    const unicode_result = benchmarkUnicodeMeasurement();
     const memory_result = try benchmarkMemoryUsage(allocator);
-    try checkPerformanceBudgets(DEFAULT_BUDGET, render_result, table_result, input_result, memory_result);
+    try checkPerformanceBudgets(DEFAULT_BUDGET, render_result, table_result, input_result, unicode_result, memory_result);
 
     std.debug.print(
         \\Render throughput: {d} frames, avg {d} ns ({d:.2} fps), wrote {d} bytes
         \\Table scroll (10k rows): {d} iterations in {d} ms (avg {d} ns)
         \\Input decode latency: {d} events, avg {d} ns
+        \\Unicode width measurement: {d} mixed-script strings, avg {d} ns
         \\Memory (table text, 10k rows): plain payload {d} bytes vs interned unique payload {d} bytes across {d} strings (string arena capacity {d} bytes)
         \\Performance budgets: passed
         \\
@@ -60,6 +63,8 @@ pub fn main() !void {
         table_result.avg_ns,
         input_result.decoded,
         input_result.avg_ns,
+        unicode_result.iterations,
+        unicode_result.avg_ns,
         memory_result.plain_payload_bytes,
         memory_result.interned_unique_bytes,
         memory_result.interned_unique_strings,
@@ -77,9 +82,10 @@ fn checkPerformanceBudgets(
     render_result: RenderBench,
     table_result: TableBench,
     input_result: InputBench,
+    unicode_result: UnicodeBench,
     memory_result: MemoryBench,
 ) !void {
-    return checkPerformanceBudgetsImpl(budget, render_result, table_result, input_result, memory_result, true);
+    return checkPerformanceBudgetsImpl(budget, render_result, table_result, input_result, unicode_result, memory_result, true);
 }
 
 fn checkPerformanceBudgetsImpl(
@@ -87,6 +93,7 @@ fn checkPerformanceBudgetsImpl(
     render_result: RenderBench,
     table_result: TableBench,
     input_result: InputBench,
+    unicode_result: UnicodeBench,
     memory_result: MemoryBench,
     emit_diagnostics: bool,
 ) !void {
@@ -107,6 +114,15 @@ fn checkPerformanceBudgetsImpl(
     if (input_result.avg_ns > budget.input_decode_avg_ns) {
         if (emit_diagnostics) {
             std.debug.print("performance budget exceeded: input decode avg {d} ns > {d} ns\n", .{ input_result.avg_ns, budget.input_decode_avg_ns });
+        }
+        failed = true;
+    }
+    if (unicode_result.avg_ns > budget.unicode_measure_avg_ns) {
+        if (emit_diagnostics) {
+            std.debug.print(
+                "performance budget exceeded: Unicode measurement avg {d} ns > {d} ns\n",
+                .{ unicode_result.avg_ns, budget.unicode_measure_avg_ns },
+            );
         }
         failed = true;
     }
@@ -240,6 +256,25 @@ const InputBench = struct {
     avg_ns: u64,
 };
 
+const UnicodeBench = struct {
+    iterations: usize,
+    avg_ns: u64,
+};
+
+fn benchmarkUnicodeMeasurement() UnicodeBench {
+    const sample = "status: 東京 e\u{0301} क्‍ष 각 👩‍💻 🇮🇳 ䷀";
+    const capabilities = render.TerminalCapabilities.init();
+    const iterations: usize = 25_000;
+
+    const start_ns = nowNanos();
+    for (0..iterations) |_| {
+        const metrics = capabilities.measure(sample);
+        std.mem.doNotOptimizeAway(metrics);
+    }
+    const total_ns: u64 = @intCast(nowNanos() - start_ns);
+    return .{ .iterations = iterations, .avg_ns = total_ns / iterations };
+}
+
 fn benchmarkInputLatency() !InputBench {
     const sequences = [_][]const u8{
         "\x1b[A",
@@ -330,6 +365,25 @@ test "performance budget rejects slow render" {
         .{ .frames = 1, .avg_ns = 11, .fps = 1, .bytes_written = 0 },
         .{ .iterations = 1, .total_ns = 1, .avg_ns = 1 },
         .{ .decoded = 1, .avg_ns = 1 },
+        .{ .iterations = 1, .avg_ns = 1 },
+        .{
+            .plain_payload_bytes = 100,
+            .interned_unique_bytes = 50,
+            .interned_unique_strings = 1,
+            .interned_allocated_bytes = 50,
+        },
+        false,
+    ));
+}
+
+test "performance budget rejects slow Unicode measurement" {
+    const budget = PerformanceBudget{ .unicode_measure_avg_ns = 10 };
+    try std.testing.expectError(error.PerformanceBudgetExceeded, checkPerformanceBudgetsImpl(
+        budget,
+        .{ .frames = 1, .avg_ns = 1, .fps = 1, .bytes_written = 0 },
+        .{ .iterations = 1, .total_ns = 1, .avg_ns = 1 },
+        .{ .decoded = 1, .avg_ns = 1 },
+        .{ .iterations = 1, .avg_ns = 11 },
         .{
             .plain_payload_bytes = 100,
             .interned_unique_bytes = 50,
@@ -346,6 +400,7 @@ test "performance budget accepts current shape" {
         .{ .frames = 400, .avg_ns = 1_000_000, .fps = 1000, .bytes_written = 1 },
         .{ .iterations = 400, .total_ns = 10_000_000, .avg_ns = 25_000 },
         .{ .decoded = 50_000, .avg_ns = 100 },
+        .{ .iterations = 25_000, .avg_ns = 10_000 },
         .{
             .plain_payload_bytes = 200_000,
             .interned_unique_bytes = 50_000,

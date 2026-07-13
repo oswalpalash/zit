@@ -35,4 +35,4 @@ Real-world interactive examples
 
 Benchmarks
 - `examples/benchmarks/render_bench.zig` (`zig build render-bench`): micro-benchmark for renderer throughput.
-- `examples/benchmarks/bench_suite.zig` (`zig build bench`): broader suite covering layout and widget rendering costs.
+- `examples/benchmarks/bench_suite.zig` (`zig build bench`): broader suite covering layout, widget rendering, input decoding, mixed-Unicode width measurement, and table memory costs.

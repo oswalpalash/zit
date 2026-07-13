@@ -1,1 +1,2 @@
 src/terminal/testdata/GraphemeBreakTest-*.txt -whitespace
+src/terminal/testdata/EastAsianWidth-*.txt -whitespace

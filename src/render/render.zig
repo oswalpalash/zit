@@ -1891,6 +1891,21 @@ test "renderer replaces emoji when terminal capability is disabled" {
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
 }
 
+test "renderer uses generated Unicode wide-character data" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 5, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    renderer.drawStr(0, 0, "☰¡A", Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(u21, 0x2630), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expect(renderer.back.getCell(1, 0).continuation);
+    try std.testing.expectEqual(@as(u21, 0x00A1), renderer.back.getCell(2, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(3, 0).codepoint());
+}
+
 test "renderer distinguishes plain digits and keycap emoji capability" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 4, 2);
