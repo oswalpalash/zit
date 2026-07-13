@@ -1891,6 +1891,30 @@ test "renderer replaces emoji when terminal capability is disabled" {
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
 }
 
+test "renderer distinguishes plain digits and keycap emoji capability" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 4, 2);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.emoji = false;
+    renderer.capabilities.double_width = true;
+
+    renderer.drawStr(0, 0, "123", Color.named(.white), Color.named(.black), .{});
+    renderer.drawStr(0, 1, "1️⃣A", Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(u21, '1'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '2'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '3'), renderer.back.getCell(2, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 1).codepoint());
+
+    renderer.capabilities.emoji = true;
+    renderer.drawStr(0, 1, "1️⃣A", Color.named(.white), Color.named(.black), .{});
+    try std.testing.expectEqualStrings("1️⃣", renderer.back.getCell(0, 1).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(1, 1).continuation);
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(2, 1).codepoint());
+}
+
 test "renderer replaces C0 and C1 text controls before ANSI output" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 8, 3);

@@ -69,11 +69,12 @@ pub fn graphemeFromCodepoint(cp: u21) Grapheme {
         std.mem.copyForwards(u8, g.bytes[0..to_copy], buf[0..to_copy]);
         g.len = to_copy;
     }
-    const width: u3 = unicode_width.wcwidth(cp);
+    const properties = unicode_width.graphemeProperties(cp);
+    const width = unicode_width.wcwidthClassified(cp, properties.class);
     g.width = if (width == 0) 1 else width;
     g.has_rtl = unicode_width.isBidi(cp);
-    g.has_emoji = unicode_width.isEmoji(cp);
-    if (unicode_width.isControl(cp)) g.markControl();
+    g.has_emoji = properties.emoji_presentation;
+    if (properties.class == .control or properties.class == .cr or properties.class == .lf) g.markControl();
     return g;
 }
 
@@ -88,6 +89,8 @@ pub const GraphemeIterator = struct {
     pub fn next(self: *GraphemeIterator) ?Grapheme {
         var grapheme = Grapheme{};
         var started = false;
+        var emoji_candidate = false;
+        var keycap_base = false;
         var boundaries = unicode_width.GraphemeBreakState{};
         var first_codepoint: u21 = 0;
 
@@ -96,14 +99,14 @@ pub const GraphemeIterator = struct {
             const next_cp = self.it.nextCodepoint() orelse break;
             const cp_end = self.it.i;
             const cp_slice = self.it.bytes[cp_start..cp_end];
-            const class = unicode_width.classifyGrapheme(next_cp);
-            const emoji = unicode_width.emojiProperties(next_cp);
-            if (started and boundaries.breaksBefore(class, emoji.extended_pictographic)) {
+            const properties = unicode_width.graphemeProperties(next_cp);
+            if (started and boundaries.breaksBefore(properties)) {
                 // New grapheme starts here.
                 self.it.i = cp_start;
                 break;
             }
 
+            if (!started) keycap_base = unicode_width.isKeycapBase(next_cp);
             if (!started) first_codepoint = next_cp;
             const byte_len = grapheme.byteLen();
             const available = grapheme.bytes.len - byte_len;
@@ -115,14 +118,26 @@ pub const GraphemeIterator = struct {
                 grapheme.markOverflowed();
             }
 
-            const effective_width = unicode_width.wcwidthClassified(next_cp, class);
+            const effective_width = unicode_width.wcwidthClassified(next_cp, properties.class);
             if (effective_width > 0) grapheme.width = @max(grapheme.width, effective_width);
             grapheme.has_rtl = grapheme.has_rtl or unicode_width.isBidi(next_cp);
-            grapheme.has_emoji = grapheme.has_emoji or emoji.emoji;
-            if (unicode_width.isControl(next_cp)) grapheme.markControl();
+            emoji_candidate = emoji_candidate or properties.emoji_candidate;
+            grapheme.has_emoji = grapheme.has_emoji or properties.emoji_presentation;
+            if (unicode_width.isEmojiVariationSelector(next_cp) and emoji_candidate) {
+                grapheme.width = 2;
+                grapheme.has_emoji = true;
+            } else if (unicode_width.isTextVariationSelector(next_cp) and emoji_candidate) {
+                grapheme.width = 1;
+                grapheme.has_emoji = false;
+            }
+            if (unicode_width.isKeycapMark(next_cp) and keycap_base) {
+                grapheme.width = 2;
+                grapheme.has_emoji = true;
+            }
+            if (properties.class == .control or properties.class == .cr or properties.class == .lf) grapheme.markControl();
 
             started = true;
-            boundaries.advance(class, emoji.extended_pictographic);
+            boundaries.advance(properties);
         }
 
         if (!started) return null;
@@ -519,6 +534,73 @@ test "BMP pictograph ZWJ sequence stays atomic" {
     try std.testing.expectEqualStrings(heart_on_fire, grapheme.slice());
     try std.testing.expectEqual(@as(u3, 2), grapheme.width);
     try std.testing.expectEqual(heart_on_fire.len, it.it.i);
+}
+
+test "Unicode 17 extended grapheme cluster conformance" {
+    const fixture = @embedFile("../terminal/testdata/GraphemeBreakTest-17.0.0.txt");
+    try std.testing.expectEqualStrings("17.0.0", unicode_width.grapheme_unicode_version);
+    try std.testing.expect(std.mem.indexOf(u8, fixture, "# GraphemeBreakTest-17.0.0.txt") != null);
+
+    var lines = std.mem.splitScalar(u8, fixture, '\n');
+    var line_number: usize = 0;
+    var case_count: usize = 0;
+
+    while (lines.next()) |raw_line| {
+        line_number += 1;
+        const uncommented = raw_line[0 .. std.mem.indexOfScalar(u8, raw_line, '#') orelse raw_line.len];
+        const line = std.mem.trim(u8, uncommented, " \t\r");
+        if (line.len == 0) continue;
+
+        var encoded: [256]u8 = undefined;
+        var encoded_len: usize = 0;
+        var expected: [128]usize = undefined;
+        var expected_len: usize = 0;
+        var tokens = std.mem.tokenizeAny(u8, line, " \t");
+        while (tokens.next()) |token| {
+            if (std.mem.eql(u8, token, "÷")) {
+                if (expected_len >= expected.len) return error.UnicodeGraphemeFixtureTooLarge;
+                expected[expected_len] = encoded_len;
+                expected_len += 1;
+                continue;
+            }
+            if (std.mem.eql(u8, token, "×")) continue;
+
+            const cp = try std.fmt.parseInt(u21, token, 16);
+            var cp_bytes: [4]u8 = undefined;
+            const cp_len = try std.unicode.utf8Encode(cp, &cp_bytes);
+            if (encoded_len + cp_len > encoded.len) return error.UnicodeGraphemeFixtureTooLarge;
+            @memcpy(encoded[encoded_len .. encoded_len + cp_len], cp_bytes[0..cp_len]);
+            encoded_len += cp_len;
+        }
+
+        if (expected_len < 2 or expected[0] != 0 or expected[expected_len - 1] != encoded_len) {
+            std.debug.print("invalid Unicode grapheme fixture at line {d}\n", .{line_number});
+            return error.InvalidUnicodeGraphemeFixture;
+        }
+
+        var actual = GraphemeIterator.init(encoded[0..encoded_len]);
+        var boundary_index: usize = 1;
+        while (actual.next()) |_| {
+            if (boundary_index >= expected_len or actual.it.i != expected[boundary_index]) {
+                std.debug.print(
+                    "Unicode grapheme mismatch at fixture line {d}: boundary {d}, got byte {d}, expected {d}\n",
+                    .{ line_number, boundary_index, actual.it.i, if (boundary_index < expected_len) expected[boundary_index] else encoded_len },
+                );
+                return error.UnicodeGraphemeConformanceMismatch;
+            }
+            boundary_index += 1;
+        }
+        if (boundary_index != expected_len) {
+            std.debug.print(
+                "Unicode grapheme mismatch at fixture line {d}: produced {d} boundaries, expected {d}\n",
+                .{ line_number, boundary_index, expected_len },
+            );
+            return error.UnicodeGraphemeConformanceMismatch;
+        }
+        case_count += 1;
+    }
+
+    try std.testing.expectEqual(@as(usize, 766), case_count);
 }
 
 test "overlong grapheme fallback never stores partial UTF-8" {

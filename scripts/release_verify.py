@@ -49,6 +49,7 @@ SCRIPT_COMPILE_TARGETS = (
     "scripts/check_widget_lifecycle_mutation.py",
     "scripts/check_widget_parent_attachment.py",
     "scripts/check_widget_coverage.py",
+    "scripts/generate_unicode_grapheme_data.py",
     "scripts/interactive_example_smoke.py",
     "scripts/mouse_alignment_smoke.py",
     "scripts/release_verify.py",

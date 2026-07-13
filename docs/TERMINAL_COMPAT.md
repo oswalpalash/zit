@@ -28,7 +28,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **Linux console/dumb**: Unicode and italic are disabled; stick to ASCII, avoid emoji, and use single-line borders.
 - **Long grapheme clusters**: renderer cells keep up to 32 UTF-8 bytes inline. Longer combining or joined clusters retain their measured cell width but render as the first printable codepoint (or `?`) so fixed-size buffers remain allocation-free and never store partial UTF-8.
 - **Text controls**: renderer draw calls are cell-oriented. C0/C1 controls, including ESC and CR/LF, are isolated at grapheme boundaries and rendered as `?` rather than copied into terminal output; CRLF occupies one fallback cell. Split multiline content into rows before drawing it.
-- **Grapheme boundaries**: measurement, clipping, editing, and rendering share allocation-free rules for combining marks, emoji ZWJ sequences, regional-indicator flag pairs, and composed/decomposed Hangul. This is a terminal-focused subset rather than a claim of complete Unicode text shaping.
+- **Grapheme boundaries**: measurement, clipping, editing, and rendering implement Unicode 17 extended grapheme boundaries from generated Unicode Character Database properties. The allocation-free iterator is checked against all 766 cases in the official Unicode 17 `GraphemeBreakTest.txt` fixture. Cell width remains a terminal policy, not a claim of complete Unicode text shaping.
 - **Kitty/WezTerm**: Kitty keyboard protocol is attempted when available; setup/teardown write failures are non-fatal and can be inspected with `Terminal.optionalFeatureFailureCount()` / `Terminal.lastOptionalFeatureFailure()`. Ensure applications handle extended key codes gracefully.
 - **Nested terminals**: When running inside SSH or a container, rely on the outer terminal’s exports; avoid forcing `TERM` to xterm-256color unless you know the host supports it.
 
@@ -40,3 +40,7 @@ const fg = if (caps.rgb_colors) render.Color.rgb(40, 180, 255) else render.Color
 if (caps.synchronized_output) try term.beginSynchronizedOutput();
 if (caps.bracketed_paste) try term.enableBracketedPaste();
 ```
+
+## Updating Unicode Data
+
+Run `python3 scripts/generate_unicode_grapheme_data.py` from the repository root to download the pinned Unicode sources, verify their SHA-256 hashes, and regenerate the Zig property tables, conformance fixture, and Unicode license. Normal builds and tests use the checked-in files and do not require network access. Source URLs and hashes are recorded in [`src/terminal/testdata/README.md`](../src/terminal/testdata/README.md).
