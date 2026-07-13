@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 REQUIRED_WORKFLOW_GATES = (
+    "os: [ubuntu-latest, macos-latest, windows-latest]",
     "zig build quality",
     "python3 scripts/check_build_steps.py --skip quality --skip release-check --skip-interactive",
     "python3 scripts/check_docs_commands.py",
@@ -64,6 +65,7 @@ REQUIRED_PR_GATES = (
 
 REQUIRED_STABILITY_GATES = REQUIRED_PR_GATES + (
     "python3 scripts/check_contribution_gates.py",
+    "The `windows-latest` CI matrix must run `zig build quality` natively",
 )
 
 REQUIRED_RELEASE_VERIFY_GATES = (
@@ -135,6 +137,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/check_widget_lifecycle_mutation.py",
     "python3 scripts/check_widget_parent_attachment.py",
     "zig build release-check",
+    "Windows-specific unit tests run through `zig build quality` on the native `windows-latest` matrix",
 )
 
 

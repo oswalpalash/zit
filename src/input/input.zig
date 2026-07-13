@@ -8,6 +8,8 @@ const windows_sync = struct {
     const WAIT_TIMEOUT: std.os.windows.DWORD = 0x00000102;
 
     extern "kernel32" fn WaitForSingleObject(hHandle: std.os.windows.HANDLE, dwMilliseconds: std.os.windows.DWORD) std.os.windows.DWORD;
+    extern "kernel32" fn CreateEventW(lpEventAttributes: ?*anyopaque, bManualReset: std.os.windows.BOOL, bInitialState: std.os.windows.BOOL, lpName: ?[*:0]const u16) ?std.os.windows.HANDLE;
+    extern "kernel32" fn SetEvent(hEvent: std.os.windows.HANDLE) std.os.windows.BOOL;
 };
 
 const default_resize_poll_interval_ms: u64 = 125;
@@ -34,6 +36,25 @@ fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
     if (now_ms < last_poll_ms) return true;
     const elapsed: u64 = @intCast(now_ms - last_poll_ms);
     return elapsed >= interval_ms;
+}
+
+const WindowsWaitResult = enum {
+    ready,
+    timeout,
+    failed,
+};
+
+fn windowsWaitMilliseconds(timeout_ms: u64) std.os.windows.DWORD {
+    return @intCast(@min(timeout_ms, std.math.maxInt(std.os.windows.DWORD)));
+}
+
+fn waitForWindowsHandle(handle: std.os.windows.HANDLE, timeout_ms: u64) WindowsWaitResult {
+    if (builtin.os.tag != .windows) return .failed;
+    return switch (windows_sync.WaitForSingleObject(handle, windowsWaitMilliseconds(timeout_ms))) {
+        windows_sync.WAIT_OBJECT_0 => .ready,
+        windows_sync.WAIT_TIMEOUT => .timeout,
+        else => .failed,
+    };
 }
 
 /// Input handling module
@@ -1264,6 +1285,20 @@ const FileByteReader = struct {
     }
 };
 
+const WindowsTimedByteReader = struct {
+    file: std.Io.File,
+    timeout_ms: u16,
+
+    fn readByte(self: *WindowsTimedByteReader) !u8 {
+        if (builtin.os.tag != .windows) return error.Unsupported;
+        return switch (waitForWindowsHandle(self.file.handle, self.timeout_ms)) {
+            .ready => readFileByte(self.file),
+            .timeout => error.WouldBlock,
+            .failed => error.WaitForInputFailure,
+        };
+    }
+};
+
 const PosixTimedByteReader = struct {
     fd: std.posix.fd_t,
     timeout_ms: u16,
@@ -1329,7 +1364,7 @@ pub const InputHandler = struct {
     resize_poll_interval_ms: u64,
     /// Last terminal-size poll timestamp.
     last_resize_poll_ms: i64,
-    /// Maximum POSIX wait for each byte continuing an input sequence.
+    /// Maximum wait for each byte continuing an input sequence.
     sequence_timeout_ms: u16,
 
     /// Initialize a new input handler
@@ -1358,11 +1393,12 @@ pub const InputHandler = struct {
         self.resize_poll_interval_ms = interval_ms;
     }
 
-    /// Configure the POSIX wait for bytes continuing ESC, CSI, and UTF-8 input.
+    /// Configure the wait for bytes continuing ESC, CSI, and UTF-8 input.
     ///
     /// Complete sequences do not wait. Set `timeout_ms` to 0 for immediate
-    /// non-blocking reads; larger values tolerate fragmented SSH or PTY input
-    /// at the cost of the same maximum delay when distinguishing a lone Escape.
+    /// non-blocking reads; larger values tolerate fragmented SSH, PTY, or
+    /// Windows console input at the cost of the same maximum delay when
+    /// distinguishing a lone Escape.
     pub fn setSequenceTimeout(self: *InputHandler, timeout_ms: u16) void {
         self.sequence_timeout_ms = timeout_ms;
     }
@@ -1510,7 +1546,10 @@ pub const InputHandler = struct {
             };
         }
 
-        const stdin = std.Io.File.stdin();
+        const stdin = std.Io.File{
+            .handle = self.term.stdin_fd,
+            .flags = .{ .nonblocking = false },
+        };
         var reader = FileByteReader{ .file = stdin };
 
         // Read a single byte
@@ -1529,7 +1568,11 @@ pub const InputHandler = struct {
         // Check for escape sequence
         if (byte == 0x1b) {
             if (builtin.os.tag == .windows) {
-                return try self.parseEscapeSequence(&reader, &sink);
+                var sequence_reader = WindowsTimedByteReader{
+                    .file = stdin,
+                    .timeout_ms = self.sequence_timeout_ms,
+                };
+                return try self.parseEscapeSequence(&sequence_reader, &sink);
             }
             var sequence_reader = PosixTimedByteReader{
                 .fd = self.term.stdin_fd,
@@ -1579,9 +1622,13 @@ pub const InputHandler = struct {
         }
 
         if (byte >= 0x80) {
-            const codepoint = if (builtin.os.tag == .windows)
-                try readUtf8Key(byte, &reader, &sink)
-            else blk: {
+            const codepoint = if (builtin.os.tag == .windows) blk: {
+                var sequence_reader = WindowsTimedByteReader{
+                    .file = stdin,
+                    .timeout_ms = self.sequence_timeout_ms,
+                };
+                break :blk try readUtf8Key(byte, &sequence_reader, &sink);
+            } else blk: {
                 var sequence_reader = PosixTimedByteReader{
                     .fd = self.term.stdin_fd,
                     .timeout_ms = self.sequence_timeout_ms,
@@ -1660,14 +1707,10 @@ pub const InputHandler = struct {
         }
 
         if (builtin.os.tag == .windows) {
-            const max_wait_ms: u64 = std.math.maxInt(std.os.windows.DWORD);
-            const wait_ms: std.os.windows.DWORD = @intCast(@min(timeout_ms, max_wait_ms));
-            const wait_result = windows_sync.WaitForSingleObject(self.term.stdin_fd, wait_ms);
-
-            switch (wait_result) {
-                windows_sync.WAIT_OBJECT_0 => {},
-                windows_sync.WAIT_TIMEOUT => return try self.pollResizeIfDue(),
-                else => return try self.pollResizeIfDue(),
+            switch (waitForWindowsHandle(self.term.stdin_fd, timeout_ms)) {
+                .ready => {},
+                .timeout => return try self.pollResizeIfDue(),
+                .failed => return error.WaitForInputFailure,
             }
 
             return self.readEvent() catch |err| {
@@ -2414,6 +2457,65 @@ test "input sequence timeout is configurable" {
     try std.testing.expectEqual(@as(u16, 0), handler.sequence_timeout_ms);
     handler.setSequenceTimeout(80);
     try std.testing.expectEqual(@as(u16, 80), handler.sequence_timeout_ms);
+}
+
+test "Windows input wait distinguishes timeout and readiness" {
+    try std.testing.expectEqual(@as(std.os.windows.DWORD, 25), windowsWaitMilliseconds(25));
+    try std.testing.expectEqual(
+        std.math.maxInt(std.os.windows.DWORD),
+        windowsWaitMilliseconds(std.math.maxInt(u64)),
+    );
+
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+
+    const event_handle = windows_sync.CreateEventW(null, .FALSE, .FALSE, null) orelse {
+        return error.CreateEventFailure;
+    };
+    defer std.os.windows.CloseHandle(event_handle);
+
+    try std.testing.expectEqual(WindowsWaitResult.timeout, waitForWindowsHandle(event_handle, 0));
+    try std.testing.expect(windows_sync.SetEvent(event_handle).toBool());
+    try std.testing.expectEqual(WindowsWaitResult.ready, waitForWindowsHandle(event_handle, 25));
+}
+
+test "input handler reads configured terminal stdin handle" {
+    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
+        return error.SkipZigTest;
+    }
+
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    const sequence = "\x1b[A";
+    try compat.fileWriteAll(fds[1], sequence);
+
+    var term = terminal.Terminal{
+        .stdin_fd = fds[0],
+        .stdout_fd = std.Io.File.stdout().handle,
+        .original_termios = .none,
+        .original_stdin_flags = null,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = .{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+    var handler = InputHandler.init(std.testing.allocator, &term);
+
+    const event = try handler.readEvent();
+    try std.testing.expectEqual(EventType.key, std.meta.activeTag(event));
+    try std.testing.expectEqual(KeyCode.UP, event.key.key);
 }
 
 test "input terminal modes are restored by terminal deinit before raw cleanup" {

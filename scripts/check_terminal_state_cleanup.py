@@ -212,13 +212,27 @@ def validate_fragmented_input_contract(root: Path) -> list[str]:
     for marker in (
         "default_sequence_timeout_ms",
         "PosixTimedByteReader",
+        "WindowsTimedByteReader",
         "setSequenceTimeout",
+        'test "Windows input wait distinguishes timeout and readiness"',
+        'test "input handler reads configured terminal stdin handle"',
     ):
         if marker not in input_text:
             failures.append(f"src/input/input.zig: missing fragmented-input contract marker {marker}")
 
     if "parseEscapeSequenceMac" in input_text or "parseEscapeSequenceStandard" in input_text:
-        failures.append("src/input/input.zig: POSIX escape parsing must use the shared timed continuation path")
+        failures.append("src/input/input.zig: escape parsing must use the shared timed continuation path")
+
+    read_event_body = function_body(input_text, "readEvent")
+    if read_event_body is None:
+        failures.append("src/input/input.zig: missing InputHandler.readEvent")
+    else:
+        if "std.Io.File.stdin()" in read_event_body:
+            failures.append("src/input/input.zig: InputHandler.readEvent must read the Terminal instance stdin handle")
+        if ".handle = self.term.stdin_fd" not in read_event_body:
+            failures.append("src/input/input.zig: InputHandler.readEvent missing terminal-owned stdin file")
+        if "WindowsTimedByteReader" not in read_event_body:
+            failures.append("src/input/input.zig: Windows escape and UTF-8 continuations must use the configured timeout")
 
     for marker in (
         "interaction_byte_delay",

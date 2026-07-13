@@ -26,6 +26,7 @@ Thanks for helping make Zit the best Zig TUI toolkit. This guide covers how to p
 - For performance-sensitive changes, compare `zig build render-bench` or `zig build bench` before/after and note regressions.
 - Unicode grapheme or width-property updates must use `python3 scripts/generate_unicode_grapheme_data.py`; commit the regenerated table, official fixtures, and license together, then run `zig build test` and `zig build release-check`.
 - If a change needs platform coverage (e.g. Windows/ConPTY, mouse handling), mention how you validated it in the PR.
+- Windows-specific unit tests run through `zig build quality` on the native `windows-latest` matrix; a successful `-Dtarget=x86_64-windows` cross-smoke alone does not prove runtime behavior.
 
 ## Pull request expectations
 - Fill out the PR template, including motivation, testing notes, and screenshots for visual changes.

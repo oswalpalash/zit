@@ -71,7 +71,7 @@ Reference: [API.md](API.md#mouse-coordinates).
 
 ## Escape Sequences or UTF-8 Keys Decode Incorrectly
 
-Zit waits up to 25 ms for each byte continuing a POSIX ESC, CSI, mouse, or UTF-8 sequence. If a high-latency SSH, tmux, or nested-terminal connection still splits sequences beyond that interval, increase the bound before entering the event loop:
+Zit waits up to 25 ms for each byte continuing an ESC, CSI, mouse, or UTF-8 sequence on POSIX and Windows. If a high-latency SSH, tmux, nested-terminal, or console connection still splits sequences beyond that interval, increase the bound before entering the event loop:
 
 ```zig
 input_handler.setSequenceTimeout(80);
