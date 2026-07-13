@@ -122,8 +122,8 @@ pub const ScreenManager = struct {
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
         try self.primeEntry(&entry);
-        errdefer if (!entry_owned_by_stack and entry.screen.widget.parent == &self.widget) {
-            entry.screen.widget.parent = null;
+        errdefer if (!entry_owned_by_stack) {
+            _ = entry.screen.widget.detachFrom(&self.widget);
         };
 
         if (self.topEntry()) |prev| {
@@ -176,8 +176,8 @@ pub const ScreenManager = struct {
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
         try self.primeEntry(&entry);
-        errdefer if (!entry_owned_by_stack and entry.screen.widget.parent == &self.widget) {
-            entry.screen.widget.parent = null;
+        errdefer if (!entry_owned_by_stack) {
+            _ = entry.screen.widget.detachFrom(&self.widget);
         };
         try self.runHook(&self.screens.items[exiting_idx], self.screens.items[exiting_idx].label_copy, self.screens.items[exiting_idx].screen.lifecycle.on_pause);
 
@@ -307,17 +307,15 @@ pub const ScreenManager = struct {
 
     fn deinitEntry(self: *ScreenManager, entry: *ScreenEntry) void {
         entry.screen.widget.visibility_transition.cancel(&self.animator);
-        if (entry.screen.widget.parent == &self.widget) {
-            entry.screen.widget.parent = null;
-        }
+        _ = entry.screen.widget.detachFrom(&self.widget);
         entry.deinit(self.allocator);
     }
 
     fn primeEntry(self: *ScreenManager, entry: *ScreenEntry) !void {
         try entry.screen.widget.attachTo(&self.widget);
-        errdefer if (entry.screen.widget.parent == &self.widget) {
-            entry.screen.widget.parent = null;
-        };
+        errdefer {
+            _ = entry.screen.widget.detachFrom(&self.widget);
+        }
         if (self.last_rect) |rect| {
             try entry.screen.widget.layout(rect);
         }

@@ -128,9 +128,7 @@ pub const ScrollContainer = struct {
 
     fn detachContent(self: *ScrollContainer) void {
         if (self.content) |current| {
-            if (current.parent == &self.widget) {
-                current.parent = null;
-            }
+            _ = current.detachFrom(&self.widget);
         }
         self.content = null;
     }

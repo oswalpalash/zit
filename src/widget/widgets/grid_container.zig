@@ -91,7 +91,7 @@ pub const GridContainer = struct {
         for (self.children.items, 0..) |entry, idx| {
             if (entry.widget == child) {
                 _ = self.children.orderedRemove(idx);
-                child.parent = null;
+                _ = child.detachFrom(&self.widget);
                 _ = self.clearCell(entry.column, entry.row);
                 self.widget.markDirty();
                 break;
@@ -113,7 +113,7 @@ pub const GridContainer = struct {
         var changed = false;
         for (self.children.items, 0..) |entry, idx| {
             if (entry.column == column and entry.row == row) {
-                entry.widget.parent = null;
+                _ = entry.widget.detachFrom(&self.widget);
                 _ = self.children.orderedRemove(idx);
                 changed = true;
                 break;
@@ -126,7 +126,7 @@ pub const GridContainer = struct {
     pub fn clearChildren(self: *GridContainer) void {
         const changed = self.children.items.len != 0 or hasLayoutCells(self.layout);
         for (self.children.items) |entry| {
-            entry.widget.parent = null;
+            _ = entry.widget.detachFrom(&self.widget);
         }
         self.children.clearRetainingCapacity();
 
@@ -588,6 +588,25 @@ test "grid container rejects child attached to another collection parent" {
     try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
     try std.testing.expect(second.layout.cells.items[0] == null);
     try std.testing.expectEqual(&first.widget, child.widget.parent.?);
+}
+
+test "grid removal does not clear a newer parent link" {
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 1, 1);
+    var newer_owner = try @import("block.zig").Block.init(alloc);
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        grid.deinit();
+        newer_owner.deinit();
+        child.deinit();
+    }
+
+    try grid.addChild(&child.widget, 0, 0);
+    child.widget.parent = &newer_owner.widget;
+
+    grid.removeChild(&child.widget);
+    try std.testing.expectEqual(&newer_owner.widget, child.widget.parent.?);
+    try std.testing.expect(child.widget.detachFrom(&newer_owner.widget));
 }
 
 test "grid container moves existing child without duplicate ownership" {

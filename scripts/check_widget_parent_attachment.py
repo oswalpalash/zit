@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Require production widget parent links to be created through Widget.attachTo.
+"""Require production Widget.parent mutations to use guarded ownership helpers.
 
-Direct positive writes to ``Widget.parent`` bypass the single-parent ownership
-check and can silently leave two owners referencing the same widget. Detach
-cleanup may still assign ``null``, and unit tests may construct invalid state
-directly when exercising rejection paths.
+Direct writes to ``Widget.parent`` bypass single-parent ownership checks. A
+positive write can silently reparent a widget, while an unconditional null
+write can detach it from a different current owner. Unit tests may construct
+invalid state directly when exercising rejection paths.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def run_self_tests() -> None:
             raise AssertionError("direct positive parent assignment was not detected")
     match = DIRECT_PARENT_ASSIGNMENT.search(detach)
     if match is None or match.group("value").strip() != "null":
-        raise AssertionError("parent detach was not recognized")
+        raise AssertionError("direct parent detach was not detected")
     test_match = DIRECT_PARENT_ASSIGNMENT.search(test_only)
     if test_match is None or not is_test_code(test_match.start(), test_body_ranges(test_only)):
         raise AssertionError("test-only parent mutation was not excluded")
@@ -101,30 +101,41 @@ def main() -> int:
     violations: list[str] = []
     files = iter_files()
     shared_attachment_count = 0
+    shared_detachment_count = 0
 
     for path in files:
         rel = path.relative_to(ROOT)
         source = path.read_text(encoding="utf-8")
         ranges = test_body_ranges(source)
         attach_range = declaration_body_range(source, "attachTo") if rel == BASE_WIDGET else None
+        detach_range = declaration_body_range(source, "detachFrom") if rel == BASE_WIDGET else None
 
         for match in DIRECT_PARENT_ASSIGNMENT.finditer(source):
             if is_line_comment(source, match.start()) or is_test_code(match.start(), ranges):
                 continue
-            if match.group("value").strip() == "null":
-                continue
+            value = match.group("value").strip()
             if (
                 rel == BASE_WIDGET
                 and attach_range is not None
                 and attach_range[0] <= match.start() < attach_range[1]
                 and match.group("target") == "self"
-                and match.group("value").strip() == "parent"
+                and value == "parent"
             ):
                 shared_attachment_count += 1
                 continue
+            if (
+                rel == BASE_WIDGET
+                and detach_range is not None
+                and detach_range[0] <= match.start() < detach_range[1]
+                and match.group("target") == "self"
+                and value == "null"
+            ):
+                shared_detachment_count += 1
+                continue
+            helper = "Widget.detachFrom()" if value == "null" else "Widget.attachTo()"
             violations.append(
-                f"{rel}:{line_number(source, match.start())}: use Widget.attachTo() "
-                "so cross-parent ownership is rejected"
+                f"{rel}:{line_number(source, match.start())}: use {helper} "
+                "so parent ownership is checked"
             )
 
     if shared_attachment_count != 1:
@@ -132,14 +143,19 @@ def main() -> int:
             f"{BASE_WIDGET}: expected exactly one shared parent assignment in Widget.attachTo(), "
             f"found {shared_attachment_count}"
         )
+    if shared_detachment_count != 1:
+        violations.append(
+            f"{BASE_WIDGET}: expected exactly one shared parent clear in Widget.detachFrom(), "
+            f"found {shared_detachment_count}"
+        )
 
     if violations:
-        sys.stderr.write("direct Widget parent attachment(s) found:\n")
+        sys.stderr.write("direct Widget parent mutation(s) found:\n")
         for violation in violations:
             sys.stderr.write(f"  - {violation}\n")
         return 1
 
-    print(f"checked Widget parent attachments in {len(files)} file(s)")
+    print(f"checked Widget parent mutations in {len(files)} file(s)")
     return 0
 
 

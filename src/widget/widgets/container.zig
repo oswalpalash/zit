@@ -50,9 +50,7 @@ pub const Container = struct {
     /// Clean up container resources
     pub fn deinit(self: *Container) void {
         for (self.children.items) |child| {
-            if (child.parent == &self.widget) {
-                child.parent = null;
-            }
+            _ = child.detachFrom(&self.widget);
         }
         self.children.deinit(self.allocator);
         self.allocator.destroy(self);
@@ -87,9 +85,7 @@ pub const Container = struct {
         for (self.children.items, 0..) |c, i| {
             if (c == child) {
                 _ = self.children.orderedRemove(i);
-                if (child.parent == &self.widget) {
-                    child.parent = null;
-                }
+                _ = child.detachFrom(&self.widget);
                 self.widget.markDirty();
                 break;
             }

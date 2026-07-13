@@ -56,7 +56,7 @@ jobs:
       - name: Check widget lifecycle mutations
         run: python3 scripts/check_widget_lifecycle_mutation.py
 
-      - name: Check widget parent attachments
+      - name: Check widget parent mutations
         run: python3 scripts/check_widget_parent_attachment.py
 
       - name: Check owned allocation patterns

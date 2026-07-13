@@ -134,7 +134,7 @@ def commands(args: argparse.Namespace, docs_dir: Path, zig: str) -> list[Command
         Command("widget coverage", ("python3", "scripts/check_widget_coverage.py"), 120),
         Command("widget owner casts", ("python3", "scripts/check_widget_owner_casts.py"), 120),
         Command("widget lifecycle mutations", ("python3", "scripts/check_widget_lifecycle_mutation.py"), 120),
-        Command("widget parent attachments", ("python3", "scripts/check_widget_parent_attachment.py"), 120),
+        Command("widget parent mutations", ("python3", "scripts/check_widget_parent_attachment.py"), 120),
         Command("interactive PTY smoke", ("python3", "scripts/interactive_example_smoke.py"), 300),
         Command("resize PTY smoke", ("python3", "scripts/resize_smoke.py", "--no-build"), 120),
         Command("mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build"), 120),

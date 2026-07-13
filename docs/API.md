@@ -156,6 +156,8 @@ State helpers operate on any `BaseWidget` pointer through lifecycle-aware setter
 
 All public child/content attachment APIs require explicit single-parent ownership. Collection containers (`Container`, `FlexContainer`, and `GridContainer`), single-content widgets (`Block`, `Modal`, and `ScrollContainer`), `SplitPane`, `TabView`, and `ScreenManager` return `error.WidgetAlreadyAttached` without modifying the owner when a child or screen still belongs to another parent; remove it from the current owner before attaching it elsewhere. `SplitPane` permits moving its own child between slots, while `TabView` and `ScreenManager` reject duplicate widget entries in the same owner.
 
+Owning widgets create parent links through `Widget.attachTo` and clear them through `Widget.detachFrom`. `detachFrom` only clears a link when the supplied owner is still the widget's current parent, preventing stale cleanup paths from detaching a widget that has since moved elsewhere.
+
 ### Typeahead Lists/Tables
 ```zig
 list.setTypeaheadTimeout(900);

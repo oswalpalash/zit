@@ -632,7 +632,7 @@ pub const TabView = struct {
         try self.validateNewContent(content);
         try content.attachTo(&self.widget);
         errdefer {
-            if (content.parent == &self.widget) content.parent = null;
+            _ = content.detachFrom(&self.widget);
         }
         const rect = self.contentRect();
         try content.layout(rect);
@@ -657,9 +657,7 @@ pub const TabView = struct {
 
     fn detachTabContent(self: *TabView, tab: *TabItem) void {
         if (tab.content) |content| {
-            if (content.parent == &self.widget) {
-                content.parent = null;
-            }
+            _ = content.detachFrom(&self.widget);
         }
         tab.content = null;
     }

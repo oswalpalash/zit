@@ -96,9 +96,7 @@ pub const SplitPane = struct {
 
     fn detachSlot(self: *SplitPane, slot: *?*base.Widget) void {
         if (slot.*) |current| {
-            if (current.parent == &self.widget) {
-                current.parent = null;
-            }
+            _ = current.detachFrom(&self.widget);
         }
         slot.* = null;
     }

@@ -372,7 +372,7 @@ pub fn build(b: *std.Build) void {
     widget_lifecycle_mutation_step.dependOn(&widget_lifecycle_mutation_cmd.step);
 
     const widget_parent_attachment_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_parent_attachment.py" });
-    const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent links use guarded attachment");
+    const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent mutations use guarded ownership helpers");
     widget_parent_attachment_step.dependOn(&widget_parent_attachment_cmd.step);
 
     const owned_alloc_patterns_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_owned_allocation_patterns.py" });

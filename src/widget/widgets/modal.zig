@@ -97,9 +97,7 @@ pub const Modal = struct {
 
     fn detachContent(self: *Modal) void {
         if (self.content) |current| {
-            if (current.parent == &self.widget) {
-                current.parent = null;
-            }
+            _ = current.detachFrom(&self.widget);
         }
         self.content = null;
     }

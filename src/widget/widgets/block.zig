@@ -102,9 +102,7 @@ pub const Block = struct {
 
     fn detachChild(self: *Block) void {
         if (self.child) |current| {
-            if (current.parent == &self.widget) {
-                current.parent = null;
-            }
+            _ = current.detachFrom(&self.widget);
         }
         self.child = null;
     }

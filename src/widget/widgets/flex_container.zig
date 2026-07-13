@@ -41,6 +41,7 @@ pub const FlexContainer = struct {
     }
 
     pub fn deinit(self: *FlexContainer) void {
+        self.detachChildren();
         self.children.deinit(self.allocator);
         self.layout.deinit();
         self.allocator.destroy(self);
@@ -86,9 +87,7 @@ pub const FlexContainer = struct {
 
     pub fn removeChild(self: *FlexContainer, child: *base.Widget) void {
         const changed = self.removeChildEntries(child);
-        if (changed and child.parent == &self.widget) {
-            child.parent = null;
-        }
+        if (changed) _ = child.detachFrom(&self.widget);
         if (changed) self.widget.markDirty();
     }
 
@@ -116,13 +115,17 @@ pub const FlexContainer = struct {
 
     pub fn clearChildren(self: *FlexContainer) void {
         const changed = self.children.items.len != 0 or self.layout.children.items.len != 0;
-        for (self.children.items) |child| {
-            child.parent = null;
-        }
+        self.detachChildren();
         self.children.clearRetainingCapacity();
         self.layout.children.clearRetainingCapacity();
         self.layout.cache.valid = false;
         if (changed) self.widget.markDirty();
+    }
+
+    fn detachChildren(self: *FlexContainer) void {
+        for (self.children.items) |child| {
+            _ = child.detachFrom(&self.widget);
+        }
     }
 
     pub fn setDirection(self: *FlexContainer, direction: layout_module.FlexDirection) void {
@@ -479,4 +482,22 @@ test "flex container rejects child attached to another collection parent" {
     try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
     try std.testing.expectEqual(@as(usize, 0), second.layout.children.items.len);
     try std.testing.expectEqual(&first.widget, child.widget.parent.?);
+}
+
+test "flex container deinit detaches child parent links" {
+    const alloc = std.testing.allocator;
+    var flex = try FlexContainer.init(alloc, .row);
+    var flex_live = true;
+    var child = try @import("block.zig").Block.init(alloc);
+    defer {
+        if (flex_live) flex.deinit();
+        child.deinit();
+    }
+
+    try flex.addChild(&child.widget, 1);
+    try std.testing.expectEqual(&flex.widget, child.widget.parent.?);
+
+    flex.deinit();
+    flex_live = false;
+    try std.testing.expect(child.widget.parent == null);
 }

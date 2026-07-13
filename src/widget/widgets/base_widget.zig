@@ -319,6 +319,13 @@ pub const Widget = struct {
         self.parent = parent;
     }
 
+    /// Detach this widget only when the caller is its current owner.
+    pub fn detachFrom(self: *Widget, parent: *Widget) bool {
+        if (self.parent != parent) return false;
+        self.parent = null;
+        return true;
+    }
+
     /// Traverse widget children depth-first and invoke a callback for each child.
     pub fn traverseChildren(widget: *Widget, callback: *const fn (*Widget) void) void {
         traverseChildrenImpl(widget, callback);
@@ -1008,6 +1015,25 @@ test "generic Widget pointers notify lifecycle hooks when focus changes" {
     try std.testing.expect(second.widget.focused);
     try std.testing.expectEqual(@as(usize, 2), first.state_changes);
     try std.testing.expectEqual(@as(usize, 1), second.state_changes);
+}
+
+test "widget detachFrom only clears the current owner" {
+    const alloc = std.testing.allocator;
+    var owner = try block_widget.Block.init(alloc);
+    var stale_owner = try block_widget.Block.init(alloc);
+    var child = try block_widget.Block.init(alloc);
+    defer {
+        owner.deinit();
+        stale_owner.deinit();
+        child.deinit();
+    }
+
+    try child.widget.attachTo(&owner.widget);
+    try std.testing.expect(!child.widget.detachFrom(&stale_owner.widget));
+    try std.testing.expectEqual(&owner.widget, child.widget.parent.?);
+    try std.testing.expect(child.widget.detachFrom(&owner.widget));
+    try std.testing.expect(child.widget.parent == null);
+    try std.testing.expect(!child.widget.detachFrom(&owner.widget));
 }
 
 test "layout adapter fade clips edge rect without u16 overflow" {
