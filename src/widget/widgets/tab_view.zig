@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Lazy factory for tab content, called when a tab is first activated.
 pub const TabLoader = *const fn (std.mem.Allocator) anyerror!*base.Widget;
@@ -361,6 +362,8 @@ pub const TabView = struct {
     tabs: std.ArrayList(TabItem),
     /// Tab strip widget
     tab_bar: *TabBar,
+    /// Reused direct-child state for transactional layout.
+    layout_snapshots: std.ArrayList(layout_transaction.Snapshot),
     /// Active tab index
     active_tab: usize = 0,
     /// Tab height
@@ -408,6 +411,7 @@ pub const TabView = struct {
             .widget = base.Widget.init(&vtable),
             .tabs = std.ArrayList(TabItem).empty,
             .tab_bar = header,
+            .layout_snapshots = std.ArrayList(layout_transaction.Snapshot).empty,
             .allocator = allocator,
         };
         try self.tab_bar.widget.attachTo(&self.widget);
@@ -424,6 +428,7 @@ pub const TabView = struct {
             self.allocator.free(tab.title);
         }
         self.tabs.deinit(self.allocator);
+        self.layout_snapshots.deinit(self.allocator);
         self.tab_bar.deinit();
         self.allocator.destroy(self);
     }
@@ -444,6 +449,7 @@ pub const TabView = struct {
             try self.validateNewContent(content);
         }
         try self.tabs.ensureUnusedCapacity(self.allocator, 1);
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.tabs.items.len + 2);
         const title_copy = try self.allocator.dupe(u8, spec.title);
         errdefer self.allocator.free(title_copy);
         if (spec.content) |content| {
@@ -769,14 +775,30 @@ pub const TabView = struct {
         const self: *TabView = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.tabs.items.len + 1);
+        self.layout_snapshots.clearRetainingCapacity();
+        defer self.layout_snapshots.clearRetainingCapacity();
+        self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(&self.tab_bar.widget));
+        for (self.tabs.items) |tab| {
+            if (tab.content) |content| {
+                self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(content));
+            }
+        }
+
         const tab_height: u16 = @intCast(@max(self.tab_bar.tab_height, 0));
         const header_rect = layout_module.Rect.init(rect.x, rect.y, rect.width, tab_height);
-        try self.tab_bar.widget.layout(header_rect);
+        self.tab_bar.widget.layout(header_rect) catch |err| {
+            layout_transaction.rollback(self.layout_snapshots.items);
+            return err;
+        };
 
         const content_rect = self.contentRect();
         for (self.tabs.items) |tab| {
             if (tab.content) |content| {
-                try content.layout(content_rect);
+                content.layout(content_rect) catch |err| {
+                    layout_transaction.rollback(self.layout_snapshots.items);
+                    return err;
+                };
             }
         }
     }
@@ -879,6 +901,103 @@ const FailingLayoutWidget = struct {
         return false;
     }
 };
+
+const SuccessfulLayoutWidget = struct {
+    widget: base.Widget = base.Widget.init(&vtable),
+    layout_count: usize = 0,
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = getPreferredSizeFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(widget_ptr: *anyopaque, _: layout_module.Rect) anyerror!void {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SuccessfulLayoutWidget = @fieldParentPtr("widget", widget_ref);
+        self.layout_count += 1;
+    }
+
+    fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(1, 1);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
+    }
+};
+
+const BoundsRecorder = struct {
+    calls: usize = 0,
+    last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+    fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+        const self: *BoundsRecorder = @ptrCast(@alignCast(ctx.?));
+        self.calls += 1;
+        self.last = rect;
+    }
+};
+
+test "tab view rolls back header and loaded content on late layout failure" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var first = SuccessfulLayoutWidget{};
+    var failing = FailingLayoutWidget.init();
+    var unvisited = SuccessfulLayoutWidget{};
+    try tab_view.addTab("first", &first.widget);
+    try tab_view.addTab("failing", &failing.widget);
+    try tab_view.addTab("unvisited", &unvisited.widget);
+
+    const view_original = layout_module.Rect.init(1, 2, 3, 4);
+    const header_original = layout_module.Rect.init(5, 6, 7, 1);
+    const first_original = layout_module.Rect.init(8, 9, 10, 2);
+    const failing_original = layout_module.Rect.init(11, 12, 13, 3);
+    const unvisited_original = layout_module.Rect.init(14, 15, 16, 4);
+    tab_view.widget.rect = view_original;
+    tab_view.widget.clearDirty();
+    tab_view.tab_bar.widget.rect = header_original;
+    tab_view.tab_bar.widget.clearDirty();
+    first.widget.rect = first_original;
+    first.widget.clearDirty();
+    failing.widget.rect = failing_original;
+    failing.widget.clearDirty();
+    unvisited.widget.rect = unvisited_original;
+    unvisited.widget.clearDirty();
+    var bounds = BoundsRecorder{ .last = first_original };
+    first.widget.accessibility_ctx = &bounds;
+    first.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    var failing_allocator = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = tab_view.allocator;
+    tab_view.allocator = failing_allocator.allocator();
+    defer tab_view.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutFailed, tab_view.widget.layout(layout_module.Rect.init(0, 0, 30, 8)));
+    try std.testing.expectEqual(view_original, tab_view.widget.rect);
+    try std.testing.expectEqual(header_original, tab_view.tab_bar.widget.rect);
+    try std.testing.expectEqual(first_original, first.widget.rect);
+    try std.testing.expectEqual(failing_original, failing.widget.rect);
+    try std.testing.expectEqual(unvisited_original, unvisited.widget.rect);
+    try std.testing.expect(!tab_view.tab_bar.widget.dirty);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expect(!failing.widget.dirty);
+    try std.testing.expect(!unvisited.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 1), first.layout_count);
+    try std.testing.expectEqual(@as(usize, 0), unvisited.layout_count);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(first_original, bounds.last);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.layout_snapshots.items.len);
+}
 
 test "tab view lazy loads content on first activation" {
     const alloc = std.testing.allocator;
