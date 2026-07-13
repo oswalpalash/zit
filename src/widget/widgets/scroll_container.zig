@@ -6,6 +6,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// BorderStyle for ScrollContainer
 pub const BorderStyle = enum {
@@ -632,6 +633,22 @@ pub const ScrollContainer = struct {
         const self: *ScrollContainer = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        var snapshots: [3]layout_transaction.Snapshot = undefined;
+        var snapshot_count: usize = 0;
+        if (self.h_scrollbar) |bar| {
+            snapshots[snapshot_count] = layout_transaction.Snapshot.capture(&bar.widget);
+            snapshot_count += 1;
+        }
+        if (self.v_scrollbar) |bar| {
+            snapshots[snapshot_count] = layout_transaction.Snapshot.capture(&bar.widget);
+            snapshot_count += 1;
+        }
+        if (self.content) |content| {
+            snapshots[snapshot_count] = layout_transaction.Snapshot.capture(content);
+            snapshot_count += 1;
+        }
+        const child_snapshots = snapshots[0..snapshot_count];
+
         // Layout scrollbars
         if (self.show_h_scrollbar) {
             if (self.h_scrollbar) |h_scrollbar_widget| {
@@ -645,7 +662,10 @@ pub const ScrollContainer = struct {
                         h_scrollbar_rect.width -= 1; // Make room for vertical scrollbar
                     }
                 }
-                try h_scrollbar_widget.widget.layout(h_scrollbar_rect);
+                h_scrollbar_widget.widget.layout(h_scrollbar_rect) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
         }
 
@@ -661,7 +681,10 @@ pub const ScrollContainer = struct {
                         v_scrollbar_rect.height -= 1; // Make room for horizontal scrollbar
                     }
                 }
-                try v_scrollbar_widget.widget.layout(v_scrollbar_rect);
+                v_scrollbar_widget.widget.layout(v_scrollbar_rect) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
         }
 
@@ -675,7 +698,10 @@ pub const ScrollContainer = struct {
             content_rect.width = @max(content_rect.width, content_width);
             content_rect.height = @max(content_rect.height, content_height);
 
-            try content.layout(content_rect);
+            content.layout(content_rect) catch |err| {
+                layout_transaction.rollback(child_snapshots);
+                return err;
+            };
         }
 
         if (self.updateContentSize()) self.widget.markDirty();
@@ -746,6 +772,47 @@ fn rectOffsetCoord(start: u16, offset: usize) u16 {
     return @intCast(@min(coord, std.math.maxInt(u16)));
 }
 
+const FailingLayoutWidget = struct {
+    widget: base.Widget = base.Widget.init(&vtable),
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = preferredFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {
+        return error.LayoutFailed;
+    }
+
+    fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(20, 20);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
+    }
+};
+
+const BoundsRecorder = struct {
+    calls: usize = 0,
+    last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+    fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+        const self: *BoundsRecorder = @ptrCast(@alignCast(ctx.?));
+        self.calls += 1;
+        self.last = rect;
+    }
+};
+
 test "scroll container init/deinit" {
     const alloc = std.testing.allocator;
     var container = try ScrollContainer.init(alloc);
@@ -755,6 +822,52 @@ test "scroll container init/deinit" {
     try std.testing.expect(container.v_scrollbar != null);
     try std.testing.expectEqual(&container.widget, container.h_scrollbar.?.widget.parent.?);
     try std.testing.expectEqual(&container.widget, container.v_scrollbar.?.widget.parent.?);
+}
+
+test "scroll container rolls back scrollbars and cache on content layout failure" {
+    const alloc = std.testing.allocator;
+    var container = try ScrollContainer.init(alloc);
+    defer container.deinit();
+
+    var content = FailingLayoutWidget{};
+    try container.setContent(&content.widget);
+
+    const container_original = layout_module.Rect.init(1, 2, 3, 4);
+    const horizontal_original = layout_module.Rect.init(5, 6, 7, 1);
+    const vertical_original = layout_module.Rect.init(8, 9, 1, 10);
+    const content_original = layout_module.Rect.init(11, 12, 13, 14);
+    container.widget.rect = container_original;
+    container.widget.clearDirty();
+    container.h_scrollbar.?.widget.rect = horizontal_original;
+    container.h_scrollbar.?.widget.clearDirty();
+    container.v_scrollbar.?.widget.rect = vertical_original;
+    container.v_scrollbar.?.widget.clearDirty();
+    content.widget.rect = content_original;
+    content.widget.clearDirty();
+    container.content_width = 17;
+    container.content_height = 18;
+
+    var bounds = BoundsRecorder{ .last = horizontal_original };
+    container.h_scrollbar.?.widget.accessibility_ctx = &bounds;
+    container.h_scrollbar.?.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    var failing_allocator = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = container.allocator;
+    container.allocator = failing_allocator.allocator();
+    defer container.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutFailed, container.widget.layout(layout_module.Rect.init(0, 0, 30, 8)));
+    try std.testing.expectEqual(container_original, container.widget.rect);
+    try std.testing.expectEqual(horizontal_original, container.h_scrollbar.?.widget.rect);
+    try std.testing.expectEqual(vertical_original, container.v_scrollbar.?.widget.rect);
+    try std.testing.expectEqual(content_original, content.widget.rect);
+    try std.testing.expect(!container.h_scrollbar.?.widget.dirty);
+    try std.testing.expect(!container.v_scrollbar.?.widget.dirty);
+    try std.testing.expect(!content.widget.dirty);
+    try std.testing.expectEqual(@as(i16, 17), container.content_width);
+    try std.testing.expectEqual(@as(i16, 18), container.content_height);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(horizontal_original, bounds.last);
 }
 
 fn scrollContainerInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {

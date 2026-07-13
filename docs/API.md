@@ -160,6 +160,8 @@ Owning widgets create parent links through `Widget.attachTo` and clear them thro
 
 `TabView.layout` lays out the header and every loaded tab, including inactive content. If any child rejects layout, the header and all loaded content recover their previous public geometry, dirty regions, and published accessibility bounds without steady-state allocation.
 
+`ScrollContainer.layout` lays out its owned scrollbars before caller-owned content. If content rejects layout, fixed stack snapshots restore both scrollbars and content while leaving the prior content-size cache intact.
+
 `ScreenManager` accepts rapid `push`, `pop`, and `replace` calls by settling any active transition to its final lifecycle state before starting the next one. Fallible stack, animation-capacity, label-copy, and layout preflight runs first, so a rejected navigation leaves the current transition running unchanged. Rejected candidates recover their public rect, dirty-region, visibility, visibility-transition state, and published accessibility bounds. A parentless candidate with an independently active visibility animation is rejected with `error.WidgetAnimationInProgress` so the manager cannot orphan a handle owned by another animator. Transition drawing preserves stack order without per-frame allocation.
 
 ### Typeahead Lists/Tables
