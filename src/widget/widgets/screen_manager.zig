@@ -63,6 +63,33 @@ const ActiveTransition = struct {
     exiting: ?usize = null,
 };
 
+const CandidateState = struct {
+    rect: layout_module.Rect,
+    visible: bool,
+    dirty: bool,
+    dirty_rect: ?layout_module.Rect,
+    visibility_transition: animation.VisibilityController,
+
+    fn capture(widget: *const base.Widget) CandidateState {
+        return .{
+            .rect = widget.rect,
+            .visible = widget.visible,
+            .dirty = widget.dirty,
+            .dirty_rect = widget.dirty_rect,
+            .visibility_transition = widget.visibility_transition,
+        };
+    }
+
+    fn restore(self: CandidateState, widget: *base.Widget, animator: *animation.Animator) void {
+        widget.visibility_transition.cancel(animator);
+        widget.rect = self.rect;
+        widget.setVisible(self.visible);
+        widget.dirty = self.dirty;
+        widget.dirty_rect = self.dirty_rect;
+        widget.visibility_transition = self.visibility_transition;
+    }
+};
+
 /// Manage a stack of full-screen widgets with animated transitions.
 pub const ScreenManager = struct {
     widget: base.Widget,
@@ -116,6 +143,9 @@ pub const ScreenManager = struct {
         var entry = try ScreenEntry.init(self.allocator, screen);
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
+        const candidate_state = CandidateState.capture(screen.widget);
+        var candidate_committed = false;
+        errdefer if (!candidate_committed) candidate_state.restore(screen.widget, &self.animator);
         try self.primeEntry(&entry);
         errdefer if (!entry_owned_by_stack) {
             _ = entry.screen.widget.detachFrom(&self.widget);
@@ -139,6 +169,7 @@ pub const ScreenManager = struct {
         const new_idx = self.screens.items.len - 1;
         try self.runHook(&self.screens.items[new_idx], self.screens.items[new_idx].label_copy, self.screens.items[new_idx].screen.lifecycle.on_enter);
         try self.startTransition(.push, new_idx, if (new_idx > 0) new_idx - 1 else null);
+        candidate_committed = true;
     }
 
     /// Pop the active screen and return to the previous one.
@@ -166,6 +197,9 @@ pub const ScreenManager = struct {
         var entry = try ScreenEntry.init(self.allocator, screen);
         var entry_owned_by_stack = false;
         errdefer if (!entry_owned_by_stack) entry.deinit(self.allocator);
+        const candidate_state = CandidateState.capture(screen.widget);
+        var candidate_committed = false;
+        errdefer if (!candidate_committed) candidate_state.restore(screen.widget, &self.animator);
         try self.primeEntry(&entry);
         errdefer if (!entry_owned_by_stack) {
             _ = entry.screen.widget.detachFrom(&self.widget);
@@ -185,6 +219,7 @@ pub const ScreenManager = struct {
         const entering_idx = self.screens.items.len - 1;
         try self.runHook(&self.screens.items[entering_idx], self.screens.items[entering_idx].label_copy, self.screens.items[entering_idx].screen.lifecycle.on_enter);
         try self.startTransition(.replace, entering_idx, exiting_idx);
+        candidate_committed = true;
     }
 
     /// Clear all screens.
@@ -328,12 +363,11 @@ pub const ScreenManager = struct {
         if (self.last_rect) |rect| {
             try entry.screen.widget.layout(rect);
         }
-        entry.screen.widget.visibility_transition.snap(false);
-        entry.screen.widget.setVisible(false);
     }
 
     fn validateNewScreen(self: *const ScreenManager, widget: *const base.Widget) !void {
         if (widget.parent != null) return error.WidgetAlreadyAttached;
+        if (widget.visibility_transition.isAnimating()) return error.WidgetAnimationInProgress;
         for (self.screens.items) |entry| {
             if (entry.screen.widget == widget) return error.WidgetAlreadyAttached;
         }
@@ -704,6 +738,30 @@ test "screen manager rejects duplicate and cross-parent replacements before hook
     try std.testing.expect(!manager.widget.dirty);
 }
 
+test "screen manager rejects an independently animating candidate" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    var candidate = try @import("block.zig").Block.init(alloc);
+    var animator = animation.Animator.init(alloc);
+    defer {
+        candidate.widget.visibility_transition.cancel(&animator);
+        animator.deinit();
+        manager.deinit();
+        candidate.deinit();
+    }
+
+    try candidate.widget.animateVisibility(&animator, false, .{});
+    const handle_before = candidate.widget.visibility_transition.handle.?;
+    manager.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAnimationInProgress, manager.push(.{ .widget = &candidate.widget, .label = "animated" }));
+    try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 1), animator.animations.items.len);
+    try std.testing.expect(std.meta.eql(handle_before, candidate.widget.visibility_transition.handle.?));
+    try std.testing.expect(candidate.widget.parent == null);
+    try std.testing.expect(!manager.widget.dirty);
+}
+
 fn screenManagerPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
     var manager = try ScreenManager.init(allocator);
     defer manager.deinit();
@@ -742,10 +800,14 @@ test "screen manager push propagates priming layout failure" {
 
     try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
     var failing = FailingLayoutWidget.init();
+    failing.widget.rect = layout_module.Rect.init(3, 4, 5, 6);
+    failing.widget.clearDirty();
+    const candidate_before = CandidateState.capture(&failing.widget);
 
     try std.testing.expectError(error.LayoutFailed, manager.push(.{ .widget = &failing.widget, .label = "bad" }));
     try std.testing.expectEqual(@as(usize, 0), manager.screens.items.len);
     try std.testing.expect(failing.widget.parent == null);
+    try std.testing.expect(std.meta.eql(candidate_before, CandidateState.capture(&failing.widget)));
 }
 
 test "screen manager replace preserves active screen on priming layout failure" {
@@ -816,6 +878,10 @@ test "screen manager rejected push after pause failure is detached" {
         .lifecycle = .{ .on_pause = FailingPause.pause },
     });
     try manager.tick(1000);
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    block_b.widget.rect = layout_module.Rect.init(3, 4, 5, 6);
+    block_b.widget.clearDirty();
+    const candidate_before = CandidateState.capture(&block_b.widget);
     try std.testing.expectError(error.PauseFailed, manager.push(.{ .widget = &block_b.widget, .label = "bad" }));
 
     try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
@@ -823,6 +889,7 @@ test "screen manager rejected push after pause failure is detached" {
     try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
     try std.testing.expect(block_b.widget.parent == null);
     try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+    try std.testing.expect(std.meta.eql(candidate_before, CandidateState.capture(&block_b.widget)));
 }
 
 test "screen manager rejected replace after pause failure is detached" {
