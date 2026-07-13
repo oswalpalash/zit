@@ -8,19 +8,35 @@ pub const TextDirection = enum { ltr, rtl, auto };
 
 /// Compact grapheme representation used for width-aware rendering.
 pub const Grapheme = struct {
+    const overflow_mask: u8 = 0x80;
+
     bytes: [32]u8 = undefined,
+    /// Low seven bits store the inline byte length; the high bit records fallback.
     len: u8 = 0,
     width: u3 = 0,
     has_rtl: bool = false,
     has_emoji: bool = false,
 
+    pub fn byteLen(self: *const Grapheme) u8 {
+        return self.len & ~overflow_mask;
+    }
+
+    pub fn overflowed(self: *const Grapheme) bool {
+        return self.len & overflow_mask != 0;
+    }
+
+    fn markOverflowed(self: *Grapheme) void {
+        self.len |= overflow_mask;
+    }
+
     pub fn slice(self: *const Grapheme) []const u8 {
-        return self.bytes[0..self.len];
+        return self.bytes[0..self.byteLen()];
     }
 
     pub fn firstCodepoint(self: *const Grapheme) u21 {
-        if (self.len == 0) return 0;
-        return std.unicode.utf8Decode(self.bytes[0..self.len]) catch 0;
+        const byte_len = self.byteLen();
+        if (byte_len == 0) return 0;
+        return std.unicode.utf8Decode(self.bytes[0..byte_len]) catch 0;
     }
 
     pub fn eql(a: Grapheme, b: Grapheme) bool {
@@ -28,6 +44,11 @@ pub const Grapheme = struct {
         return std.mem.eql(u8, a.slice(), b.slice());
     }
 };
+
+fn clusterFallbackCodepoint(first: u21) u21 {
+    const width = unicode_width.wcwidth(first);
+    return if (width == 0 or first == 0x200D) '?' else first;
+}
 
 pub fn graphemeFromCodepoint(cp: u21) Grapheme {
     var g = Grapheme{};
@@ -57,6 +78,7 @@ pub const GraphemeIterator = struct {
         var grapheme = Grapheme{};
         var started = false;
         var pending_join = false;
+        var first_codepoint: u21 = 0;
 
         while (true) {
             const cp_start = self.it.i;
@@ -72,11 +94,15 @@ pub const GraphemeIterator = struct {
                 break;
             }
 
-            const available = grapheme.bytes.len - grapheme.len;
-            const to_copy: u8 = @intCast(@min(cp_slice.len, available));
-            if (to_copy > 0) {
-                std.mem.copyForwards(u8, grapheme.bytes[grapheme.len .. grapheme.len + to_copy], cp_slice[0..to_copy]);
+            if (!started) first_codepoint = next_cp;
+            const byte_len = grapheme.byteLen();
+            const available = grapheme.bytes.len - byte_len;
+            if (!grapheme.overflowed() and cp_slice.len <= available) {
+                const to_copy: u8 = @intCast(cp_slice.len);
+                std.mem.copyForwards(u8, grapheme.bytes[byte_len .. byte_len + to_copy], cp_slice);
                 grapheme.len += to_copy;
+            } else {
+                grapheme.markOverflowed();
             }
 
             const metrics = unicode_width.measure(cp_slice);
@@ -92,6 +118,16 @@ pub const GraphemeIterator = struct {
         if (!started) return null;
         // Pure combining clusters should not advance width, but avoid zero-width cursor lock.
         if (grapheme.width == 0) grapheme.width = 1;
+        if (grapheme.overflowed()) {
+            const width = grapheme.width;
+            const has_rtl = grapheme.has_rtl;
+            const has_emoji = grapheme.has_emoji;
+            grapheme = graphemeFromCodepoint(clusterFallbackCodepoint(first_codepoint));
+            grapheme.width = width;
+            grapheme.has_rtl = has_rtl;
+            grapheme.has_emoji = has_emoji;
+            grapheme.markOverflowed();
+        }
         return grapheme;
     }
 };
@@ -206,9 +242,10 @@ pub fn truncateToWidth(text: []const u8, max_cols: u16, buffer: []u8, with_ellip
     var len: usize = 0;
     while (it.next()) |g| {
         if (used_cols + g.width > available) break;
-        if (len + g.len > buffer.len) break;
-        std.mem.copyForwards(u8, buffer[len .. len + g.len], g.slice());
-        len += g.len;
+        const grapheme_len = g.byteLen();
+        if (len + grapheme_len > buffer.len) break;
+        std.mem.copyForwards(u8, buffer[len .. len + grapheme_len], g.slice());
+        len += grapheme_len;
         used_cols += g.width;
     }
 
@@ -412,6 +449,40 @@ test "grapheme conversions keep joined emoji atomic" {
     try std.testing.expectEqual(family.len, graphemeBoundaryAtOrAfter(family, 4));
     try std.testing.expectEqual(family.len, nextGraphemeBoundary(family, 0));
     try std.testing.expectEqual(@as(usize, 2), cellWidthThroughByte(family, family.len));
+}
+
+test "overlong grapheme fallback never stores partial UTF-8" {
+    var text: [81]u8 = undefined;
+    text[0] = 'e';
+    var offset: usize = 1;
+    while (offset < text.len) : (offset += 2) {
+        text[offset] = 0xCC;
+        text[offset + 1] = 0x81;
+    }
+
+    var it = GraphemeIterator.init(&text);
+    const grapheme = it.next().?;
+    try std.testing.expect(grapheme.overflowed());
+    try std.testing.expectEqualStrings("e", grapheme.slice());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(grapheme.slice()));
+    try std.testing.expectEqual(@as(u3, 1), grapheme.width);
+    try std.testing.expectEqual(text.len, it.it.i);
+    try std.testing.expect(it.next() == null);
+}
+
+test "overlong zero-width cluster uses printable fallback" {
+    var text: [80]u8 = undefined;
+    var offset: usize = 0;
+    while (offset < text.len) : (offset += 2) {
+        text[offset] = 0xCC;
+        text[offset + 1] = 0x81;
+    }
+
+    var it = GraphemeIterator.init(&text);
+    const grapheme = it.next().?;
+    try std.testing.expect(grapheme.overflowed());
+    try std.testing.expectEqualStrings("?", grapheme.slice());
+    try std.testing.expectEqual(@as(u3, 1), grapheme.width);
 }
 
 test "clipWithEllipsis preserves exact-fit text" {

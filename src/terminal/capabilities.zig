@@ -133,8 +133,8 @@ pub fn detectFrom(env: Environment) CapabilityFlags {
     caps.synchronized_output = detectSyncSupport(env, caps.program);
     caps.bracketed_paste = programSupportsBracketedPaste(caps.program);
 
-    caps.emoji = unicode_width.measure("✅").has_emoji;
-    caps.double_width = true;
+    caps.emoji = caps.unicode and unicode_width.measure("✅").has_emoji;
+    caps.double_width = caps.unicode;
     caps.bidi = caps.unicode;
 
     return caps;
@@ -296,6 +296,9 @@ test "linux console stays conservative" {
     const env = Environment{ .term = "linux" };
     const caps = detectFrom(env);
     try std.testing.expect(!caps.unicode);
+    try std.testing.expect(!caps.emoji);
+    try std.testing.expect(!caps.double_width);
+    try std.testing.expect(!caps.bidi);
     try std.testing.expect(!caps.rgb_colors);
     try std.testing.expect(!caps.synchronized_output);
     try std.testing.expect(!caps.bracketed_paste);

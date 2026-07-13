@@ -13,7 +13,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **Color depth**: `ColorLevel` is inferred from `COLORTERM`/`TERM` suffixes and known programs (16, 256, or truecolor).
 - **Styling flags**: booleans for italic/underline/strikethrough/ligatures/emoji/double-width. Conservative defaults on linux console and dumb terminals.
 - **Input/graphics extras**: `kitty_keyboard`, `kitty_graphics`, `synchronized_output`, `bracketed_paste`, and `iterm2_integration` are enabled when the program is known to support them.
-- **Unicode width**: `unicode_width.measure` is used to gate emoji/double-width handling.
+- **Unicode width**: `unicode_width.measure` determines grapheme cell width. When Unicode, emoji, or double-width output is disabled, the renderer stores a single-cell ASCII fallback instead of emitting a glyph whose terminal width it cannot represent safely.
 
 ## Color Modes
 - **Truecolor (24-bit)**: Used when `color_level == .truecolor`; `render.Color.rgb` and gradients map directly to ANSI 24-bit sequences.
@@ -26,6 +26,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - **POSIX resize signals**: Zit installs a reference-counted SIGWINCH handler while `Terminal` instances are live and restores the prior handler after the last `Terminal.deinit`.
 - **Bracketed paste**: When enabled, `InputHandler` decodes `ESC[200~` and `ESC[201~` into `KeyCode.BRACKETED_PASTE_START` / `KeyCode.BRACKETED_PASTE_END`; pasted text bytes continue through normal UTF-8 key decoding. `InputField` and `TextArea` consume the delimiters so single-line paste newlines do not accidentally submit the field.
 - **Linux console/dumb**: Unicode and italic are disabled; stick to ASCII, avoid emoji, and use single-line borders.
+- **Long grapheme clusters**: renderer cells keep up to 32 UTF-8 bytes inline. Longer combining or joined clusters retain their measured cell width but render as the first printable codepoint (or `?`) so fixed-size buffers remain allocation-free and never store partial UTF-8.
 - **Kitty/WezTerm**: Kitty keyboard protocol is attempted when available; setup/teardown write failures are non-fatal and can be inspected with `Terminal.optionalFeatureFailureCount()` / `Terminal.lastOptionalFeatureFailure()`. Ensure applications handle extended key codes gracefully.
 - **Nested terminals**: When running inside SSH or a container, rely on the outer terminal’s exports; avoid forcing `TERM` to xterm-256color unless you know the host supports it.
 

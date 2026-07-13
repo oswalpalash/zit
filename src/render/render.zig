@@ -922,7 +922,7 @@ pub const TerminalCapabilities = struct {
             '❌' => 'X',
             '✓' => 'v',
             '➜' => '>',
-            else => char,
+            else => if (char >= 0x20 and char <= 0x7E) char else '?',
         };
     }
 
@@ -1196,18 +1196,14 @@ pub const Renderer = struct {
     }
 
     fn renderableGrapheme(self: *Renderer, g: text_metrics.Grapheme) text_metrics.Grapheme {
-        if (!self.capabilities.unicode or (!self.capabilities.emoji and g.has_emoji)) {
+        if (!self.capabilities.unicode) {
             const fallback_cp = self.capabilities.bestChar(g.firstCodepoint());
-            var fallback = text_metrics.graphemeFromCodepoint(fallback_cp);
-            if (!self.capabilities.double_width and fallback.width > 1) fallback.width = 1;
-            return fallback;
+            return text_metrics.graphemeFromCodepoint(fallback_cp);
         }
-
-        var adjusted = g;
-        if (!self.capabilities.double_width and adjusted.width > 1) {
-            adjusted.width = 1;
+        if ((!self.capabilities.emoji and g.has_emoji) or (!self.capabilities.double_width and g.width > 1)) {
+            return text_metrics.graphemeFromCodepoint('?');
         }
-        return adjusted;
+        return g;
     }
 
     fn mapPoint(self: *Renderer, x: u16, y: u16) ?struct { x: u16, y: u16 } {
@@ -1795,6 +1791,16 @@ test "bestColor collapses to nearest named color on ansi16 terminals" {
     try std.testing.expectEqual(NamedColor.green, resolved.named_color);
 }
 
+test "bestChar keeps mapped line art but rejects unsupported unicode" {
+    var caps = TerminalCapabilities.init();
+    caps.unicode = false;
+
+    try std.testing.expectEqual(@as(u21, '-'), caps.bestChar('─'));
+    try std.testing.expectEqual(@as(u21, 'A'), caps.bestChar('A'));
+    try std.testing.expectEqual(@as(u21, '?'), caps.bestChar('界'));
+    try std.testing.expectEqual(@as(u21, '?'), caps.bestChar(0x1F601));
+}
+
 test "styled box paints drop shadow" {
     const alloc = std.testing.allocator;
     var renderer = try Renderer.init(alloc, 12, 6);
@@ -1865,9 +1871,49 @@ test "renderer advances by capability-adjusted grapheme width" {
 
     renderer.drawStr(0, 0, "界A", Color.named(.white), Color.named(.black), .{});
 
-    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 0).codepoint());
     try std.testing.expect(!renderer.back.getCell(0, 0).continuation);
     try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer replaces emoji when terminal capability is disabled" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 2, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.emoji = false;
+    renderer.capabilities.double_width = true;
+
+    renderer.drawStr(0, 0, "😁A", Color.named(.white), Color.named(.black), .{});
+
+    try std.testing.expectEqual(@as(u21, '?'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(1, 0).codepoint());
+}
+
+test "renderer stores a valid fallback for overlong graphemes" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 1, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+
+    var text: [81]u8 = undefined;
+    text[0] = 'e';
+    var offset: usize = 1;
+    while (offset < text.len) : (offset += 2) {
+        text[offset] = 0xCC;
+        text[offset + 1] = 0x81;
+    }
+
+    renderer.drawStr(0, 0, &text, Color.named(.white), Color.named(.black), .{});
+    const cell = renderer.back.getCell(0, 0).*;
+    try std.testing.expect(cell.glyph.overflowed());
+    try std.testing.expectEqualStrings("e", cell.glyph.slice());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(cell.glyph.slice()));
+
+    var output = std.Io.Writer.Allocating.init(alloc);
+    defer output.deinit();
+    try renderer.renderToWriter(&output.writer);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(output.written()));
 }
 
 test "renderer clears displaced wide glyph continuation cells" {
@@ -2279,10 +2325,8 @@ test "capability detection degrades gracefully on allocation failure" {
     try std.testing.expect(caps.unicode);
 }
 
-test "drawSmartStr falls back when bidi sanitization cannot allocate" {
-    var backing: [4096]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&backing);
-    var renderer = try Renderer.init(fba.allocator(), 1, 1);
+test "drawSmartStr falls back when grapheme scratch capacity is exhausted" {
+    var renderer = try Renderer.init(std.testing.allocator, 1, 1);
     defer renderer.deinit();
 
     renderer.capabilities.bidi = false;
