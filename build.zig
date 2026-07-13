@@ -371,6 +371,10 @@ pub fn build(b: *std.Build) void {
     const widget_lifecycle_mutation_step = b.step("widget-lifecycle-mutation", "Check widget lifecycle changes use notifying setters");
     widget_lifecycle_mutation_step.dependOn(&widget_lifecycle_mutation_cmd.step);
 
+    const draw_layout_boundary_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_draw_layout_boundary.py" });
+    const draw_layout_boundary_step = b.step("draw-layout-boundary", "Check widget draw callbacks do not perform layout");
+    draw_layout_boundary_step.dependOn(&draw_layout_boundary_cmd.step);
+
     const widget_parent_attachment_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_parent_attachment.py" });
     const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent mutations use guarded ownership helpers");
     widget_parent_attachment_step.dependOn(&widget_parent_attachment_cmd.step);
@@ -439,6 +443,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(mouse_coordinate_contract_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(widget_lifecycle_mutation_step);
+    quality_step.dependOn(draw_layout_boundary_step);
     quality_step.dependOn(widget_parent_attachment_step);
     quality_step.dependOn(owned_alloc_patterns_step);
     quality_step.dependOn(io_event_ownership_docs_step);

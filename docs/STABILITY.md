@@ -59,6 +59,8 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_docs_commands.py` to require public Markdown command references to point at existing scripts, build steps, and format paths.
 - `python3 scripts/check_docs_links.py` to require public Markdown relative links, heading anchors, and local image targets to resolve and every top-level docs guide to appear in `docs/README.md`.
 - `python3 scripts/check_docs_zig_snippets.py` to require public Markdown Zig snippets to avoid empty catches, panic/unreachable paths, and unchecked `DebugAllocator` cleanup.
+- `python3 scripts/check_draw_layout_boundary.py` to require widget draw callbacks to consume geometry prepared by layout instead of invoking child layout during rendering.
+- `zig build draw-layout-boundary`
 - `python3 scripts/check_ci_script_coverage.py`
 - `zig build ci-script-coverage`
 - `python3 scripts/check_contribution_gates.py`
@@ -89,6 +91,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable, and rejects empty `catch {}` blocks on terminal cleanup paths.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
+- `python3 scripts/check_draw_layout_boundary.py` rejects child layout calls from production widget draw callbacks so redraws cannot republish geometry or accessibility bounds.
 - `python3 scripts/check_widget_parent_attachment.py` rejects direct `Widget.parent` assignments outside the guarded ownership primitives so new composite widgets cannot silently reparent children or clear links owned elsewhere.
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.

@@ -28,7 +28,7 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 - Use the arena for ephemeral buffers (measurements, composed strings) and the parent allocator for long-lived assets (text content, icon caches).
 - Always check `visible`/`enabled` early in `handleEvent`; the base widget already guards but sibling helpers may call you directly.
 - Prefer propagation-friendly handlers: let parents intercept in capturing (e.g., for focus management) and bubble up unhandled events.
-- Call `Renderer.render()` once per frame; draw functions should only touch the back buffer.
+- Call `Renderer.render()` once per frame; draw functions should only consume layout state and touch the back buffer. `python3 scripts/check_draw_layout_boundary.py` rejects child layout calls from library and public-example widget draw callbacks.
 - Surface IDs/classes via `setId`/`setClass` to integrate with theme helpers and logging.
 
 ## Animations and Transitions

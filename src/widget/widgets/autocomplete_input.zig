@@ -130,9 +130,6 @@ pub const AutocompleteInput = struct {
         if (rect.width == 0 or rect.height == 0) return;
 
         self.syncFocusState();
-
-        const input_rect = layout_module.Rect.init(rect.x, rect.y, rect.width, 1);
-        try self.input_field.widget.layout(input_rect);
         try self.input_field.widget.draw(renderer);
 
         _ = self.clampSelection();
@@ -208,6 +205,7 @@ pub const AutocompleteInput = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *AutocompleteInput = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
+        try self.input_field.widget.layout(layout_module.Rect.init(rect.x, rect.y, rect.width, @min(rect.height, 1)));
     }
 
     fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
@@ -325,6 +323,17 @@ pub const AutocompleteInput = struct {
     }
 };
 
+const BoundsRecorder = struct {
+    calls: usize = 0,
+    last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+    fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+        const self: *BoundsRecorder = @ptrCast(@alignCast(ctx.?));
+        self.calls += 1;
+        self.last = rect;
+    }
+};
+
 fn u16Coord(value: u32) ?u16 {
     if (value > std.math.maxInt(u16)) return null;
     return @intCast(value);
@@ -338,6 +347,30 @@ test "autocomplete filters suggestions" {
     try ac.input_field.setText("alp");
     try ac.updateFilter();
     try std.testing.expectEqual(@as(usize, 2), ac.filtered.items.len);
+}
+
+test "autocomplete draw does not relayout its input field" {
+    const alloc = std.testing.allocator;
+    var ac = try AutocompleteInput.init(alloc, 32);
+    defer ac.deinit();
+
+    var bounds = BoundsRecorder{};
+    ac.input_field.widget.accessibility_ctx = &bounds;
+    ac.input_field.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    const rect = layout_module.Rect.init(2, 3, 12, 4);
+    try ac.widget.layout(rect);
+    try std.testing.expectEqual(layout_module.Rect.init(2, 3, 12, 1), ac.input_field.widget.rect);
+    try std.testing.expectEqual(@as(usize, 1), bounds.calls);
+
+    var renderer = try render.Renderer.init(alloc, 20, 10);
+    defer renderer.deinit();
+    try ac.widget.draw(&renderer);
+    ac.widget.markDirty();
+    try ac.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(usize, 1), bounds.calls);
+    try std.testing.expectEqual(layout_module.Rect.init(2, 3, 12, 1), bounds.last);
 }
 
 test "autocomplete selection commits suggestion" {
