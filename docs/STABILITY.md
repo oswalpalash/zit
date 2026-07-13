@@ -39,6 +39,7 @@ Before a feature is promoted as stable, it needs:
 - Windows input protocols must require independently negotiated VT input and output modes; console-mode changes made during initialization or partial raw-mode setup remain explicit cleanup obligations.
 - Input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait. The PTY gate injects protocol bytes individually, and the native Windows matrix exercises wait timeout/readiness behavior.
 - Input polling must distinguish ordinary timeouts from transport failure. Hangup, invalid-descriptor, poll, and read errors must propagate instead of becoming no-event, Escape, or unknown-key results.
+- Bound resize handling must publish renderer dimensions and widget geometry as one transaction; allocation or layout failure preserves the previously committed size on both sides.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
 ## Release Checklist

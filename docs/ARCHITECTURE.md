@@ -21,6 +21,7 @@ This document explains how Zit fits together internally: the main modules, how d
 - **Layout pass → Draw pass**
   - Containers measure children via `Widget.getPreferredSize` (through the layout adapters) and assign `Rect`s.
   - Once rectangles are final, `Widget.draw` emits characters/colors into the render buffer; `Renderer.render()` diffs against the front buffer.
+  - Application-bound resize prepares replacement renderer buffers first, lays out the widget tree, then commits the buffers. A failed layout discards the prepared buffers so render dimensions and widget geometry remain aligned.
 - **Timers/Animations → Event loop**
   - `event.timer.TimerManager` and `widget.animation.Animator` enqueue callbacks/events that are processed alongside user input, keeping motion and IO unified.
 

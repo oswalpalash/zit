@@ -374,6 +374,7 @@ pub const Widget = struct {
     pub fn asLayoutElement(self: *Widget) layout_module.LayoutElement {
         return layout_module.LayoutElement{
             .layoutFn = widgetLayoutAdapter,
+            .tryLayoutFn = widgetTryLayoutAdapter,
             .renderFn = widgetRenderAdapter,
             .ctx = @ptrCast(@alignCast(self)),
         };
@@ -755,6 +756,15 @@ fn applyAccessibilityContextImpl(
 
 /// Adapter function to convert Widget layout to LayoutElement layout
 fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) layout_module.Size {
+    return widgetTryLayoutAdapter(ctx, constraints) catch |err| {
+        const widget = @as(*Widget, @ptrCast(@alignCast(ctx)));
+        logWidgetError(widget, "layout adapter", err);
+        return layout_module.Size.zero();
+    };
+}
+
+/// Fallible widget layout adapter used by transactional integration boundaries.
+fn widgetTryLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) !layout_module.Size {
     const widget = @as(*Widget, @ptrCast(@alignCast(ctx)));
 
     // Create a rect from the constraints
@@ -766,16 +776,10 @@ fn widgetLayoutAdapter(ctx: *anyopaque, constraints: layout_module.Constraints) 
     };
 
     // Layout the widget
-    widget.layout(rect) catch |err| {
-        logWidgetError(widget, "layout", err);
-        return layout_module.Size.zero();
-    };
+    try widget.layout(rect);
 
     // Return the preferred size constrained by the constraints
-    const preferred_size = widget.getPreferredSize() catch |err| {
-        logWidgetError(widget, "preferred size", err);
-        return layout_module.Size.zero();
-    };
+    const preferred_size = try widget.getPreferredSize();
     return layout_module.Size{
         .width = @min(preferred_size.width, constraints.max_width),
         .height = @min(preferred_size.height, constraints.max_height),
@@ -920,6 +924,7 @@ test "layout adapter returns safe defaults on failure" {
     const tight = layout_module.Constraints.tight(2, 2);
     const measured = element.layout(tight);
     try std.testing.expectEqual(layout_module.Size.zero(), measured);
+    try std.testing.expectError(error.ForcedLayout, element.tryLayout(tight));
 
     var renderer = try render.Renderer.init(std.testing.allocator, 2, 2);
     defer renderer.deinit();

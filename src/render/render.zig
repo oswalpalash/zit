@@ -960,6 +960,43 @@ pub const Renderer = struct {
         offset_y: i16 = 0,
     };
 
+    /// Prepared replacement buffers for a resize that has not been published yet.
+    /// Call `deinit` with `defer`; `commit` transfers ownership to the renderer and
+    /// makes the deferred cleanup a no-op.
+    pub const ResizeTransaction = struct {
+        renderer: *Renderer,
+        allocator: std.mem.Allocator,
+        front: Buffer,
+        back: Buffer,
+        dirty_rows: []DirtyRow,
+        active: bool = true,
+
+        /// Discard an uncommitted resize and preserve the renderer's current buffers.
+        pub fn deinit(self: *ResizeTransaction) void {
+            if (!self.active) return;
+            self.front.deinit();
+            self.back.deinit();
+            if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
+            self.active = false;
+        }
+
+        /// Atomically replace the renderer buffers. Safe to call once.
+        pub fn commit(self: *ResizeTransaction) void {
+            if (!self.active) return;
+
+            const renderer = self.renderer;
+            renderer.front.deinit();
+            renderer.back.deinit();
+            if (renderer.dirty_rows.len > 0) renderer.allocator.free(renderer.dirty_rows);
+            renderer.front = self.front;
+            renderer.back = self.back;
+            renderer.dirty_rows = self.dirty_rows;
+            renderer.resetDirty();
+            renderer.markDirtyRect(0, 0, renderer.back.width, renderer.back.height);
+            self.active = false;
+        }
+    };
+
     /// Front buffer (currently displayed)
     front: Buffer,
     /// Back buffer (being prepared)
@@ -1038,8 +1075,10 @@ pub const Renderer = struct {
         self.grapheme_scratch.deinit(self.allocator);
     }
 
-    /// Resize the buffers
-    pub fn resize(self: *Renderer, width: u16, height: u16) !void {
+    /// Allocate replacement buffers without changing the current renderer size.
+    /// The caller must defer `ResizeTransaction.deinit` and call `commit` only
+    /// after other size-dependent state has been updated successfully.
+    pub fn prepareResize(self: *Renderer, width: u16, height: u16) !ResizeTransaction {
         const new_front = try Buffer.init(self.allocator, width, height);
         errdefer new_front.deinit();
         const new_back = try Buffer.init(self.allocator, width, height);
@@ -1049,15 +1088,20 @@ pub const Renderer = struct {
 
         try self.ensureScratchCapacity(width, height);
 
-        self.front.deinit();
-        self.back.deinit();
-        if (self.dirty_rows.len > 0) self.allocator.free(self.dirty_rows);
-        self.front = new_front;
-        self.back = new_back;
-        self.dirty_rows = new_dirty_rows;
-        self.resetDirty();
-        self.markDirtyRect(0, 0, width, height);
-        try self.primeBuffers();
+        return ResizeTransaction{
+            .renderer = self,
+            .allocator = self.allocator,
+            .front = new_front,
+            .back = new_back,
+            .dirty_rows = new_dirty_rows,
+        };
+    }
+
+    /// Resize the buffers atomically.
+    pub fn resize(self: *Renderer, width: u16, height: u16) !void {
+        var transaction = try self.prepareResize(width, height);
+        defer transaction.deinit();
+        transaction.commit();
     }
 
     /// Draw a compact live geometry marker on the bottom line.
@@ -2395,6 +2439,34 @@ test "renderer resize preserves existing buffers when scratch preallocation fail
     try std.testing.expectEqual(before_back_width, renderer.back.width);
     try std.testing.expectEqual(before_back_height, renderer.back.height);
     try std.testing.expect(before_cell.eql(renderer.back.getCell(0, 0).*));
+}
+
+test "prepared renderer resize publishes only on commit" {
+    var renderer = try Renderer.init(std.testing.allocator, 2, 2);
+    defer renderer.deinit();
+    renderer.drawChar(0, 0, 'A', Color.named(NamedColor.white), Color.named(NamedColor.black), Style{});
+    const original_cell = renderer.back.getCell(0, 0).*;
+
+    {
+        var transaction = try renderer.prepareResize(4, 3);
+        defer transaction.deinit();
+
+        try std.testing.expectEqual(@as(u16, 2), renderer.back.width);
+        try std.testing.expectEqual(@as(u16, 2), renderer.back.height);
+        try std.testing.expect(original_cell.eql(renderer.back.getCell(0, 0).*));
+    }
+
+    try std.testing.expectEqual(@as(u16, 2), renderer.back.width);
+    try std.testing.expectEqual(@as(u16, 2), renderer.back.height);
+    try std.testing.expect(original_cell.eql(renderer.back.getCell(0, 0).*));
+
+    var transaction = try renderer.prepareResize(4, 3);
+    defer transaction.deinit();
+    transaction.commit();
+
+    try std.testing.expectEqual(@as(u16, 4), renderer.back.width);
+    try std.testing.expectEqual(@as(u16, 3), renderer.back.height);
+    try std.testing.expectEqual(@as(u21, ' '), renderer.back.getCell(0, 0).codepoint());
 }
 
 test "capability detection degrades gracefully on allocation failure" {

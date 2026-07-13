@@ -343,6 +343,8 @@ pub const Size = struct {
 pub const LayoutElement = struct {
     /// Function pointer for layout calculation
     layoutFn: *const fn (ctx: *anyopaque, constraints: Constraints) Size,
+    /// Optional fallible layout function for transactional integration boundaries.
+    tryLayoutFn: ?*const fn (ctx: *anyopaque, constraints: Constraints) anyerror!Size = null,
     /// Function pointer for rendering
     renderFn: *const fn (ctx: *anyopaque, renderer: *renderer_mod.Renderer, rect: Rect) void,
     /// Context pointer for the element
@@ -351,6 +353,13 @@ pub const LayoutElement = struct {
     /// Calculate layout for this element
     pub fn layout(self: *const LayoutElement, constraints: Constraints) Size {
         return self.layoutFn(self.ctx, constraints);
+    }
+
+    /// Calculate layout while preserving errors when the element exposes a
+    /// fallible adapter. Plain layout elements retain their infallible behavior.
+    pub fn tryLayout(self: *const LayoutElement, constraints: Constraints) !Size {
+        if (self.tryLayoutFn) |layout_fn| return try layout_fn(self.ctx, constraints);
+        return self.layout(constraints);
     }
 
     /// Render this element
@@ -2917,11 +2926,13 @@ pub const ReflowManager = struct {
 
     /// Handle terminal resize
     pub fn handleResize(self: *ReflowManager, width: u16, height: u16) !Size {
-        self.constraints = Constraints.tight(width, height);
-        if (self.root) |root| {
-            return root.layout(self.constraints);
-        }
-        return Size.zero();
+        const next_constraints = Constraints.tight(width, height);
+        const size = if (self.root) |root|
+            try root.tryLayout(next_constraints)
+        else
+            Size.zero();
+        self.constraints = next_constraints;
+        return size;
     }
 
     /// Render the current layout

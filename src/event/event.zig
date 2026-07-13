@@ -2935,7 +2935,7 @@ pub const Application = struct {
         self.applyAccessibilityContext();
     }
 
-    /// Bind resize handling to renderer buffers and optional reflow layout.
+    /// Bind transactional resize handling to renderer buffers and optional reflow layout.
     ///
     /// Once bound, `processInputEvent(.resize)` automatically resizes the
     /// renderer and relayouts the root before user resize listeners run.
@@ -2989,24 +2989,32 @@ pub const Application = struct {
         return try self.pollInputOnceInternal();
     }
 
-    /// Apply a terminal size to bound rendering/layout state.
+    /// Apply a terminal size only after renderer preparation and layout both succeed.
     pub fn handleResize(self: *Application, width: u16, height: u16) !layout.Size {
+        var prepared_renderer: ?render.Renderer.ResizeTransaction = null;
+        defer {
+            if (prepared_renderer) |*transaction| transaction.deinit();
+        }
+
         if (self.resize_binding.renderer) |renderer_ptr| {
             if (renderer_ptr.back.width != width or renderer_ptr.back.height != height) {
-                try renderer_ptr.resize(width, height);
+                prepared_renderer = try renderer_ptr.prepareResize(width, height);
             }
         }
 
-        if (self.resize_binding.reflow) |reflow_ptr| {
-            return try reflow_ptr.handleResize(width, height);
-        }
+        const size: layout.Size = blk: {
+            if (self.resize_binding.reflow) |reflow_ptr| {
+                break :blk try reflow_ptr.handleResize(width, height);
+            }
 
-        if (self.root) |root| {
-            try root.widget.layout(layout.Rect.init(0, 0, width, height));
-            return layout.Size.init(width, height);
-        }
+            if (self.root) |root| {
+                try root.widget.layout(layout.Rect.init(0, 0, width, height));
+            }
+            break :blk layout.Size.init(width, height);
+        };
 
-        return layout.Size.init(width, height);
+        if (prepared_renderer) |*transaction| transaction.commit();
+        return size;
     }
 
     /// Attach a stylesheet for CSS-like widget styling.
@@ -3559,6 +3567,76 @@ test "application resize binding updates renderer reflow and queues resize event
     try std.testing.expectEqual(EventType.resize, queued.type);
     try std.testing.expectEqual(@as(u16, 100), queued.data.resize.width);
     try std.testing.expectEqual(@as(u16, 30), queued.data.resize.height);
+}
+
+test "application resize preserves renderer and widget geometry when layout fails" {
+    const Child = struct {
+        widget: widget.Widget = widget.Widget.init(&vtable),
+        reject_layout: bool = false,
+
+        const vtable = widget.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, _: layout.Rect) anyerror!void {
+            const widget_ref: *widget.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            if (self.reject_layout) return error.LayoutRejected;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout.Size {
+            return layout.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    var child = Child{};
+    try root.addChild(&child.widget);
+    try root.widget.layout(layout.Rect.init(0, 0, 20, 10));
+    app.setRoot(root);
+
+    var renderer_instance = try render.Renderer.init(alloc, 20, 10);
+    defer renderer_instance.deinit();
+    var reflow = layout.ReflowManager.init();
+    reflow.setRoot(root.widget.asLayoutElement());
+    _ = try reflow.handleResize(20, 10);
+    app.bindResize(&renderer_instance, &reflow);
+
+    const original_root_rect = root.widget.rect;
+    const original_child_rect = child.widget.rect;
+    child.reject_layout = true;
+
+    try std.testing.expectError(error.LayoutRejected, app.handleResize(40, 12));
+    try std.testing.expectEqual(@as(u16, 20), renderer_instance.back.width);
+    try std.testing.expectEqual(@as(u16, 10), renderer_instance.back.height);
+    try std.testing.expectEqual(original_root_rect, root.widget.rect);
+    try std.testing.expectEqual(original_child_rect, child.widget.rect);
+    try std.testing.expectEqual(@as(u16, 20), reflow.constraints.max_width);
+    try std.testing.expectEqual(@as(u16, 10), reflow.constraints.max_height);
+
+    child.reject_layout = false;
+    const size = try app.handleResize(40, 12);
+    try std.testing.expectEqual(layout.Size.init(1, 1), size);
+    try std.testing.expectEqual(@as(u16, 40), renderer_instance.back.width);
+    try std.testing.expectEqual(@as(u16, 12), renderer_instance.back.height);
+    try std.testing.expectEqual(layout.Rect.init(0, 0, 40, 12), root.widget.rect);
+    try std.testing.expectEqual(@as(u16, 40), reflow.constraints.max_width);
+    try std.testing.expectEqual(@as(u16, 12), reflow.constraints.max_height);
 }
 
 test "application resize binding works without a root widget" {
