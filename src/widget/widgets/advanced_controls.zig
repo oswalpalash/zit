@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const testing = @import("../../testing/testing.zig");
 const accessibility = @import("../accessibility.zig");
@@ -833,9 +834,9 @@ pub const Toolbar = struct {
             renderer.drawChar(cursor, rect.y, '[', fg, bg, style);
             cursor = offsetCoord(cursor, 1);
             if (cursor < limit) {
-                const draw_len = @min(item.len, @as(usize, @intCast(limit - cursor)));
-                renderer.drawStr(cursor, rect.y, item[0..draw_len], fg, bg, style);
-                cursor = offsetCoord(cursor, draw_len);
+                const draw_item = text_metrics.clipToWidth(item, limit - cursor);
+                renderer.drawStr(cursor, rect.y, draw_item.text, fg, bg, style);
+                cursor = offsetCoord(cursor, draw_item.width);
             }
             if (cursor < limit) {
                 renderer.drawChar(cursor, rect.y, ']', fg, bg, style);
@@ -875,8 +876,9 @@ pub const Toolbar = struct {
                     var cursor = offsetCoord(self.widget.rect.x, 1);
                     for (self.items.items, 0..) |item, idx| {
                         if (cursor >= limit) break;
-                        const width: u16 = @intCast(@min(item.len +| 2, @as(usize, std.math.maxInt(u16))));
-                        const end = offsetCoord(cursor, width);
+                        const item_width: usize = text_metrics.measureWidth(item).width;
+                        const width = clampUsizeToU16(addUsizeClamped(item_width, 2));
+                        const end = @min(offsetCoord(cursor, width), limit);
                         if (mouse.x >= cursor and mouse.x < end) {
                             self.setActive(idx);
                             return true;
@@ -900,7 +902,7 @@ pub const Toolbar = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Toolbar = @fieldParentPtr("widget", widget_ref);
         var width: usize = 1;
-        for (self.items.items) |item| width = addPaddedLenClamped(width, item.len, 3);
+        for (self.items.items) |item| width = addPaddedLenClamped(width, text_metrics.measureWidth(item).width, 3);
         return layout_module.Size.init(@min(clampUsizeToU16(width), 120), 1);
     }
 
@@ -975,8 +977,24 @@ pub const Breadcrumbs = struct {
     }
 
     fn segmentWidth(part: Part) u16 {
-        const icon_width = if (part.icon) |ic| addUsizeClamped(ic.len, 1) else 0;
-        return clampUsizeToU16(addUsizeClamped(icon_width, part.label.len));
+        const icon_width = if (part.icon) |icon|
+            addUsizeClamped(text_metrics.measureWidth(icon).width, 1)
+        else
+            0;
+        return clampUsizeToU16(addUsizeClamped(icon_width, text_metrics.measureWidth(part.label).width));
+    }
+
+    fn renderedSegmentWidth(part: Part, available: u16) u16 {
+        var used: u16 = 0;
+        if (part.icon) |icon| {
+            const clipped = text_metrics.clipToWidth(icon, available);
+            used = clipped.width;
+            if (used > 0 and used < available) used += 1;
+        }
+        if (used < available) {
+            used += text_metrics.clipToWidth(part.label, available - used).width;
+        }
+        return used;
     }
 
     const VisibleRange = struct {
@@ -993,21 +1011,28 @@ pub const Breadcrumbs = struct {
         var first = self.parts.items.len;
         if (first == 0 or available == 0) return .{ .first = first, .show_overflow = false };
         const available_width: usize = available;
-        const sep_width = self.separator.len;
-        var used: usize = 0;
-        var visible_count: usize = 0;
+        const separator_width: usize = text_metrics.measureWidth(self.separator).width;
+        first -= 1;
+        var suffix_width: usize = segmentWidth(self.parts.items[first]);
+        const overflow_prefix = addUsizeClamped(text_metrics.measureWidth(self.overflow_token).width, separator_width);
+        const can_show_overflow = addUsizeClamped(overflow_prefix, suffix_width) <= available_width;
         while (first > 0) {
             const candidate = first - 1;
-            const width = segmentWidth(self.parts.items[candidate]);
-            const width_usize: usize = width;
-            const extra = if (visible_count > 0) sep_width else 0;
-            const needed = addUsizeClamped(addUsizeClamped(used, width_usize), extra);
-            if (visible_count > 0 and needed > available_width) break;
+            const candidate_width = addUsizeClamped(
+                segmentWidth(self.parts.items[candidate]),
+                addUsizeClamped(separator_width, suffix_width),
+            );
+            const needed = if (candidate == 0)
+                candidate_width
+            else if (can_show_overflow)
+                addUsizeClamped(overflow_prefix, candidate_width)
+            else
+                candidate_width;
+            if (needed > available_width) break;
             first = candidate;
-            used = needed;
-            visible_count += 1;
+            suffix_width = candidate_width;
         }
-        return .{ .first = first, .show_overflow = first > 0 and visible_count > 0 };
+        return .{ .first = first, .show_overflow = can_show_overflow and first > 0 };
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1020,40 +1045,39 @@ pub const Breadcrumbs = struct {
         var cursor: u16 = rect.x;
         const limit = offsetCoord(rect.x, rect.width);
         if (visible.show_overflow) {
-            const overflow_draw = self.overflow_token[0..@min(self.overflow_token.len, remaining(cursor, limit))];
-            renderer.drawStr(cursor, rect.y, overflow_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
-            cursor = offsetCoord(cursor, overflow_draw.len);
+            const overflow_draw = text_metrics.clipToWidth(self.overflow_token, @intCast(remaining(cursor, limit)));
+            renderer.drawStr(cursor, rect.y, overflow_draw.text, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+            cursor = offsetCoord(cursor, overflow_draw.width);
             if (visible.first < self.parts.items.len and cursor < limit) {
-                const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
-                renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
-                cursor = offsetCoord(cursor, sep_draw.len);
+                const sep_draw = text_metrics.clipToWidth(self.separator, @intCast(remaining(cursor, limit)));
+                renderer.drawStr(cursor, rect.y, sep_draw.text, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
+                cursor = offsetCoord(cursor, sep_draw.width);
             }
         }
 
         for (self.parts.items[visible.first..], visible.first..) |part, real_idx| {
             if (cursor >= limit) break;
             if (part.icon) |icon_text| {
-                const icon_draw_len = @min(icon_text.len, remaining(cursor, limit));
-                const icon_draw = icon_text[0..icon_draw_len];
-                renderer.drawStr(cursor, rect.y, icon_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
-                cursor = offsetCoord(cursor, icon_draw_len);
-                if (cursor < limit) {
+                const icon_draw = text_metrics.clipToWidth(icon_text, @intCast(remaining(cursor, limit)));
+                renderer.drawStr(cursor, rect.y, icon_draw.text, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+                cursor = offsetCoord(cursor, icon_draw.width);
+                if (icon_draw.width > 0 and cursor < limit) {
                     renderer.drawChar(cursor, rect.y, ' ', render.Color.named(.default), render.Color.named(.default), render.Style{});
                     cursor = offsetCoord(cursor, 1);
                 }
             }
 
-            const draw_part = part.label[0..@min(part.label.len, remaining(cursor, limit))];
+            const draw_part = text_metrics.clipToWidth(part.label, @intCast(remaining(cursor, limit)));
             const is_last = real_idx + 1 == self.parts.items.len;
             const color = if (is_last) render.Color.named(.white) else render.Color.named(.cyan);
             const style = if (is_last) render.Style{ .bold = true } else render.Style{};
-            renderer.drawStr(cursor, rect.y, draw_part, color, render.Color.named(.default), style);
-            cursor = offsetCoord(cursor, draw_part.len);
+            renderer.drawStr(cursor, rect.y, draw_part.text, color, render.Color.named(.default), style);
+            cursor = offsetCoord(cursor, draw_part.width);
 
             if (!is_last and cursor < limit) {
-                const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
-                renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
-                cursor = offsetCoord(cursor, sep_draw.len);
+                const sep_draw = text_metrics.clipToWidth(self.separator, @intCast(remaining(cursor, limit)));
+                renderer.drawStr(cursor, rect.y, sep_draw.text, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
+                cursor = offsetCoord(cursor, sep_draw.width);
             }
         }
     }
@@ -1073,23 +1097,23 @@ pub const Breadcrumbs = struct {
         var cursor: u16 = self.widget.rect.x;
         const limit = offsetCoord(self.widget.rect.x, self.widget.rect.width);
         if (visible.show_overflow) {
-            cursor = offsetCoord(cursor, @min(self.overflow_token.len, remaining(cursor, limit)));
+            cursor = offsetCoord(cursor, text_metrics.clipToWidth(self.overflow_token, @intCast(remaining(cursor, limit))).width);
             if (visible.first < self.parts.items.len and cursor < limit) {
-                cursor = offsetCoord(cursor, @min(self.separator.len, remaining(cursor, limit)));
+                cursor = offsetCoord(cursor, text_metrics.clipToWidth(self.separator, @intCast(remaining(cursor, limit))).width);
             }
         }
 
         var idx = visible.first;
         while (idx < self.parts.items.len and cursor < limit) : (idx += 1) {
             const start = cursor;
-            const end = @min(offsetCoord(cursor, segmentWidth(self.parts.items[idx])), limit);
+            const end = offsetCoord(cursor, renderedSegmentWidth(self.parts.items[idx], limit - cursor));
             if (mx >= start and mx < end) {
                 self.on_click.?(idx);
                 return true;
             }
             cursor = end;
             if (idx + 1 < self.parts.items.len and cursor < limit) {
-                cursor = offsetCoord(cursor, @min(self.separator.len, remaining(cursor, limit)));
+                cursor = offsetCoord(cursor, text_metrics.clipToWidth(self.separator, @intCast(remaining(cursor, limit))).width);
             }
         }
         return false;
@@ -1105,10 +1129,12 @@ pub const Breadcrumbs = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Breadcrumbs = @fieldParentPtr("widget", widget_ref);
         var width: usize = 0;
+        const separator_width: usize = text_metrics.measureWidth(self.separator).width;
         for (self.parts.items, 0..) |part, idx| {
-            const icon_width = if (part.icon) |ic| addUsizeClamped(ic.len, 1) else 0;
-            width = addUsizeClamped(width, addUsizeClamped(part.label.len, icon_width));
-            if (idx + 1 < self.parts.items.len) width = addUsizeClamped(width, self.separator.len);
+            width = addUsizeClamped(width, segmentWidth(part));
+            if (idx + 1 < self.parts.items.len) {
+                width = addUsizeClamped(width, separator_width);
+            }
         }
         return layout_module.Size.init(@min(clampUsizeToU16(width), 200), 1);
     }
@@ -2623,6 +2649,36 @@ test "toolbar mouse selects rendered item row" {
     try std.testing.expectEqual(@as(usize, 1), toolbar.active);
 }
 
+test "toolbar uses grapheme cell geometry for layout draw and mouse" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{ "界", "e\u{301}", "👩‍💻" });
+    defer toolbar.deinit();
+
+    const preferred = try toolbar.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 15), preferred.width);
+
+    var snap = try testing.renderWidget(alloc, &toolbar.widget, layout_module.Size.init(15, 1));
+    defer snap.deinit(alloc);
+    try snap.expectWellFormed();
+    try snap.expectContains("界");
+    try snap.expectContains("e\u{301}");
+    try snap.expectContains("👩‍💻");
+
+    try std.testing.expect(try toolbar.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 7, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(usize, 1), toolbar.active);
+    try std.testing.expect(try toolbar.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 12, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(usize, 2), toolbar.active);
+
+    var narrow = try testing.renderWidget(alloc, &toolbar.widget, layout_module.Size.init(4, 1));
+    defer narrow.deinit(alloc);
+    try narrow.expectWellFormed();
+    try narrow.expectContains("界");
+}
+
 test "toolbar marks dirty when active item changes" {
     const alloc = std.testing.allocator;
     var toolbar = try Toolbar.init(alloc, &[_][]const u8{ "Open", "Save", "Close" });
@@ -2715,6 +2771,57 @@ test "breadcrumbs mouse clicks rendered segment only" {
 
     try std.testing.expect(try crumbs.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 13, 5, 1, 0) }));
     try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
+}
+
+test "breadcrumbs reserve overflow and use grapheme cell hit geometry" {
+    const alloc = std.testing.allocator;
+    var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{"placeholder"});
+    defer crumbs.deinit();
+    try crumbs.setParts(&[_]Breadcrumbs.Part{
+        .{ .label = "根", .icon = "🏠" },
+        .{ .label = "e\u{301}" },
+        .{ .label = "界" },
+    });
+
+    const preferred = try crumbs.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 14), preferred.width);
+
+    test_breadcrumb_click_index = null;
+    crumbs.setOnClick(struct {
+        fn call(idx: usize) void {
+            test_breadcrumb_click_index = idx;
+        }
+    }.call);
+
+    var full = try testing.renderWidget(alloc, &crumbs.widget, layout_module.Size.init(14, 1));
+    defer full.deinit(alloc);
+    try full.expectWellFormed();
+    try full.expectContains("🏠");
+    try full.expectContains("根");
+    try full.expectContains("e\u{301}");
+    try full.expectContains("界");
+
+    try std.testing.expect(!try crumbs.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 6, 0, 1, 0),
+    }));
+    try std.testing.expect(try crumbs.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 8, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
+
+    try crumbs.setParts(&[_]Breadcrumbs.Part{
+        .{ .label = "home" },
+        .{ .label = "settings" },
+        .{ .label = "界" },
+    });
+    var overflow = try testing.renderWidget(alloc, &crumbs.widget, layout_module.Size.init(8, 1));
+    defer overflow.deinit(alloc);
+    try overflow.expectWellFormed();
+    try overflow.expectContains("... / 界");
+    try std.testing.expect(try crumbs.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 6, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(?usize, 2), test_breadcrumb_click_index);
 }
 
 test "toolbar and breadcrumbs draw and hit test without allocating" {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const render = @import("../render/render.zig");
+const text_metrics = @import("../render/text_metrics.zig");
 const layout = @import("../layout/layout.zig");
 const widget = @import("../widget/widget.zig");
 const input = @import("../input/input.zig");
@@ -208,9 +209,9 @@ pub const Snapshot = struct {
 
     /// Assert that a text snapshot is deterministic renderer output.
     ///
-    /// The invariant intentionally checks visible-cell shape rather than byte width:
-    /// UTF-8 glyphs may use multiple bytes, but each rendered cell should contribute
-    /// exactly one codepoint and each row should end with a newline.
+    /// The invariant checks serialized renderer shape without using byte counts.
+    /// Grapheme counts handle combining/joined glyphs; a codepoint-count fallback
+    /// preserves cell boundaries that plain snapshot text cannot encode.
     pub fn expectWellFormed(self: Snapshot) !void {
         const text_value = self.text();
         if (!std.unicode.utf8ValidateSlice(text_value)) return SnapshotError.InvalidSnapshotUtf8;
@@ -221,14 +222,23 @@ pub const Snapshot = struct {
             if (row.len == 0 and row_count == self.height) break;
             if (row_count >= self.height) return SnapshotError.InvalidSnapshotHeight;
 
-            var visible_cells: usize = 0;
+            var codepoint_count: usize = 0;
             var utf8 = (std.unicode.Utf8View.init(row) catch return SnapshotError.InvalidSnapshotUtf8).iterator();
             while (utf8.nextCodepoint()) |cp| {
                 if (cp < 0x20 or cp == 0x7f) return SnapshotError.InvalidSnapshotControlCode;
-                visible_cells += 1;
+                codepoint_count += 1;
             }
 
-            if (visible_cells != self.width) return SnapshotError.InvalidSnapshotWidth;
+            var grapheme_cells: usize = 0;
+            var graphemes = text_metrics.GraphemeIterator.init(row);
+            while (graphemes.next()) |grapheme| {
+                if (grapheme.hasControl()) return SnapshotError.InvalidSnapshotControlCode;
+                grapheme_cells += 1;
+            }
+
+            if (grapheme_cells != self.width and codepoint_count != self.width) {
+                return SnapshotError.InvalidSnapshotWidth;
+            }
             row_count += 1;
         }
 
@@ -603,6 +613,27 @@ test "snapshot well formed check rejects malformed output" {
         .height = 1,
     };
     try std.testing.expectError(error.InvalidSnapshotControlCode, control_code.expectWellFormed());
+}
+
+test "snapshot well formed check accepts combining and wide grapheme cells" {
+    var unicode_cells = Snapshot{
+        .buffer = @constCast("e\u{301} \n界 \n👩‍💻 \n"),
+        .len = "e\u{301} \n界 \n👩‍💻 \n".len,
+        .width = 2,
+        .height = 3,
+    };
+    try unicode_cells.expectWellFormed();
+
+    // Snapshot text does not encode cell boundaries. Preserve a valid pair of
+    // separately serialized cells when a leading combining mark joins the
+    // preceding codepoint during row-level grapheme iteration.
+    var split_combining_cells = Snapshot{
+        .buffer = @constCast("e\u{301}\n"),
+        .len = "e\u{301}\n".len,
+        .width = 2,
+        .height = 1,
+    };
+    try split_combining_cells.expectWellFormed();
 }
 
 test "snapshot comparison uses golden files" {

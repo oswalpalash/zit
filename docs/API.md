@@ -8,11 +8,11 @@ Lightweight pointers to the most-used types and functions. Import via `const zit
 - `event` – `Event`, `EventQueue`, `EventDispatcher`, `PropagationPhase`, and `.terminal_focus` events distinct from widget `.focus_change`. Helpers in `propagation.zig` build widget paths and dispatch with bubbling/capturing.
 - `event.Application` – event loop coordinator with timers, animations, background tasks, shortcuts, accessibility, `bindInput(&input)`, and transactional `bindResize(&renderer, &reflow)` handling that publishes renderer and widget geometry together.
 - `layout` – `Rect`, `Constraints`, `EdgeInsets`, `Size`, flex helpers. `LayoutElement.layout` supports best-effort container measurement, while `tryLayout` preserves errors from fallible widget adapters at transactional integration boundaries.
-- `render` – `Renderer.init(allocator, width, height)`, atomic `resize`, scoped `prepareResize`/`ResizeTransaction.commit` for coordinating other size-dependent state, `drawStr`, `drawBox`, `fillRect`, `drawGradient`, and `render()` (front/back diff). Colors via `Color.named/rgb/ansi256`, styles via `Style` and `FocusRingStyle`.
+- `render` – `Renderer.init(allocator, width, height)`, atomic `resize`, scoped `prepareResize`/`ResizeTransaction.commit` for coordinating other size-dependent state, `drawStr`, `drawBox`, `fillRect`, `drawGradient`, `measureText`, allocation-free `clipTextToWidth`, and `render()` (front/back diff). Colors via `Color.named/rgb/ansi256`, styles via `Style` and `FocusRingStyle`.
 - `widget` – Base `Widget` + vtable, theme helpers, builders, and concrete widgets (`Label`, `Button`, `List`, `Table`, `SplitPane`, `Modal`, `ContextMenu`, etc.).
 - `memory` – `MemoryManager.init(parent, arena_size, widget_pool_size)`, `getArenaAllocator`, `getWidgetPoolAllocator`, `resetArena`, `getStats`.
 - `quickstart` – Convenience helpers like `renderText` for trivial programs.
-- `testing` – `MockTerminal`, `WidgetHarness`, `renderWidget`, golden snapshot assertions, and `Snapshot.expectWellFormed()` for deterministic headless rendering checks.
+- `testing` – `MockTerminal`, `WidgetHarness`, `renderWidget`, golden snapshot assertions, and grapheme-cell-aware `Snapshot.expectWellFormed()` checks for deterministic headless rendering.
 
 ## Common Patterns
 ### Bootstrapping
@@ -66,6 +66,17 @@ const point = input_handler.translateTerminalMouseCoordinates(1, 1);
 const synthetic = zit.input.MouseEvent.fromTerminalCoordinates(.press, 1, 1, 1, 0);
 _ = synthetic;
 ```
+
+### Grapheme-Safe Clipping
+```zig
+const clipped = zit.render.clipTextToWidth(label, available_cells);
+renderer.drawStr(x, y, clipped.text, fg, bg, .{});
+x += clipped.width;
+```
+
+`clipTextToWidth` is allocation-free, never returns a partial UTF-8 grapheme,
+and reports the exact terminal-cell width of the returned input slice. Use
+`measureText` for unclipped preferred-size and hit-test geometry.
 
 ### Automatic Resize
 ```zig

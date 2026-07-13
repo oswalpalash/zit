@@ -6,6 +6,10 @@ const base_widget = @import("../widget/widgets/base_widget.zig");
 const compat = @import("../compat.zig");
 
 pub const TextDirection = text_metrics.TextDirection;
+pub const TextMetrics = text_metrics.Metrics;
+pub const TextClip = text_metrics.ClipResult;
+pub const measureText = text_metrics.measureWidth;
+pub const clipTextToWidth = text_metrics.clipToWidth;
 
 /// Traverse a widget tree (root first) without allocations.
 pub fn traverseWidgetTree(root: *base_widget.Widget, callback: *const fn (*base_widget.Widget) void) void {

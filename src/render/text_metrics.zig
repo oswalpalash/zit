@@ -290,6 +290,26 @@ pub const ClipResult = struct {
     clipped: bool,
 };
 
+/// Clip text to a terminal-cell width without allocation or partial graphemes.
+/// The returned text always aliases the input slice.
+pub fn clipToWidth(text: []const u8, max_width: u16) ClipResult {
+    var width: u16 = 0;
+    var boundary: usize = 0;
+    var it = GraphemeIterator.init(text);
+    while (it.next()) |grapheme| {
+        const grapheme_width: u16 = grapheme.width;
+        if (grapheme_width > max_width - width) break;
+        width += grapheme_width;
+        boundary = it.it.i;
+    }
+
+    return .{
+        .text = text[0..boundary],
+        .width = width,
+        .clipped = boundary < text.len,
+    };
+}
+
 /// Clip text to a terminal-cell width without splitting UTF-8 or grapheme clusters.
 ///
 /// When clipping is required and at least four cells are available, the result
@@ -643,6 +663,36 @@ test "clipWithEllipsis preserves exact-fit text" {
     try std.testing.expect(!clipped.clipped);
     try std.testing.expectEqualStrings("Checks catch clipping.", clipped.text);
     try std.testing.expectEqual(@as(u16, 22), clipped.width);
+}
+
+test "clipToWidth preserves grapheme boundaries and exact cell widths" {
+    const text = "A界e\u{301}👩‍💻Z";
+
+    const empty = clipToWidth(text, 0);
+    try std.testing.expectEqualStrings("", empty.text);
+    try std.testing.expectEqual(@as(u16, 0), empty.width);
+    try std.testing.expect(empty.clipped);
+
+    const cjk = clipToWidth(text, 3);
+    try std.testing.expectEqualStrings("A界", cjk.text);
+    try std.testing.expectEqual(@as(u16, 3), cjk.width);
+    try std.testing.expect(cjk.clipped);
+
+    const combining = clipToWidth(text, 5);
+    try std.testing.expectEqualStrings("A界e\u{301}", combining.text);
+    try std.testing.expectEqual(@as(u16, 4), combining.width);
+    try std.testing.expect(combining.clipped);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(combining.text));
+
+    const emoji = clipToWidth(text, 6);
+    try std.testing.expectEqualStrings("A界e\u{301}👩‍💻", emoji.text);
+    try std.testing.expectEqual(@as(u16, 6), emoji.width);
+    try std.testing.expect(emoji.clipped);
+
+    const full = clipToWidth(text, 7);
+    try std.testing.expectEqualStrings(text, full.text);
+    try std.testing.expectEqual(@as(u16, 7), full.width);
+    try std.testing.expect(!full.clipped);
 }
 
 test "clipWithEllipsis keeps utf8 valid and respects wide glyph width" {
