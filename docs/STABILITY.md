@@ -36,6 +36,7 @@ Before a feature is promoted as stable, it needs:
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
 - Any terminal input protocol enabled by `Terminal` must have matching decoder coverage, idempotent per-instance ownership, symmetric cleanup, and an end-to-end PTY release check for negotiation, input, and restoration.
+- Windows input protocols must require independently negotiated VT input and output modes; console-mode changes made during initialization or partial raw-mode setup remain explicit cleanup obligations.
 - POSIX input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait; the PTY gate injects protocol bytes individually to preserve this contract.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
@@ -92,7 +93,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_interactive_alt_screen.py` requires every interactive example to enter and exit the alternate screen so rendered rows and terminal mouse coordinates share a stable viewport origin.
 - `python3 scripts/check_io_event_ownership_docs.py` rejects stale examples that call `deinit()` directly on manager-owned file watchers or network contexts returned by `watchFile` / `connectToServer`.
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
-- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable; rejects empty `catch {}` blocks on terminal cleanup paths; and enforces instance-handle output, terminal-owned mouse state, bounded POSIX input continuations with fragmented PTY coverage, pre-write cleanup obligations, and VT-mode teardown before raw-mode restoration.
+- `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable; rejects empty `catch {}` blocks on terminal cleanup paths; and enforces instance-handle output, terminal-owned mouse state, independent Windows VT input/output negotiation and restoration, bounded POSIX input continuations with fragmented PTY coverage, pre-write cleanup obligations, and VT-mode teardown before raw-mode restoration.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
 - `python3 scripts/check_draw_layout_boundary.py` rejects child layout calls from production widget draw callbacks so redraws cannot republish geometry or accessibility bounds.
 - `python3 scripts/check_widget_parent_attachment.py` rejects direct `Widget.parent` assignments outside the guarded ownership primitives so new composite widgets cannot silently reparent children or clear links owned elsewhere.

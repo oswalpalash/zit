@@ -2445,6 +2445,8 @@ test "input terminal modes are restored by terminal deinit before raw cleanup" {
         .is_alt_screen = false,
         .is_bracketed_paste = false,
         .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
         .sigwinch_registered = false,
     };
     var handler = InputHandler.init(std.testing.allocator, &term);

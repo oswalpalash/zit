@@ -39,6 +39,13 @@ MODE_SETUP_CONTRACTS = (
     ("enableKittyKeyboardProtocol", "self.is_kitty_keyboard_enabled = true", "compat.fileWriteAll"),
 )
 
+INPUT_PROTOCOL_SETUP_FUNCTIONS = (
+    "enableMouseEvents",
+    "enableFocusEvents",
+    "enableBracketedPaste",
+    "enableKittyKeyboardProtocol",
+)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -109,6 +116,13 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
                 f"src/terminal/terminal.zig: {name} must record its cleanup obligation before the fallible terminal write"
             )
 
+    for name in INPUT_PROTOCOL_SETUP_FUNCTIONS:
+        body = function_body(terminal_text, name)
+        if body is None or "self.supportsVtInputProtocols()" not in body:
+            failures.append(
+                f"src/terminal/terminal.zig: {name} must require negotiated Windows VT input and output"
+            )
+
     deinit_body = function_body(terminal_text, "deinit")
     if deinit_body is None:
         failures.append("src/terminal/terminal.zig: missing Terminal.deinit")
@@ -127,6 +141,43 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
                 failures.append(
                     f"src/terminal/terminal.zig: deinit must run {cleanup} before disableRawMode so Windows VT output remains available"
                 )
+        if "self.restoreWindowsOutputModeIfNeeded(&first_error)" not in deinit_body:
+            failures.append("src/terminal/terminal.zig: deinit must restore VT output enabled during Windows initialization")
+
+    raw_mode_body = function_body(terminal_text, "enableRawMode")
+    if raw_mode_body is None:
+        failures.append("src/terminal/terminal.zig: missing enableRawMode")
+    else:
+        for marker in ("self.windows_vt_input_enabled = true", "self.windows_vt_input_enabled = false"):
+            if marker not in raw_mode_body:
+                failures.append(f"src/terminal/terminal.zig: enableRawMode missing Windows lifecycle marker {marker}")
+
+        input_setup_index = raw_mode_body.find("const vt_input_mode")
+        raw_obligation_index = raw_mode_body.find("self.is_raw_mode = true;", input_setup_index)
+        output_setup_index = raw_mode_body.find("const base_out_mode")
+        if input_setup_index < 0 or raw_obligation_index < 0 or output_setup_index < 0 or raw_obligation_index > output_setup_index:
+            failures.append(
+                "src/terminal/terminal.zig: enableRawMode must record raw-input cleanup before Windows output setup"
+            )
+
+        rollback_index = raw_mode_body.find(
+            "windows_console.SetConsoleMode(self.stdin_fd, info.in_mode).toBool()",
+            output_setup_index,
+        )
+        rollback_clear_index = raw_mode_body.find("self.is_raw_mode = false;", rollback_index)
+        rollback_retry_index = raw_mode_body.find("self.is_raw_mode = true;", rollback_clear_index + 1)
+        rollback_return_index = raw_mode_body.find("return error.SetConsoleModeFailure;", rollback_index)
+        if (
+            rollback_index < 0
+            or rollback_clear_index < 0
+            or rollback_retry_index < 0
+            or rollback_return_index < 0
+            or rollback_clear_index > rollback_return_index
+            or rollback_retry_index > rollback_return_index
+        ):
+            failures.append(
+                "src/terminal/terminal.zig: failed Windows output setup must clear the obligation only after input restore and retain it when restore fails"
+            )
 
     if "mouse_enabled:" in input_text:
         failures.append("src/input/input.zig: InputHandler must not duplicate terminal mouse protocol state")
@@ -223,7 +274,7 @@ def main() -> int:
 
     print(
         f"checked {checked} interactive example(s) for terminal-state cleanup symmetry, "
-        "driver ownership, fragmented input, and silent cleanup catches"
+        "driver ownership, Windows VT negotiation, fragmented input, and silent cleanup catches"
     )
     return 0
 

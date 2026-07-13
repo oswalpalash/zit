@@ -3602,6 +3602,8 @@ test "application input binding stores non-blocking poll configuration" {
         .is_bracketed_paste = false,
         .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
         .sigwinch_registered = false,
     };
     var input_handler = input.InputHandler.init(alloc, &term);

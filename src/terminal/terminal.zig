@@ -202,6 +202,14 @@ fn changedSize(old_width: u16, old_height: u16, new_width: u16, new_height: u16)
     return .{ .width = new_width, .height = new_height };
 }
 
+fn vtInputProtocolsAvailable(is_windows: bool, output_enabled: bool, input_enabled: bool) bool {
+    return !is_windows or (output_enabled and input_enabled);
+}
+
+fn windowsVtInputModeEnabled(mode: u32) bool {
+    return (mode & windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT) != 0;
+}
+
 fn rememberFirstError(first_error: *?anyerror, err: anyerror) void {
     if (first_error.* == null) {
         first_error.* = err;
@@ -262,6 +270,10 @@ pub const Terminal = struct {
     is_kitty_keyboard_enabled: bool = false,
     /// Whether Windows virtual terminal processing is available
     windows_vt_enabled: bool,
+    /// Whether Windows virtual terminal input is active on the input handle.
+    windows_vt_input_enabled: bool,
+    /// Whether init/raw setup changed Windows output mode and must restore it.
+    windows_output_mode_restore_pending: bool,
     /// Whether this terminal instance owns one reference to the SIGWINCH handler.
     sigwinch_registered: bool,
     /// Number of optional terminal feature setup/teardown failures.
@@ -289,6 +301,8 @@ pub const Terminal = struct {
         var original_termios: OriginalTermAttrs = .none;
         const is_windows = builtin.os.tag == .windows;
         var windows_vt_enabled = true;
+        var windows_vt_input_enabled = true;
+        var windows_output_mode_restore_pending = false;
 
         if (is_windows) {
             ensureWindowsUnicodeSupport();
@@ -298,9 +312,13 @@ pub const Terminal = struct {
                 windows_console.GetConsoleMode(stdout_fd, &out_mode).toBool())
             {
                 original_termios = .{ .windows = .{ .in_mode = in_mode, .out_mode = out_mode } };
-                windows_vt_enabled = enableWindowsVirtualTerminal(stdout_fd);
+                const output_setup = enableWindowsVirtualTerminal(stdout_fd);
+                windows_vt_enabled = output_setup.enabled;
+                windows_output_mode_restore_pending = output_setup.changed;
+                windows_vt_input_enabled = windowsVtInputModeEnabled(in_mode);
             } else {
                 windows_vt_enabled = false;
+                windows_vt_input_enabled = false;
             }
         } else {
             // Unix systems
@@ -333,6 +351,8 @@ pub const Terminal = struct {
             .is_bracketed_paste = false,
             .is_kitty_keyboard_enabled = false,
             .windows_vt_enabled = windows_vt_enabled,
+            .windows_vt_input_enabled = windows_vt_input_enabled,
+            .windows_output_mode_restore_pending = windows_output_mode_restore_pending,
             .sigwinch_registered = false,
         };
 
@@ -386,6 +406,7 @@ pub const Terminal = struct {
             self.disableRawMode() catch |err| rememberFirstError(&first_error, err);
         } else {
             self.resetFormatting() catch |err| rememberFirstError(&first_error, err);
+            self.restoreWindowsOutputModeIfNeeded(&first_error);
         }
 
         self.releaseSigwinchReference();
@@ -429,6 +450,22 @@ pub const Terminal = struct {
         restoreFileStatusFlagsIfNeeded(self.stdin_fd, &self.original_stdin_flags, &ignored_error);
     }
 
+    fn restoreWindowsOutputModeIfNeeded(self: *Terminal, first_error: *?anyerror) void {
+        if (builtin.os.tag != .windows or !self.windows_output_mode_restore_pending) return;
+
+        switch (self.original_termios) {
+            .windows => |info| {
+                if (!windows_console.SetConsoleMode(self.stdout_fd, info.out_mode).toBool()) {
+                    rememberFirstError(first_error, error.SetConsoleModeFailure);
+                    return;
+                }
+                self.windows_vt_enabled = windowsVtOutputModeEnabled(info.out_mode);
+                self.windows_output_mode_restore_pending = false;
+            },
+            else => self.windows_output_mode_restore_pending = false,
+        }
+    }
+
     /// Enable raw mode for direct character input
     pub fn enableRawMode(self: *Terminal) !void {
         if (self.is_raw_mode) return;
@@ -447,22 +484,35 @@ pub const Terminal = struct {
                             windows_console.ENABLE_INSERT_MODE);
 
                     const vt_input_mode = sanitized_in_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT;
-                    if (!windows_console.SetConsoleMode(self.stdin_fd, vt_input_mode).toBool()) {
+                    if (windows_console.SetConsoleMode(self.stdin_fd, vt_input_mode).toBool()) {
+                        self.windows_vt_input_enabled = true;
+                    } else {
                         if (!windows_console.SetConsoleMode(self.stdin_fd, sanitized_in_mode).toBool()) {
                             return error.SetConsoleModeFailure;
                         }
+                        self.windows_vt_input_enabled = false;
                     }
+                    // The input mode changed; deinit must restore it if later setup fails.
+                    self.is_raw_mode = true;
 
                     // Try to enable VT processing but gracefully fall back to console attributes when unavailable.
                     const base_out_mode: u32 = info.out_mode | windows_console.ENABLE_PROCESSED_OUTPUT | windows_console.ENABLE_WRAP_AT_EOL_OUTPUT;
                     if (windows_console.SetConsoleMode(self.stdout_fd, base_out_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING).toBool()) {
                         self.windows_vt_enabled = true;
+                        self.windows_output_mode_restore_pending = true;
                     } else {
                         self.windows_vt_enabled = false;
                         if (!windows_console.SetConsoleMode(self.stdout_fd, base_out_mode).toBool()) {
-                            _ = windows_console.SetConsoleMode(self.stdin_fd, info.in_mode);
+                            if (windows_console.SetConsoleMode(self.stdin_fd, info.in_mode).toBool()) {
+                                self.windows_vt_input_enabled = windowsVtInputModeEnabled(info.in_mode);
+                                self.is_raw_mode = false;
+                            } else {
+                                // Preserve a teardown obligation so deinit retries the restore.
+                                self.is_raw_mode = true;
+                            }
                             return error.SetConsoleModeFailure;
                         }
+                        self.windows_output_mode_restore_pending = true;
                         self.capabilities = downgradeWindowsCapabilities(self.capabilities);
                     }
                 },
@@ -535,10 +585,14 @@ pub const Terminal = struct {
                     // Restore original console modes
                     if (!windows_console.SetConsoleMode(self.stdin_fd, info.in_mode).toBool()) {
                         rememberFirstError(&first_error, error.SetConsoleModeFailure);
+                    } else {
+                        self.windows_vt_input_enabled = windowsVtInputModeEnabled(info.in_mode);
                     }
 
                     if (!windows_console.SetConsoleMode(self.stdout_fd, info.out_mode).toBool()) {
                         rememberFirstError(&first_error, error.SetConsoleModeFailure);
+                    } else {
+                        self.windows_output_mode_restore_pending = false;
                     }
 
                     self.windows_vt_enabled = detectWindowsVirtualTerminal(self.stdout_fd);
@@ -645,7 +699,7 @@ pub const Terminal = struct {
     /// Enable mouse event reporting
     pub fn enableMouseEvents(self: *Terminal) !void {
         if (self.is_mouse_enabled) return;
-        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
+        if (!self.supportsVtInputProtocols()) return;
 
         // Enable normal tracking, motion tracking, and SGR encoding
         self.is_mouse_enabled = true;
@@ -671,7 +725,7 @@ pub const Terminal = struct {
     /// Enable xterm-compatible terminal focus reporting (DECSET 1004).
     pub fn enableFocusEvents(self: *Terminal) !void {
         if (self.is_focus_reporting_enabled) return;
-        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
+        if (!self.supportsVtInputProtocols()) return;
 
         self.is_focus_reporting_enabled = true;
         try compat.fileWriteAll(self.stdout_fd, "\x1b[?1004h");
@@ -716,7 +770,7 @@ pub const Terminal = struct {
     /// Enable bracketed paste mode so pasted text is clearly delimited.
     pub fn enableBracketedPaste(self: *Terminal) !void {
         if (self.is_bracketed_paste or !self.capabilities.bracketed_paste) return;
-        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
+        if (!self.supportsVtInputProtocols()) return;
         self.is_bracketed_paste = true;
         try compat.fileWriteAll(self.stdout_fd, "\x1b[?2004h");
     }
@@ -850,6 +904,18 @@ pub const Terminal = struct {
         return self.capabilities.colors_256 or self.capabilities.rgb_colors;
     }
 
+    /// Report whether escape-sequence input protocols can be enabled.
+    ///
+    /// POSIX terminals use the normal byte-stream path. Windows requires both
+    /// virtual-terminal output processing and virtual-terminal input mode.
+    pub fn supportsVtInputProtocols(self: *const Terminal) bool {
+        return vtInputProtocolsAvailable(
+            builtin.os.tag == .windows,
+            self.windows_vt_enabled,
+            self.windows_vt_input_enabled,
+        );
+    }
+
     /// Check if terminal supports true color (24-bit)
     pub fn supportsTrueColor(self: *Terminal) bool {
         return self.capabilities.rgb_colors;
@@ -871,7 +937,7 @@ pub const Terminal = struct {
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
         if (!self.capabilities.kitty_keyboard or self.is_kitty_keyboard_enabled) return;
-        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
+        if (!self.supportsVtInputProtocols()) return;
         self.is_kitty_keyboard_enabled = true;
         try compat.fileWriteAll(self.stdout_fd, "\x1b[>1u");
     }
@@ -914,6 +980,19 @@ test "changedSize reports only actual terminal geometry changes" {
     const taller = changedSize(80, 24, 80, 40).?;
     try std.testing.expectEqual(@as(u16, 80), taller.width);
     try std.testing.expectEqual(@as(u16, 40), taller.height);
+}
+
+test "Windows VT input protocols require input and output modes" {
+    try std.testing.expect(vtInputProtocolsAvailable(false, false, false));
+    try std.testing.expect(vtInputProtocolsAvailable(true, true, true));
+    try std.testing.expect(!vtInputProtocolsAvailable(true, true, false));
+    try std.testing.expect(!vtInputProtocolsAvailable(true, false, true));
+    try std.testing.expect(!vtInputProtocolsAvailable(true, false, false));
+
+    try std.testing.expect(windowsVtInputModeEnabled(windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT));
+    try std.testing.expect(!windowsVtInputModeEnabled(windows_console.ENABLE_LINE_INPUT));
+    try std.testing.expect(windowsVtOutputModeEnabled(windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING));
+    try std.testing.expect(!windowsVtOutputModeEnabled(windows_console.ENABLE_PROCESSED_OUTPUT));
 }
 
 test "non-blocking file status flag preserves existing bits" {
@@ -1021,6 +1100,8 @@ test "terminal releases SIGWINCH reference without terminal output" {
         .is_bracketed_paste = false,
         .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
         .sigwinch_registered = installSigwinchHandler(),
     };
 
@@ -1051,6 +1132,8 @@ test "terminal optional feature failures are observable and resettable" {
         .is_bracketed_paste = false,
         .is_kitty_keyboard_enabled = false,
         .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
         .sigwinch_registered = false,
     };
 
@@ -1097,6 +1180,8 @@ test "failed mouse setup retains cleanup obligation on terminal output handle" {
         .is_alt_screen = false,
         .is_bracketed_paste = false,
         .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
         .sigwinch_registered = false,
     };
 
@@ -1131,24 +1216,34 @@ fn ensureWindowsUnicodeSupport() void {
     _ = windows_console.SetConsoleOutputCP(CP_UTF8);
 }
 
-fn enableWindowsVirtualTerminal(handle: std.posix.fd_t) bool {
-    if (builtin.os.tag != .windows) return true;
+const WindowsVtOutputSetup = struct {
+    enabled: bool,
+    changed: bool,
+};
+
+fn windowsVtOutputModeEnabled(mode: u32) bool {
+    return (mode & windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+}
+
+fn enableWindowsVirtualTerminal(handle: std.posix.fd_t) WindowsVtOutputSetup {
+    if (builtin.os.tag != .windows) return .{ .enabled = true, .changed = false };
     var mode: std.os.windows.DWORD = 0;
-    if (!windows_console.GetConsoleMode(handle, &mode).toBool()) return false;
-    if ((mode & windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) return true;
+    if (!windows_console.GetConsoleMode(handle, &mode).toBool()) return .{ .enabled = false, .changed = false };
+    if (windowsVtOutputModeEnabled(mode)) return .{ .enabled = true, .changed = false };
 
     const desired = mode |
         windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING |
         windows_console.ENABLE_PROCESSED_OUTPUT |
         windows_console.ENABLE_WRAP_AT_EOL_OUTPUT;
-    return windows_console.SetConsoleMode(handle, desired).toBool();
+    const enabled = windows_console.SetConsoleMode(handle, desired).toBool();
+    return .{ .enabled = enabled, .changed = enabled };
 }
 
 fn detectWindowsVirtualTerminal(handle: std.posix.fd_t) bool {
     if (builtin.os.tag != .windows) return true;
     var mode: std.os.windows.DWORD = 0;
     if (!windows_console.GetConsoleMode(handle, &mode).toBool()) return false;
-    return (mode & windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    return windowsVtOutputModeEnabled(mode);
 }
 
 fn downgradeWindowsCapabilities(flags: capabilities.CapabilityFlags) capabilities.CapabilityFlags {

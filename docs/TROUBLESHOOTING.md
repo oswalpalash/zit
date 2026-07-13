@@ -79,6 +79,8 @@ input_handler.setSequenceTimeout(80);
 
 Lowering the value reduces lone-Escape latency. A value of `0` disables continuation waiting and is appropriate only when the input transport delivers complete sequences atomically.
 
+On Windows, call `term.supportsVtInputProtocols()` after `enableRawMode`. A false result means the console accepted ordinary raw input but not the VT input mode required for mouse, focus, bracketed-paste, or Kitty keyboard escape sequences. Zit leaves those optional modes disabled instead of reporting a cleanup obligation it cannot fulfill.
+
 ## Terminal State Is Not Restored
 
 Likely causes:
