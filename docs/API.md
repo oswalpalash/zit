@@ -160,6 +160,8 @@ Owning widgets create parent links through `Widget.attachTo` and clear them thro
 
 `TabView.layout` lays out the header and every loaded tab, including inactive content. If any child rejects layout, the header and all loaded content recover their previous public geometry, dirty regions, and published accessibility bounds without steady-state allocation.
 
+`TabView.addLazyTab` calls its loader when that tab first becomes active, including when it is inserted as the first tab. `setActiveTab` and `removeTab` are fallible because activating a lazy tab can fail during construction, attachment, or layout; failed activation leaves the prior selection unchanged, and failed active-tab removal leaves the tab list unchanged. Tab content remains caller-owned: removing or deinitializing the view detaches content but does not deinitialize it.
+
 `ScrollContainer.layout` lays out its owned scrollbars before caller-owned content. If content rejects layout, fixed stack snapshots restore both scrollbars and content while leaving the prior content-size cache intact.
 
 `SplitPane.layout` snapshots both optional child slots before laying out either pane. If either child rejects layout, both children recover their previous public geometry, dirty regions, and published accessibility bounds without heap allocation.

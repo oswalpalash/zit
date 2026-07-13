@@ -445,13 +445,15 @@ pub const TabView = struct {
 
     /// Create a tab from a specification.
     pub fn addTabSpec(self: *TabView, spec: TabSpec) !void {
+        const first_tab = self.tabs.items.len == 0;
         if (spec.content) |content| {
             try self.validateNewContent(content);
         }
         try self.tabs.ensureUnusedCapacity(self.allocator, 1);
         try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.tabs.items.len + 2);
         const title_copy = try self.allocator.dupe(u8, spec.title);
-        errdefer self.allocator.free(title_copy);
+        var title_owned_by_tab = false;
+        errdefer if (!title_owned_by_tab) self.allocator.free(title_copy);
         if (spec.content) |content| {
             try content.attachTo(&self.widget);
         }
@@ -462,25 +464,34 @@ pub const TabView = struct {
             .closable = spec.closable,
             .loaded = spec.content != null,
         });
+        title_owned_by_tab = true;
+        errdefer {
+            var removed = self.tabs.pop().?;
+            self.detachTabContent(&removed);
+            self.allocator.free(removed.title);
+            self.syncHeader();
+            self.syncVisibility();
+        }
         self.syncHeader();
 
-        if (self.tabs.items.len == 1) {
-            if (spec.content == null and spec.loader != null) {
-                self.active_tab = 0;
-                self.tab_bar.setActive(0);
-                self.syncVisibility();
-            } else {
-                try self.setActiveTab(0);
-            }
+        if (first_tab) {
+            _ = try self.ensureTabLoaded(0, false);
+            self.active_tab = 0;
+            self.tab_bar.setActive(0);
+            self.syncVisibility();
         }
         self.widget.markDirty();
     }
 
-    /// Remove a tab from the tab view
-    pub fn removeTab(self: *TabView, index: usize) void {
+    /// Remove a tab, preparing a lazy replacement before mutating the tab list.
+    pub fn removeTab(self: *TabView, index: usize) !void {
         if (index >= self.tabs.items.len) return;
         const old_active = self.active_tab;
         const selection_changed = index == old_active;
+        if (selection_changed and self.tabs.items.len > 1) {
+            const replacement = if (index < self.tabs.items.len - 1) index + 1 else index - 1;
+            _ = try self.ensureTabLoaded(replacement, true);
+        }
         self.detachTabContent(&self.tabs.items[index]);
         const removed = self.tabs.orderedRemove(index);
         self.allocator.free(removed.title);
@@ -554,13 +565,13 @@ pub const TabView = struct {
 
         const clamped = @min(index, self.tabs.items.len - 1);
         if (clamped == self.active_tab) {
-            const loaded = try self.ensureTabLoaded(clamped);
+            const loaded = try self.ensureTabLoaded(clamped, true);
             self.syncVisibility();
             if (loaded) self.widget.markDirty();
             return;
         }
 
-        _ = try self.ensureTabLoaded(clamped);
+        _ = try self.ensureTabLoaded(clamped, true);
         self.active_tab = clamped;
         self.syncVisibility();
         self.tab_bar.setActive(clamped);
@@ -579,7 +590,7 @@ pub const TabView = struct {
     /// Get the active tab content widget
     pub fn getActiveContent(self: *TabView) !?*base.Widget {
         if (self.tabs.items.len == 0) return null;
-        _ = try self.ensureTabLoaded(self.active_tab);
+        _ = try self.ensureTabLoaded(self.active_tab, true);
         return self.tabs.items[self.active_tab].content;
     }
 
@@ -628,7 +639,7 @@ pub const TabView = struct {
         self.widget.markDirty();
     }
 
-    fn ensureTabLoaded(self: *TabView, idx: usize) !bool {
+    fn ensureTabLoaded(self: *TabView, idx: usize, layout_content: bool) !bool {
         if (idx >= self.tabs.items.len) return false;
         var tab = &self.tabs.items[idx];
         if (tab.loaded or tab.loader == null) return false;
@@ -640,8 +651,9 @@ pub const TabView = struct {
         errdefer {
             _ = content.detachFrom(&self.widget);
         }
-        const rect = self.contentRect();
-        try content.layout(rect);
+        if (layout_content) {
+            try content.layout(self.contentRect());
+        }
 
         tab.content = content;
         tab.loaded = true;
@@ -743,7 +755,6 @@ pub const TabView = struct {
         }
 
         if (self.tabs.items.len > 0) {
-            _ = try self.ensureTabLoaded(self.active_tab);
             if (self.tabs.items[self.active_tab].content) |content| {
                 try content.draw(renderer);
             }
@@ -858,7 +869,14 @@ pub const TabView = struct {
     fn onTabClosed(index: usize, ctx: ?*anyopaque) void {
         const self = @as(*TabView, @ptrCast(@alignCast(ctx orelse return)));
         if (self.isTabClosable(index)) {
-            self.removeTab(index);
+            self.removeTab(index) catch |err| {
+                const builtin = @import("builtin");
+                if (!builtin.is_test) {
+                    std.log.err("zit.widget: tab close failed: {s}", .{@errorName(err)});
+                }
+                self.tab_bar.setActive(self.active_tab);
+                self.widget.markDirty();
+            };
         }
     }
 
@@ -999,7 +1017,7 @@ test "tab view rolls back header and loaded content on late layout failure" {
     try std.testing.expectEqual(@as(usize, 0), tab_view.layout_snapshots.items.len);
 }
 
-test "tab view lazy loads content on first activation" {
+test "tab view loads first lazy tab during insertion" {
     const alloc = std.testing.allocator;
     var tab_view = try TabView.init(alloc);
     defer tab_view.deinit();
@@ -1015,8 +1033,6 @@ test "tab view lazy loads content on first activation" {
 
     Lazy.loaded = false;
     try tab_view.addLazyTab("lazy", Lazy.build, false);
-    try std.testing.expect(!Lazy.loaded);
-    try tab_view.setActiveTab(0);
     try std.testing.expect(Lazy.loaded);
     try std.testing.expect(try tab_view.getActiveContent() != null);
     const content = (try tab_view.getActiveContent()).?;
@@ -1025,7 +1041,7 @@ test "tab view lazy loads content on first activation" {
     tab_view.tabs.items[0].content = null;
 }
 
-test "tab view lazy loader failure propagates" {
+test "tab view first lazy loader failure rolls back insertion" {
     const alloc = std.testing.allocator;
     var tab_view = try TabView.init(alloc);
     defer tab_view.deinit();
@@ -1036,13 +1052,12 @@ test "tab view lazy loader failure propagates" {
         }
     };
 
-    try tab_view.addLazyTab("lazy", Lazy.build, false);
-    try std.testing.expectError(error.LoaderFailed, tab_view.setActiveTab(0));
-    try std.testing.expect(!tab_view.tabs.items[0].loaded);
-    try std.testing.expect(tab_view.tabs.items[0].content == null);
+    try std.testing.expectError(error.LoaderFailed, tab_view.addLazyTab("lazy", Lazy.build, false));
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tabs.items.len);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tab_bar.tabs.len);
 }
 
-test "tab view lazy content layout failure preserves unloaded state" {
+test "tab view first lazy content participates in later layout" {
     const alloc = std.testing.allocator;
     var tab_view = try TabView.init(alloc);
     defer tab_view.deinit();
@@ -1055,12 +1070,12 @@ test "tab view lazy content layout failure preserves unloaded state" {
         }
     };
 
+    Lazy.failing = FailingLayoutWidget.init();
     try tab_view.addLazyTab("lazy", Lazy.build, false);
-    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
-    try std.testing.expectError(error.LayoutFailed, tab_view.setActiveTab(0));
-    try std.testing.expect(!tab_view.tabs.items[0].loaded);
-    try std.testing.expect(tab_view.tabs.items[0].content == null);
-    try std.testing.expect(Lazy.failing.widget.parent == null);
+    try std.testing.expectError(error.LayoutFailed, tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6)));
+    try std.testing.expect(tab_view.tabs.items[0].loaded);
+    try std.testing.expectEqual(&Lazy.failing.widget, tab_view.tabs.items[0].content.?);
+    try std.testing.expectEqual(&tab_view.widget, Lazy.failing.widget.parent.?);
 }
 
 test "tab view activation failure preserves previous tab state" {
@@ -1101,6 +1116,72 @@ test "tab view activation failure preserves previous tab state" {
     try std.testing.expect(tab_view.tabs.items[1].content == null);
     try std.testing.expect(Lazy.failing.widget.parent == null);
     try std.testing.expectEqual(@as(usize, 0), Selection.calls);
+}
+
+test "tab view active removal failure preserves tab state" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var eager = SuccessfulLayoutWidget{};
+    const Lazy = struct {
+        var failing = FailingLayoutWidget.init();
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            return &failing.widget;
+        }
+    };
+
+    Lazy.failing = FailingLayoutWidget.init();
+    try tab_view.addTab("ready", &eager.widget);
+    try tab_view.addLazyTab("broken", Lazy.build, false);
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+
+    try std.testing.expectError(error.LayoutFailed, tab_view.removeTab(0));
+    try std.testing.expectEqual(@as(usize, 2), tab_view.tabs.items.len);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.active_tab);
+    try std.testing.expectEqual(@as(usize, 0), tab_view.tab_bar.active_tab);
+    try std.testing.expectEqualStrings("ready", tab_view.tabs.items[0].title);
+    try std.testing.expectEqual(&tab_view.widget, eager.widget.parent.?);
+    try std.testing.expect(eager.widget.visible);
+    try std.testing.expect(!tab_view.tabs.items[1].loaded);
+    try std.testing.expect(tab_view.tabs.items[1].content == null);
+    try std.testing.expect(Lazy.failing.widget.parent == null);
+}
+
+test "tab view draw consumes prepared lazy content" {
+    const alloc = std.testing.allocator;
+    var tab_view = try TabView.init(alloc);
+    defer tab_view.deinit();
+
+    var eager = SuccessfulLayoutWidget{};
+    const Lazy = struct {
+        var content = SuccessfulLayoutWidget{};
+        var calls: usize = 0;
+
+        fn build(_: std.mem.Allocator) anyerror!*base.Widget {
+            calls += 1;
+            return &content.widget;
+        }
+    };
+
+    Lazy.content = SuccessfulLayoutWidget{};
+    Lazy.calls = 0;
+    try tab_view.addTab("ready", &eager.widget);
+    try tab_view.addLazyTab("lazy", Lazy.build, false);
+    try tab_view.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+    try tab_view.removeTab(0);
+    try std.testing.expectEqual(@as(usize, 1), Lazy.calls);
+
+    var renderer = try render.Renderer.init(alloc, 20, 6);
+    defer renderer.deinit();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = tab_view.allocator;
+    tab_view.allocator = failing.allocator();
+    defer tab_view.allocator = original_allocator;
+
+    try tab_view.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 1), Lazy.calls);
 }
 
 test "tab view tab bar activation failure restores selected header" {
@@ -1211,13 +1292,12 @@ test "tab view rejects lazy content attached to another parent" {
 
     Lazy.content = FailingLayoutWidget.init();
     try owner.addTab("owner", &Lazy.content.widget);
-    try target.addLazyTab("lazy", Lazy.build, false);
-    try std.testing.expectError(error.WidgetAlreadyAttached, target.setActiveTab(0));
+    try std.testing.expectError(error.WidgetAlreadyAttached, target.addLazyTab("lazy", Lazy.build, false));
 
     try std.testing.expectEqual(@as(usize, 1), owner.tabs.items.len);
     try std.testing.expectEqual(&owner.widget, Lazy.content.widget.parent.?);
-    try std.testing.expect(!target.tabs.items[0].loaded);
-    try std.testing.expect(target.tabs.items[0].content == null);
+    try std.testing.expectEqual(@as(usize, 0), target.tabs.items.len);
+    try std.testing.expectEqual(@as(usize, 0), target.tab_bar.tabs.len);
 }
 
 test "tab view reorders tabs and keeps active index in sync" {
@@ -1306,7 +1386,7 @@ test "tab view clears parent when removing tabs" {
 
     try tab_view.addTab("one", &a.widget);
     try tab_view.addTab("two", &b.widget);
-    tab_view.removeTab(0);
+    try tab_view.removeTab(0);
 
     try std.testing.expect(a.widget.parent == null);
     try std.testing.expectEqual(&tab_view.widget, b.widget.parent.?);
@@ -1439,7 +1519,7 @@ test "tab view remove before active preserves active tab" {
     Selection.calls = 0;
     tab_view.setOnTabSelect(Selection.cb);
 
-    tab_view.removeTab(0);
+    try tab_view.removeTab(0);
     try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
     try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
     try std.testing.expectEqualStrings("three", tab_view.tabs.items[tab_view.active_tab].title);
@@ -1477,7 +1557,7 @@ test "tab view remove active tab notifies when replacement selected" {
     Selection.last = std.math.maxInt(usize);
     tab_view.setOnTabSelect(Selection.cb);
 
-    tab_view.removeTab(1);
+    try tab_view.removeTab(1);
     try std.testing.expectEqual(@as(usize, 1), tab_view.active_tab);
     try std.testing.expectEqual(@as(usize, 1), tab_view.tab_bar.active_tab);
     try std.testing.expectEqualStrings("three", tab_view.tabs.items[tab_view.active_tab].title);
@@ -1748,12 +1828,12 @@ test "tab view visible mutations mark dirty" {
     tab_view.moveTab(0, 0);
     try std.testing.expect(!tab_view.widget.dirty);
 
-    tab_view.removeTab(0);
+    try tab_view.removeTab(0);
     try std.testing.expect(tab_view.widget.dirty);
 
     try tab_view.widget.draw(&renderer);
     try std.testing.expect(!tab_view.widget.dirty);
 
-    tab_view.removeTab(9);
+    try tab_view.removeTab(9);
     try std.testing.expect(!tab_view.widget.dirty);
 }

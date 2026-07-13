@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = (ROOT / "src" / "widget", ROOT / "examples")
 DRAW_ASSIGNMENT = re.compile(r"\.draw\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
 LAYOUT_CALL = re.compile(r"\.\s*layout\s*\(")
+SELF_CALL = re.compile(r"\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 TEST_DECLARATION = re.compile(r"(?m)^test\b")
 
 
@@ -105,15 +106,29 @@ def violations_in(source: str) -> list[tuple[int, str]]:
         if not in_ranges(match.start(), tests)
     }
     violations: list[tuple[int, str]] = []
-    for callback in sorted(callbacks):
-        declaration = re.compile(rf"\bfn\s+{re.escape(callback)}\s*\(")
+
+    def find_layout_call(function: str, seen: set[str]) -> int | None:
+        if function in seen:
+            return None
+        seen.add(function)
+        declaration = re.compile(rf"\bfn\s+{re.escape(function)}\s*\(")
         for match in declaration.finditer(masked):
             if in_ranges(match.start(), tests):
                 continue
             start, end = body_range(masked, match.end())
             call = LAYOUT_CALL.search(masked, start, end)
             if call is not None:
-                violations.append((call.start(), callback))
+                return call.start()
+            for helper_call in SELF_CALL.finditer(masked, start, end):
+                indirect = find_layout_call(helper_call.group(1), seen)
+                if indirect is not None:
+                    return indirect
+        return None
+
+    for callback in sorted(callbacks):
+        call = find_layout_call(callback, set())
+        if call is not None:
+            violations.append((call, callback))
     return violations
 
 
@@ -131,6 +146,11 @@ const vtable = VTable{ .draw = renderFrame, };
 fn renderFrame(_: *anyopaque) !void { child.draw(); }
 fn layoutFrame() !void { try child.layout(rect); }
 """
+    indirect_violation = """
+const vtable = VTable{ .draw = renderFrame, };
+fn renderFrame(_: *anyopaque) !void { try self.prepareFrame(); }
+fn prepareFrame(self: *Widget) !void { try self.child.layout(rect); }
+"""
     test_only = """
 test "fixture" {
     const vtable = VTable{ .draw = drawFn, };
@@ -143,6 +163,8 @@ fn drawFn(_: *anyopaque) !void { const message = ".layout("; _ = message; }
 """
     if not violations_in(violation):
         raise AssertionError("draw-time layout was not detected")
+    if not violations_in(indirect_violation):
+        raise AssertionError("indirect draw-time layout was not detected")
     for source in (clean, test_only, literal_only):
         if violations_in(source):
             raise AssertionError("clean or test-only layout was rejected")
