@@ -32,6 +32,7 @@ Before a feature is promoted as stable, it needs:
 - Tests for lifecycle, bounds, zero-size layout, resize behavior, and error paths.
 - Snapshot coverage when rendering output is user-visible.
 - Benchmarks must enforce conservative budgets for render throughput, large-table scrolling, input decoding, and memory-retention optimizations.
+- `ScreenManager` transition rendering must preserve stack order without allocating per frame.
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.

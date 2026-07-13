@@ -384,24 +384,29 @@ pub const ScreenManager = struct {
         if (!self.widget.visible or self.screens.items.len == 0) return;
 
         const rect = self.widget.rect;
-        const active_trans = self.active_transition;
-
-        var draw_indices = std.ArrayList(usize).empty;
-        defer draw_indices.deinit(self.allocator);
-
-        if (active_trans) |t| {
-            if (t.exiting) |idx| try draw_indices.append(self.allocator, idx);
-            if (t.entering) |idx| try draw_indices.append(self.allocator, idx);
+        if (self.active_transition) |transition| {
+            if (transition.exiting) |exiting| {
+                if (transition.entering) |entering| {
+                    if (exiting <= entering) {
+                        self.renderScreen(renderer, rect, exiting);
+                        self.renderScreen(renderer, rect, entering);
+                    } else {
+                        self.renderScreen(renderer, rect, entering);
+                        self.renderScreen(renderer, rect, exiting);
+                    }
+                } else {
+                    self.renderScreen(renderer, rect, exiting);
+                }
+            } else if (transition.entering) |entering| {
+                self.renderScreen(renderer, rect, entering);
+            }
         } else {
-            try draw_indices.append(self.allocator, self.screens.items.len - 1);
+            self.renderScreen(renderer, rect, self.screens.items.len - 1);
         }
+    }
 
-        std.mem.sort(usize, draw_indices.items, {}, comptime std.sort.asc(usize));
-
-        for (draw_indices.items) |idx| {
-            const entry = &self.screens.items[idx];
-            entry.screen.widget.asLayoutElement().render(renderer, rect);
-        }
+    fn renderScreen(self: *ScreenManager, renderer: *render.Renderer, rect: layout_module.Rect, index: usize) void {
+        self.screens.items[index].screen.widget.asLayoutElement().render(renderer, rect);
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
@@ -516,6 +521,9 @@ const FailingLayoutWidget = struct {
 
 const SuccessfulLayoutWidget = struct {
     widget: base.Widget = base.Widget.init(&vtable),
+    draw_count: usize = 0,
+    draw_tag: u8 = 0,
+    draw_order: ?*DrawOrder = null,
 
     const vtable = base.Widget.VTable{
         .draw = drawFn,
@@ -525,7 +533,12 @@ const SuccessfulLayoutWidget = struct {
         .can_focus = canFocusFn,
     };
 
-    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+    fn drawFn(widget_ptr: *anyopaque, _: *render.Renderer) anyerror!void {
+        const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+        const self: *SuccessfulLayoutWidget = @fieldParentPtr("widget", widget_ref);
+        self.draw_count += 1;
+        if (self.draw_order) |order| order.append(self.draw_tag);
+    }
 
     fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
         return false;
@@ -539,6 +552,17 @@ const SuccessfulLayoutWidget = struct {
 
     fn canFocusFn(_: *anyopaque) bool {
         return false;
+    }
+};
+
+const DrawOrder = struct {
+    items: [2]u8 = undefined,
+    len: usize = 0,
+
+    fn append(self: *DrawOrder, tag: u8) void {
+        std.debug.assert(self.len < self.items.len);
+        self.items[self.len] = tag;
+        self.len += 1;
     }
 };
 
@@ -627,6 +651,34 @@ test "screen manager replace updates active screen" {
 
     const active_after = manager.active().?;
     try std.testing.expectEqual(&block_b.widget, active_after.widget);
+}
+
+test "screen manager draws transition layers without allocating" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    defer manager.deinit();
+
+    var order = DrawOrder{};
+    var first = SuccessfulLayoutWidget{ .draw_tag = 1, .draw_order = &order };
+    var second = SuccessfulLayoutWidget{ .draw_tag = 2, .draw_order = &order };
+    try manager.push(.{ .widget = &first.widget, .label = "first" });
+    try manager.tick(1000);
+    try manager.push(.{ .widget = &second.widget, .label = "second" });
+    try std.testing.expect(manager.active_transition != null);
+
+    var renderer = try render.Renderer.init(alloc, 20, 6);
+    defer renderer.deinit();
+    manager.widget.rect = layout_module.Rect.init(0, 0, 20, 6);
+
+    var failing_allocator = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = manager.allocator;
+    manager.allocator = failing_allocator.allocator();
+    defer manager.allocator = original_allocator;
+
+    try manager.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 1), first.draw_count);
+    try std.testing.expectEqual(@as(usize, 1), second.draw_count);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, order.items[0..order.len]);
 }
 
 test "screen manager settles rapid navigation without orphaned transitions" {

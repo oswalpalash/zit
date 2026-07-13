@@ -51,6 +51,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - `ScreenManager` now settles active transitions before rapid follow-up navigation instead of overwriting transition state, while allocation and layout preflight runs first so failures preserve the in-flight animation unchanged.
 - Rejected `ScreenManager` candidates now recover public rect, dirty-region, visibility, transition state, and previously published accessibility bounds; independently animating candidates are rejected before attachment to avoid orphaning external animator handles.
 - `ScreenManager.layout` now restores every registered screen and its cached `last_rect` when a later screen rejects layout, using capacity reserved during navigation so steady-state layout remains allocation-free.
+- `ScreenManager.draw` now orders its at-most-two transition layers without a temporary list or sort, eliminating a heap allocation from every transition frame.
 - `Widget.layout` now restores public geometry and dirty-region bookkeeping when a vtable layout fails and suppresses accessibility-bound updates for the rejected geometry.
 - Interactive PTY and visual repeat build preflights now honor `$ZIG`, keeping `release-check` usable when the selected compiler is not on `PATH`; contribution-gate checks enforce the contract.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
