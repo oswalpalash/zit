@@ -11,6 +11,8 @@ This document explains how Zit fits together internally: the main modules, how d
 - **widget** – Base `Widget` + vtable, theme helpers, builder APIs, and the built-in widget set.
 - **memory** – `MemoryManager` composed of an arena for per-frame/temp allocations and a pool allocator sized for widgets.
 
+`Terminal` is the sole owner of process-terminal mode state. Its ANSI writes target the instance's `stdout_fd`, and mode flags represent cleanup obligations rather than optimistic success: if setup writes fail after changing some bytes, `deinit` still attempts the matching restoration. `InputHandler.enableMouse` / `disableMouse` are convenience delegates to that terminal-owned state.
+
 ## Data Flow (Text Diagrams)
 - **Input → Event → Widget → Render → Terminal**
   - Terminal bytes are read by `input.InputHandler`.

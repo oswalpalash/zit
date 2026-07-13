@@ -348,10 +348,6 @@ pub const Terminal = struct {
     pub fn deinit(self: *Terminal) !void {
         var first_error: ?anyerror = null;
 
-        if (self.is_raw_mode) {
-            self.disableRawMode() catch |err| rememberFirstError(&first_error, err);
-        }
-
         if (self.is_kitty_keyboard_enabled) {
             self.disableKittyKeyboardProtocol() catch |err| {
                 self.recordOptionalFeatureFailure(.kitty_keyboard_disable, err);
@@ -371,18 +367,21 @@ pub const Terminal = struct {
             self.endSynchronizedOutput() catch |err| rememberFirstError(&first_error, err);
         }
 
-        if (self.is_alt_screen) {
-            self.exitAlternateScreen() catch |err| rememberFirstError(&first_error, err);
-        }
-
         if (self.is_bracketed_paste) {
             self.disableBracketedPaste() catch |err| rememberFirstError(&first_error, err);
         }
 
-        self.releaseSigwinchReference();
+        if (self.is_alt_screen) {
+            self.exitAlternateScreen() catch |err| rememberFirstError(&first_error, err);
+        }
 
-        // Reset all formatting before exit
-        self.resetFormatting() catch |err| rememberFirstError(&first_error, err);
+        if (self.is_raw_mode) {
+            self.disableRawMode() catch |err| rememberFirstError(&first_error, err);
+        } else {
+            self.resetFormatting() catch |err| rememberFirstError(&first_error, err);
+        }
+
+        self.releaseSigwinchReference();
 
         if (first_error) |err| return err;
     }
@@ -642,19 +641,23 @@ pub const Terminal = struct {
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
 
         // Enable normal tracking, motion tracking, and SGR encoding
-        try compat.stdoutWriteAll("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         self.is_mouse_enabled = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+    }
+
+    /// Report whether this instance owns a mouse-tracking cleanup obligation.
+    pub fn isMouseEnabled(self: *const Terminal) bool {
+        return self.is_mouse_enabled;
     }
 
     /// Disable mouse event reporting
     pub fn disableMouseEvents(self: *Terminal) !void {
         if (!self.is_mouse_enabled) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
-            self.is_mouse_enabled = false;
-            return;
+            return error.VirtualTerminalUnavailable;
         }
 
-        try compat.stdoutWriteAll("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1006l\x1b[?1002l\x1b[?1000l");
         self.is_mouse_enabled = false;
     }
 
@@ -663,19 +666,18 @@ pub const Terminal = struct {
         if (self.is_sync_output or !self.capabilities.synchronized_output) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
 
-        try compat.stdoutWriteAll("\x1b[?2026h");
         self.is_sync_output = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?2026h");
     }
 
     /// Disable synchronized output mode (DEC 2026).
     pub fn endSynchronizedOutput(self: *Terminal) !void {
         if (!self.is_sync_output) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
-            self.is_sync_output = false;
-            return;
+            return error.VirtualTerminalUnavailable;
         }
 
-        try compat.stdoutWriteAll("\x1b[?2026l");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?2026l");
         self.is_sync_output = false;
     }
 
@@ -683,18 +685,17 @@ pub const Terminal = struct {
     pub fn enableBracketedPaste(self: *Terminal) !void {
         if (self.is_bracketed_paste or !self.capabilities.bracketed_paste) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        try compat.stdoutWriteAll("\x1b[?2004h");
         self.is_bracketed_paste = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?2004h");
     }
 
     /// Disable bracketed paste mode.
     pub fn disableBracketedPaste(self: *Terminal) !void {
         if (!self.is_bracketed_paste) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
-            self.is_bracketed_paste = false;
-            return;
+            return error.VirtualTerminalUnavailable;
         }
-        try compat.stdoutWriteAll("\x1b[?2004l");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?2004l");
         self.is_bracketed_paste = false;
     }
 
@@ -702,18 +703,17 @@ pub const Terminal = struct {
     pub fn enterAlternateScreen(self: *Terminal) !void {
         if (self.is_alt_screen) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        try compat.stdoutWriteAll("\x1b[?1049h");
         self.is_alt_screen = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1049h");
     }
 
     /// Return to the primary screen buffer (DECRST 1049).
     pub fn exitAlternateScreen(self: *Terminal) !void {
         if (!self.is_alt_screen) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
-            self.is_alt_screen = false;
-            return;
+            return error.VirtualTerminalUnavailable;
         }
-        try compat.stdoutWriteAll("\x1b[?1049l");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1049l");
         self.is_alt_screen = false;
     }
 
@@ -721,12 +721,13 @@ pub const Terminal = struct {
     pub fn hideCursor(self: *Terminal) !void {
         if (!self.is_cursor_visible) return;
 
+        self.is_cursor_visible = false;
+
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
             windowsSetCursorVisibility(self.stdout_fd, false);
         } else {
-            try compat.stdoutWriteAll("\x1b[?25l");
+            try compat.fileWriteAll(self.stdout_fd, "\x1b[?25l");
         }
-        self.is_cursor_visible = false;
     }
 
     /// Show the cursor
@@ -736,7 +737,7 @@ pub const Terminal = struct {
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
             windowsSetCursorVisibility(self.stdout_fd, true);
         } else {
-            try compat.stdoutWriteAll("\x1b[?25h");
+            try compat.fileWriteAll(self.stdout_fd, "\x1b[?25h");
         }
         self.is_cursor_visible = true;
     }
@@ -747,8 +748,8 @@ pub const Terminal = struct {
             windowsClearConsole(self.stdout_fd);
             return;
         }
-        try compat.stdoutWriteAll("\x1b[2J"); // Clear entire screen
-        try compat.stdoutWriteAll("\x1b[H"); // Move cursor to top-left corner
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[2J"); // Clear entire screen
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[H"); // Move cursor to top-left corner
     }
 
     /// Move cursor to specified position
@@ -759,7 +760,7 @@ pub const Terminal = struct {
         }
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 });
-        try compat.stdoutWriteAll(seq);
+        try compat.fileWriteAll(self.stdout_fd, seq);
     }
 
     /// Set text color
@@ -770,7 +771,7 @@ pub const Terminal = struct {
         }
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{color});
-        try compat.stdoutWriteAll(seq);
+        try compat.fileWriteAll(self.stdout_fd, seq);
     }
 
     /// Set background color
@@ -781,7 +782,7 @@ pub const Terminal = struct {
         }
         var buf: [32]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{color});
-        try compat.stdoutWriteAll(seq);
+        try compat.fileWriteAll(self.stdout_fd, seq);
     }
 
     /// Reset text formatting
@@ -790,7 +791,7 @@ pub const Terminal = struct {
             windowsResetFormatting(self.stdout_fd);
             return;
         }
-        try compat.stdoutWriteAll("\x1b[0m");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[0m");
     }
 
     /// Set text style (bold, italic, underline)
@@ -800,15 +801,15 @@ pub const Terminal = struct {
             return;
         }
         if (bold) {
-            try compat.stdoutWriteAll("\x1b[1m");
+            try compat.fileWriteAll(self.stdout_fd, "\x1b[1m");
         }
 
         if (italic and self.capabilities.italic) {
-            try compat.stdoutWriteAll("\x1b[3m");
+            try compat.fileWriteAll(self.stdout_fd, "\x1b[3m");
         }
 
         if (underline and self.capabilities.underline) {
-            try compat.stdoutWriteAll("\x1b[4m");
+            try compat.fileWriteAll(self.stdout_fd, "\x1b[4m");
         }
     }
 
@@ -832,29 +833,28 @@ pub const Terminal = struct {
 
         var buf: [48]u8 = undefined;
         const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};2;{d};{d};{d}m", .{ code, r, g, b });
-        try compat.stdoutWriteAll(seq);
+        try compat.fileWriteAll(self.stdout_fd, seq);
     }
 
     /// Enable Kitty keyboard protocol for enhanced key event handling
     pub fn enableKittyKeyboardProtocol(self: *Terminal) !void {
         if (!self.capabilities.kitty_keyboard or self.is_kitty_keyboard_enabled) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
-        try compat.stdoutWriteAll("\x1b[>1u");
         self.is_kitty_keyboard_enabled = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[>1u");
     }
 
     /// Disable Kitty keyboard protocol
     pub fn disableKittyKeyboardProtocol(self: *Terminal) !void {
         if (!self.is_kitty_keyboard_enabled) return;
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) return error.VirtualTerminalUnavailable;
-        try compat.stdoutWriteAll("\x1b[<u");
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[<u");
         self.is_kitty_keyboard_enabled = false;
     }
 
     /// Handle Unicode output
     pub fn writeUtf8(self: *Terminal, str: []const u8) !void {
-        _ = self; // Unused parameter
-        try compat.stdoutWriteAll(str);
+        try compat.fileWriteAll(self.stdout_fd, str);
     }
 
     /// Refresh cached size and report whether terminal geometry changed.
@@ -1034,6 +1034,63 @@ test "terminal optional feature failures are observable and resettable" {
     term.resetOptionalFeatureFailures();
     try std.testing.expectEqual(@as(usize, 0), term.optionalFeatureFailureCount());
     try std.testing.expect(term.lastOptionalFeatureFailure() == null);
+}
+
+test "failed mouse setup retains cleanup obligation on terminal output handle" {
+    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
+        return error.SkipZigTest;
+    }
+
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
+    defer _ = std.c.close(fds[0]);
+    var write_open = true;
+    defer {
+        if (write_open) _ = std.c.close(fds[1]);
+    }
+
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = -1,
+        .original_termios = .none,
+        .original_stdin_flags = null,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = .{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .sigwinch_registered = false,
+    };
+
+    var setup_failed = false;
+    term.enableMouseEvents() catch {
+        setup_failed = true;
+    };
+    try std.testing.expect(setup_failed);
+    try std.testing.expect(term.is_mouse_enabled);
+
+    term.stdout_fd = fds[1];
+    try term.enableMouseEvents();
+    try term.disableMouseEvents();
+    try std.testing.expect(!term.is_mouse_enabled);
+
+    _ = std.c.close(fds[1]);
+    write_open = false;
+
+    var output: [64]u8 = undefined;
+    var output_len: usize = 0;
+    while (true) {
+        const read_len = try std.posix.read(fds[0], output[output_len..]);
+        if (read_len == 0) break;
+        output_len += read_len;
+    }
+    try std.testing.expectEqualStrings("\x1b[?1006l\x1b[?1002l\x1b[?1000l", output[0..output_len]);
 }
 
 fn ensureWindowsUnicodeSupport() void {

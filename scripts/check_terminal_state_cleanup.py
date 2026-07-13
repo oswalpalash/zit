@@ -28,6 +28,15 @@ PUBLIC_SNIPPET_PATHS = (
     Path("src/terminal/terminal.zig"),
 )
 
+MODE_SETUP_CONTRACTS = (
+    ("enableMouseEvents", "self.is_mouse_enabled = true", "compat.fileWriteAll"),
+    ("beginSynchronizedOutput", "self.is_sync_output = true", "compat.fileWriteAll"),
+    ("enableBracketedPaste", "self.is_bracketed_paste = true", "compat.fileWriteAll"),
+    ("enterAlternateScreen", "self.is_alt_screen = true", "compat.fileWriteAll"),
+    ("hideCursor", "self.is_cursor_visible = false", "compat.fileWriteAll"),
+    ("enableKittyKeyboardProtocol", "self.is_kitty_keyboard_enabled = true", "compat.fileWriteAll"),
+)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -55,6 +64,74 @@ def validate_no_silent_cleanup(root: Path) -> list[str]:
         for pattern in SILENT_CLEANUP_PATTERNS:
             for match in pattern.finditer(text):
                 failures.append(f"{rel}:{line_number(text, match.start())}: terminal cleanup errors must be reported, not swallowed with `catch {{}}`")
+    return failures
+
+
+def function_body(text: str, name: str) -> str | None:
+    signature = f"pub fn {name}("
+    start = text.find(signature)
+    if start < 0:
+        return None
+    brace = text.find("{", start)
+    if brace < 0:
+        return None
+
+    depth = 0
+    for index in range(brace, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace + 1:index]
+    return None
+
+
+def validate_terminal_driver_ownership(root: Path) -> list[str]:
+    failures: list[str] = []
+    terminal_text = (root / "src/terminal/terminal.zig").read_text(encoding="utf-8")
+    input_text = (root / "src/input/input.zig").read_text(encoding="utf-8")
+
+    if "compat.stdoutWriteAll" in terminal_text:
+        failures.append("src/terminal/terminal.zig: terminal output must use the instance stdout_fd")
+
+    for name, state_marker, write_marker in MODE_SETUP_CONTRACTS:
+        body = function_body(terminal_text, name)
+        if body is None:
+            failures.append(f"src/terminal/terminal.zig: missing mode setup function {name}")
+            continue
+        state_index = body.find(state_marker)
+        write_index = body.find(write_marker)
+        if state_index < 0 or write_index < 0 or state_index > write_index:
+            failures.append(
+                f"src/terminal/terminal.zig: {name} must record its cleanup obligation before the fallible terminal write"
+            )
+
+    deinit_body = function_body(terminal_text, "deinit")
+    if deinit_body is None:
+        failures.append("src/terminal/terminal.zig: missing Terminal.deinit")
+    else:
+        raw_index = deinit_body.find("self.disableRawMode()")
+        for cleanup in ("showCursor", "disableMouseEvents", "endSynchronizedOutput", "disableBracketedPaste", "exitAlternateScreen"):
+            cleanup_index = deinit_body.find(f"self.{cleanup}()")
+            if raw_index < 0 or cleanup_index < 0 or cleanup_index > raw_index:
+                failures.append(
+                    f"src/terminal/terminal.zig: deinit must run {cleanup} before disableRawMode so Windows VT output remains available"
+                )
+
+    if "mouse_enabled:" in input_text:
+        failures.append("src/input/input.zig: InputHandler must not duplicate terminal mouse protocol state")
+    enable_body = function_body(input_text, "enableMouse")
+    disable_body = function_body(input_text, "disableMouse")
+    if enable_body is not None and "?1000h" in enable_body:
+        failures.append("src/input/input.zig: InputHandler.enableMouse must not duplicate terminal mouse escape sequences")
+    if disable_body is not None and "?1000l" in disable_body:
+        failures.append("src/input/input.zig: InputHandler.disableMouse must not duplicate terminal mouse escape sequences")
+    if enable_body is None or "self.term.enableMouseEvents()" not in enable_body:
+        failures.append("src/input/input.zig: InputHandler.enableMouse must delegate to Terminal.enableMouseEvents")
+    if disable_body is None or "self.term.disableMouseEvents()" not in disable_body:
+        failures.append("src/input/input.zig: InputHandler.disableMouse must delegate to Terminal.disableMouseEvents")
+
     return failures
 
 
@@ -91,6 +168,7 @@ def main() -> int:
                     failures.append(f"{rel}: restores {cleanup} without deferring it after {setup}")
 
     failures.extend(validate_no_silent_cleanup(root))
+    failures.extend(validate_terminal_driver_ownership(root))
 
     if failures:
         sys.stderr.write("interactive examples must restore terminal state they enable and report cleanup failures:\n")
@@ -98,7 +176,10 @@ def main() -> int:
             sys.stderr.write(f"  - {failure}\n")
         return 1
 
-    print(f"checked {checked} interactive example(s) for terminal-state cleanup symmetry and silent cleanup catches")
+    print(
+        f"checked {checked} interactive example(s) for terminal-state cleanup symmetry, "
+        "driver ownership, and silent cleanup catches"
+    )
     return 0
 
 

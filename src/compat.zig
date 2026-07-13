@@ -30,6 +30,16 @@ pub fn stdoutWriteAll(bytes: []const u8) !void {
     try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
+/// Write all bytes to an explicit file handle without taking ownership of it.
+pub fn fileWriteAll(handle: std.Io.File.Handle, bytes: []const u8) !void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const file = std.Io.File{
+        .handle = handle,
+        .flags = .{ .nonblocking = false },
+    };
+    try file.writeStreamingAll(io, bytes);
+}
+
 pub fn getEnv(allocator: std.mem.Allocator, key: []const u8) !?[]u8 {
     if (builtin.os.tag == .windows) {
         return std.process.Environ.getAlloc(.{ .block = .global }, allocator, key) catch |err| switch (err) {

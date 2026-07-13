@@ -1286,8 +1286,6 @@ pub const InputHandler = struct {
     buffer: [32]u8,
     /// Buffer position
     buffer_pos: usize,
-    /// Whether mouse events are enabled
-    mouse_enabled: bool,
     /// Terminal instance
     term: *terminal.Terminal,
     /// Focus manager for UI elements
@@ -1311,7 +1309,6 @@ pub const InputHandler = struct {
             .allocator = allocator,
             .buffer = [_]u8{0} ** 32,
             .buffer_pos = 0,
-            .mouse_enabled = false,
             .term = term,
             .focus_manager = null,
             .chord_mode = false,
@@ -1333,22 +1330,17 @@ pub const InputHandler = struct {
 
     /// Enable mouse tracking
     pub fn enableMouse(self: *InputHandler) !void {
-        if (self.mouse_enabled) return;
+        try self.term.enableMouseEvents();
+    }
 
-        try compat.stdoutWriteAll("\x1b[?1000h"); // Enable mouse clicks
-        try compat.stdoutWriteAll("\x1b[?1002h"); // Enable mouse movement
-        try compat.stdoutWriteAll("\x1b[?1006h"); // Enable SGR extended mode
-        self.mouse_enabled = true;
+    /// Report the terminal-owned mouse-tracking state.
+    pub fn isMouseEnabled(self: *const InputHandler) bool {
+        return self.term.isMouseEnabled();
     }
 
     /// Disable mouse tracking
     pub fn disableMouse(self: *InputHandler) !void {
-        if (!self.mouse_enabled) return;
-
-        try compat.stdoutWriteAll("\x1b[?1006l"); // Disable SGR extended mode
-        try compat.stdoutWriteAll("\x1b[?1002l"); // Disable mouse movement
-        try compat.stdoutWriteAll("\x1b[?1000l"); // Disable mouse clicks
-        self.mouse_enabled = false;
+        try self.term.disableMouseEvents();
     }
 
     /// Read an event from input
@@ -2366,4 +2358,63 @@ test "resize polling throttle handles first poll interval and clock movement" {
     try std.testing.expect(!shouldPollResize(1000, 1100, 125));
     try std.testing.expect(shouldPollResize(1000, 1125, 125));
     try std.testing.expect(shouldPollResize(1000, 900, 125));
+}
+
+test "input mouse mode is restored by terminal deinit before raw cleanup" {
+    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
+        return error.SkipZigTest;
+    }
+
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
+    defer _ = std.c.close(fds[0]);
+    var write_open = true;
+    defer {
+        if (write_open) _ = std.c.close(fds[1]);
+    }
+
+    var term = terminal.Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = fds[1],
+        .original_termios = .none,
+        .original_stdin_flags = null,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = .{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .sigwinch_registered = false,
+    };
+    var handler = InputHandler.init(std.testing.allocator, &term);
+
+    try handler.enableMouse();
+    try std.testing.expect(handler.isMouseEnabled());
+    term.is_raw_mode = true;
+    try term.deinit();
+    try std.testing.expect(!handler.isMouseEnabled());
+    try std.testing.expect(!term.is_mouse_enabled);
+    try std.testing.expect(!term.is_raw_mode);
+
+    _ = std.c.close(fds[1]);
+    write_open = false;
+
+    var output: [128]u8 = undefined;
+    var output_len: usize = 0;
+    while (true) {
+        const read_len = try std.posix.read(fds[0], output[output_len..]);
+        if (read_len == 0) break;
+        output_len += read_len;
+    }
+    try std.testing.expectEqualStrings(
+        "\x1b[?1000h\x1b[?1002h\x1b[?1006h" ++
+            "\x1b[?1006l\x1b[?1002l\x1b[?1000l" ++
+            "\x1b[0m",
+        output[0..output_len],
+    );
 }
