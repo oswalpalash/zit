@@ -54,10 +54,10 @@ pub fn main() !void {
     const ui = try tree.addChild(root, "UI");
     _ = try tree.addChild(ui, "Dashboard");
     _ = try tree.addChild(ui, "Public Site");
-    tree.nodes.items[root].expanded = true;
-    tree.nodes.items[api].expanded = true;
-    tree.nodes.items[data].expanded = true;
-    tree.nodes.items[ui].expanded = true;
+    _ = try tree.setExpanded(root, true);
+    _ = try tree.setExpanded(api, true);
+    _ = try tree.setExpanded(data, true);
+    _ = try tree.setExpanded(ui, true);
     try tree.setTheme(theme.Theme.dark());
 
     var gauge = try widget.Gauge.init(memory_manager.getWidgetPoolAllocator());

@@ -123,9 +123,8 @@ pub fn main(init: std.process.Init) !void {
     _ = try tree.addChild(widgets, "rendering.zig");
     _ = try tree.addChild(widgets, "layout.zig");
     _ = try tree.addChild(root, "testing");
-    tree.nodes.items[root].expanded = true;
-    tree.nodes.items[widgets].expanded = true;
-    tree.visible_dirty = true;
+    _ = try tree.setExpanded(root, true);
+    _ = try tree.setExpanded(widgets, true);
     tree.selected = 2;
     try tree.widget.layout(Rect.init(2, 26, 25, 7));
     try tree.widget.draw(&mock.renderer);

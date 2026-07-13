@@ -74,17 +74,12 @@ fn renderSnapshot(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var tree = try widget.TreeView.init(allocator);
     defer tree.deinit();
     const root = try tree.addRoot("workspace");
-    const apps = try tree.addChild(root, "apps");
-    const logs = try tree.addChild(root, "logs");
-    const scripts = try tree.addChild(root, "scripts");
-    const third_party = try tree.addChild(root, "third_party");
-    const notes = try tree.addChild(root, "notes");
-    tree.nodes.items[root].expanded = true;
-    tree.nodes.items[apps].expanded = true;
-    tree.nodes.items[logs].expanded = true;
-    tree.nodes.items[scripts].expanded = true;
-    tree.nodes.items[third_party].expanded = true;
-    tree.nodes.items[notes].expanded = true;
+    _ = try tree.addChild(root, "apps");
+    _ = try tree.addChild(root, "logs");
+    _ = try tree.addChild(root, "scripts");
+    _ = try tree.addChild(root, "third_party");
+    _ = try tree.addChild(root, "notes");
+    _ = try tree.setExpanded(root, true);
     try tree.setTheme(ui_theme);
     tree.widget.setFocus(true);
 
@@ -188,17 +183,12 @@ pub fn main(init: std.process.Init) !void {
     var tree = try widget.TreeView.init(memory_manager.getWidgetPoolAllocator());
     defer tree.deinit();
     const root = try tree.addRoot("workspace");
-    const apps = try tree.addChild(root, "apps");
-    const logs = try tree.addChild(root, "logs");
-    const scripts = try tree.addChild(root, "scripts");
-    const third_party = try tree.addChild(root, "third_party");
-    const notes = try tree.addChild(root, "notes");
-    tree.nodes.items[root].expanded = true;
-    tree.nodes.items[apps].expanded = true;
-    tree.nodes.items[logs].expanded = true;
-    tree.nodes.items[scripts].expanded = true;
-    tree.nodes.items[third_party].expanded = true;
-    tree.nodes.items[notes].expanded = true;
+    _ = try tree.addChild(root, "apps");
+    _ = try tree.addChild(root, "logs");
+    _ = try tree.addChild(root, "scripts");
+    _ = try tree.addChild(root, "third_party");
+    _ = try tree.addChild(root, "notes");
+    _ = try tree.setExpanded(root, true);
     try tree.setTheme(ui_theme);
     tree.widget.setFocus(true);
 

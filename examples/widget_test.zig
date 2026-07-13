@@ -145,9 +145,9 @@ pub fn main() !void {
     const data = try tree.addChild(services, "Data");
     _ = try tree.addChild(data, "Postgres");
     _ = try tree.addChild(data, "Redis");
-    tree.nodes.items[services].expanded = true;
-    tree.nodes.items[api].expanded = true;
-    tree.nodes.items[data].expanded = true;
+    _ = try tree.setExpanded(services, true);
+    _ = try tree.setExpanded(api, true);
+    _ = try tree.setExpanded(data, true);
     try tree.setTheme(widget_theme.Theme.dark());
 
     var sparkline = try zit.widget.Sparkline.init(allocator);

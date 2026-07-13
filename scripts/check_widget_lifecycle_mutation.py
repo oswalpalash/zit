@@ -3,9 +3,9 @@
 
 Direct writes to ``widget.focused``, ``widget.enabled``, and
 ``widget.visible`` skip dirty-region updates and optional vtable lifecycle
-hooks. Production widget code and public examples must use ``setFocus()``,
-``setEnabled()``, or ``setVisible()`` instead. Unit-test setup remains free to
-construct state directly.
+hooks. Direct ``TreeView.Node.expanded`` writes bypass visible-cache updates.
+Production widget code and public examples must use the notifying setters.
+Unit-test setup remains free to construct state directly.
 """
 
 from __future__ import annotations
@@ -18,8 +18,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = (Path("src/widget"), Path("examples"))
 SKIP_PATHS = {Path("src/widget/widgets/base_widget.zig")}
+TREE_VIEW_PATH = Path("src/widget/widgets/tree_view.zig")
 DIRECT_WIDGET_STATE = re.compile(
     r"(?:\b(?:[A-Za-z_][A-Za-z0-9_]*\.)*widget|\]\s*\.\s*\*)\.(?:focused|enabled|visible)\s*=",
+)
+DIRECT_TREE_EXPANSION = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\.nodes\.items\[[^\]\n]+\]\.expanded\s*=",
 )
 
 
@@ -84,16 +88,24 @@ def run_self_tests() -> None:
     production_pointer = "fn focus(widgets: anytype, index: usize) void { widgets[index].*.focused = true; }\n"
     test_only = 'test "setup" {\n    subject.widget.visible = false;\n}\n'
     nested_test = 'test "nested" {\n    if (true) { subject.widget.enabled = false; }\n}\n'
+    direct_tree_expansion = "fn expand(tree: anytype, index: usize) void { tree.nodes.items[index].expanded = true; }\n"
+    tree_test_only = 'test "tree setup" {\n    tree.nodes.items[0].expanded = true;\n}\n'
 
     if not DIRECT_WIDGET_STATE.search(production):
         raise AssertionError("direct production widget mutation was not detected")
     if not DIRECT_WIDGET_STATE.search(production_pointer):
         raise AssertionError("direct production Widget pointer mutation was not detected")
+    if not DIRECT_TREE_EXPANSION.search(direct_tree_expansion):
+        raise AssertionError("direct production TreeView expansion was not detected")
     for source in (test_only, nested_test):
         ranges = test_body_ranges(source)
         match = DIRECT_WIDGET_STATE.search(source)
         if match is None or not is_test_code(match.start(), ranges):
             raise AssertionError("test-only widget mutation was not excluded")
+    tree_ranges = test_body_ranges(tree_test_only)
+    tree_match = DIRECT_TREE_EXPANSION.search(tree_test_only)
+    if tree_match is None or not is_test_code(tree_match.start(), tree_ranges):
+        raise AssertionError("test-only TreeView expansion was not excluded")
 
 
 def main() -> int:
@@ -114,6 +126,14 @@ def main() -> int:
                 f"{rel}:{line_number(source, match.start())}: use Widget.setFocus(), "
                 "Widget.setEnabled(), or Widget.setVisible() so lifecycle hooks run"
             )
+        if rel != TREE_VIEW_PATH:
+            for match in DIRECT_TREE_EXPANSION.finditer(source):
+                if is_test_code(match.start(), ranges):
+                    continue
+                violations.append(
+                    f"{rel}:{line_number(source, match.start())}: use TreeView.setExpanded() "
+                    "so visible-cache and dirty-state updates run"
+                )
 
     if violations:
         sys.stderr.write("direct Widget lifecycle mutation(s) found:\n")

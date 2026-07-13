@@ -164,6 +164,8 @@ Owning widgets create parent links through `Widget.attachTo` and clear them thro
 
 `SplitPane.layout` snapshots both optional child slots before laying out either pane. If either child rejects layout, both children recover their previous public geometry, dirty regions, and published accessibility bounds without heap allocation.
 
+`TreeView.setExpanded(node_index, expanded)` is the supported expansion mutation path. It validates the node index, reserves visible-cache capacity before changing node state, updates the cache before returning, and marks the widget dirty only after a successful change.
+
 `ScreenManager` accepts rapid `push`, `pop`, and `replace` calls by settling any active transition to its final lifecycle state before starting the next one. Fallible stack, animation-capacity, label-copy, and layout preflight runs first, so a rejected navigation leaves the current transition running unchanged. Rejected candidates recover their public rect, dirty-region, visibility, visibility-transition state, and published accessibility bounds. A parentless candidate with an independently active visibility animation is rejected with `error.WidgetAnimationInProgress` so the manager cannot orphan a handle owned by another animator. Transition drawing preserves stack order without per-frame allocation.
 
 ### Typeahead Lists/Tables
