@@ -154,7 +154,7 @@ The `widget` module exposes direct factory helpers for quick construction plus a
 
 State helpers operate on any `BaseWidget` pointer through lifecycle-aware setters: `focusWidget(widget)`, `enableWidget(widget)`, `disableWidget(widget)`, `showWidget(widget)`, and `hideWidget(widget)`.
 
-Collection containers (`Container`, `FlexContainer`, and `GridContainer`) and `TabView` require explicit single-parent ownership. Their fallible attachment methods return `error.WidgetAlreadyAttached` without modifying the owner when a child still belongs to another parent; remove it from the current owner before attaching it elsewhere. `TabView` also rejects using the same widget as content for multiple tabs.
+All public child/content attachment APIs require explicit single-parent ownership. Collection containers (`Container`, `FlexContainer`, and `GridContainer`), single-content widgets (`Block`, `Modal`, and `ScrollContainer`), `SplitPane`, and `TabView` return `error.WidgetAlreadyAttached` without modifying the owner when a child still belongs to another parent; remove it from the current owner before attaching it elsewhere. `SplitPane` permits moving its own child between slots, and `TabView` rejects using the same widget as content for multiple tabs.
 
 ### Typeahead Lists/Tables
 ```zig

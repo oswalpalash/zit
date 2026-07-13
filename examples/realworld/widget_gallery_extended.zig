@@ -110,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
     defer block.deinit();
     try block.setTitle("Block + paragraph");
     block.setBorder(.rounded);
-    block.setChild(&paragraph.widget);
+    try block.setChild(&paragraph.widget);
     try block.widget.layout(Rect.init(80, 12, 34, 7));
     try block.widget.draw(&mock.renderer);
 

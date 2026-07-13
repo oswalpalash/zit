@@ -95,6 +95,11 @@ REQUIRED_BUILD_GATES = (
     "quality_step.dependOn(ci_script_coverage_step);",
 )
 
+REQUIRED_SMOKE_ZIG_CONTRACT = (
+    'zig = os.environ.get("ZIG") or "zig"',
+    '[zig, "build"]',
+)
+
 REQUIRED_CONTRIBUTING_GATES = (
     "zig fmt --check src/ examples/ build.zig",
     "zig build quality",
@@ -179,6 +184,8 @@ def main() -> int:
         (root / "CONTRIBUTING.md", REQUIRED_CONTRIBUTING_GATES),
         (root / "docs" / "STABILITY.md", REQUIRED_STABILITY_GATES),
         (root / "scripts" / "release_verify.py", REQUIRED_RELEASE_VERIFY_GATES),
+        (root / "scripts" / "interactive_example_smoke.py", REQUIRED_SMOKE_ZIG_CONTRACT),
+        (root / "scripts" / "visual_repeat_check.py", REQUIRED_SMOKE_ZIG_CONTRACT),
         (root / "build.zig", REQUIRED_BUILD_GATES),
     )
 

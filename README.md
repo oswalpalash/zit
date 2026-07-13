@@ -48,8 +48,8 @@ var split = try zit.widget.SplitPane.init(alloc);
 defer split.deinit();
 split.setOrientation(.horizontal);
 try split.setTheme(theme.Theme.dark());
-split.setFirst(&tree.widget);
-split.setSecond(&gauge.widget);
+try split.setFirst(&tree.widget);
+try split.setSecond(&gauge.widget);
 ```
 
 Navigate instantly with typeahead and fluent builders:

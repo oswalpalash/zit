@@ -151,7 +151,7 @@ pub fn main(init: std.process.Init) !void {
     try modal.setTitle("Review Gate");
     modal.width = 24;
     modal.height = 7;
-    modal.setContent(&modal_text.widget);
+    try modal.setContent(&modal_text.widget);
     try modal.widget.layout(Rect.init(72, 5, 26, 12));
     try modal.widget.draw(&mock.renderer);
 

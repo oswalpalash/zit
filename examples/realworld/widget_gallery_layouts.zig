@@ -143,7 +143,7 @@ pub fn main(init: std.process.Init) !void {
     scroll_text.setWrap(false);
     var scroll = try zit.widget.ScrollContainer.init(allocator);
     defer scroll.deinit();
-    scroll.setContent(&scroll_text.widget);
+    try scroll.setContent(&scroll_text.widget);
     scroll.setBorder(true, .rounded);
     try scroll.widget.layout(Rect.init(2, 27, 34, 7));
     try scroll.widget.draw(&mock.renderer);
@@ -158,8 +158,8 @@ pub fn main(init: std.process.Init) !void {
     defer split.deinit();
     try split.setTheme(zit.widget.theme.Theme.dark());
     split.setRatio(0.45);
-    split.setFirst(&left_pane.widget);
-    split.setSecond(&right_pane.widget);
+    try split.setFirst(&left_pane.widget);
+    try split.setSecond(&right_pane.widget);
     try split.widget.layout(Rect.init(40, 27, 35, 6));
     try split.widget.draw(&mock.renderer);
 

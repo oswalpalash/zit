@@ -127,7 +127,7 @@ pub fn main() !void {
     defer modal_content.deinit();
     modal_content.setAlignment(.center);
     modal_content.setTheme(ui_theme);
-    modal.setContent(&modal_content.widget);
+    try modal.setContent(&modal_content.widget);
 
     // Set modal button callback
     modal_button.setOnClick(showModal);
@@ -164,15 +164,15 @@ pub fn main() !void {
     var metrics_split = try zit.widget.SplitPane.init(allocator);
     defer metrics_split.deinit();
     metrics_split.setOrientation(.vertical);
-    metrics_split.setFirst(&gauge.widget);
-    metrics_split.setSecond(&sparkline.widget);
+    try metrics_split.setFirst(&gauge.widget);
+    try metrics_split.setSecond(&sparkline.widget);
     metrics_split.setRatio(0.35);
 
     var layout_split = try zit.widget.SplitPane.init(allocator);
     defer layout_split.deinit();
     layout_split.setOrientation(.horizontal);
-    layout_split.setFirst(&tree.widget);
-    layout_split.setSecond(&metrics_split.widget);
+    try layout_split.setFirst(&tree.widget);
+    try layout_split.setSecond(&metrics_split.widget);
     layout_split.setRatio(0.4);
 
     // Variables for dynamic updates

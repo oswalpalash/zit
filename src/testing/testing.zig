@@ -1033,7 +1033,7 @@ test "snapshot modal with content" {
     var label_builder = widget.LabelBuilder.init(alloc);
     var label = try label_builder.content("Proceed?").build();
     defer label.deinit();
-    modal.setContent(&label.widget);
+    try modal.setContent(&label.widget);
 
     var harness = try WidgetHarness.init(alloc, layout.Size.init(24, 8));
     defer harness.deinit();

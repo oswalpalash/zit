@@ -88,16 +88,14 @@ pub const Block = struct {
     }
 
     /// Attach a child widget. Ownership stays with the caller.
-    pub fn setChild(self: *Block, child: ?*base.Widget) void {
-        var changed = false;
-        if (self.child != child) {
-            self.detachChild();
-            changed = true;
-        }
+    pub fn setChild(self: *Block, child: ?*base.Widget) !void {
         if (child) |c| {
-            if (c.parent != &self.widget) changed = true;
-            c.parent = &self.widget;
+            if (self.child != c and c.parent != null) return error.WidgetAlreadyAttached;
+            try c.attachTo(&self.widget);
         }
+
+        const changed = self.child != child;
+        if (changed) self.detachChild();
         self.child = child;
         if (changed) self.widget.markDirty();
     }
@@ -259,7 +257,7 @@ test "block applies padding and border to child layout" {
     var dummy = Dummy{};
     var block = try Block.init(alloc);
     defer block.deinit();
-    block.setChild(&dummy.widget);
+    try block.setChild(&dummy.widget);
     block.setPadding(.{ .left = 1, .right = 1, .top = 1, .bottom = 1 });
     block.setBorder(.single);
 
@@ -300,7 +298,7 @@ test "block marks dirty when visible state changes" {
     defer replacement.deinit();
 
     try block.setTitle("Panel");
-    block.setChild(&child.widget);
+    try block.setChild(&child.widget);
     try block.widget.layout(layout_module.Rect.init(0, 0, 16, 4));
     var renderer = try render.Renderer.init(alloc, 16, 4);
     defer renderer.deinit();
@@ -349,14 +347,14 @@ test "block marks dirty when visible state changes" {
     block.setPadding(.{ .left = 2, .right = 1, .top = 1, .bottom = 0 });
     try std.testing.expect(!block.widget.dirty);
 
-    block.setChild(&replacement.widget);
+    try block.setChild(&replacement.widget);
     try std.testing.expect(block.widget.dirty);
     try block.widget.draw(&renderer);
     try std.testing.expect(!block.widget.dirty);
-    block.setChild(&replacement.widget);
+    try block.setChild(&replacement.widget);
     try std.testing.expect(!block.widget.dirty);
 
-    block.setChild(null);
+    try block.setChild(null);
     try std.testing.expect(block.widget.dirty);
 }
 
@@ -412,7 +410,7 @@ test "block clamps edge child layout coordinates" {
     var dummy = Dummy{};
     var block = try Block.init(alloc);
     defer block.deinit();
-    block.setChild(&dummy.widget);
+    try block.setChild(&dummy.widget);
     block.setPadding(.{ .left = 8, .right = 8, .top = 8, .bottom = 8 });
     block.setBorder(.single);
 
@@ -469,12 +467,37 @@ test "block replacing child detaches previous child" {
     var new_child = try @import("label.zig").Label.init(alloc, "new");
     defer new_child.deinit();
 
-    block.setChild(&old_child.widget);
-    block.setChild(&new_child.widget);
+    try block.setChild(&old_child.widget);
+    try block.setChild(&new_child.widget);
 
     try std.testing.expectEqual(&new_child.widget, block.child.?);
     try std.testing.expect(old_child.widget.parent == null);
     try std.testing.expectEqual(&block.widget, new_child.widget.parent.?);
+}
+
+test "block rejects child attached to another parent transactionally" {
+    const alloc = std.testing.allocator;
+    var owner = try Block.init(alloc);
+    var target = try Block.init(alloc);
+    var current = try @import("label.zig").Label.init(alloc, "current");
+    var attached = try @import("label.zig").Label.init(alloc, "attached");
+    defer {
+        target.deinit();
+        owner.deinit();
+        current.deinit();
+        attached.deinit();
+    }
+
+    try target.setChild(&current.widget);
+    try owner.setChild(&attached.widget);
+    target.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, target.setChild(&attached.widget));
+    try std.testing.expectEqual(&current.widget, target.child.?);
+    try std.testing.expectEqual(&target.widget, current.widget.parent.?);
+    try std.testing.expectEqual(&attached.widget, owner.child.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!target.widget.dirty);
 }
 
 test "block clearing child detaches owned parent link" {
@@ -485,8 +508,8 @@ test "block clearing child detaches owned parent link" {
     var child = try @import("label.zig").Label.init(alloc, "child");
     defer child.deinit();
 
-    block.setChild(&child.widget);
-    block.setChild(null);
+    try block.setChild(&child.widget);
+    try block.setChild(null);
 
     try std.testing.expect(block.child == null);
     try std.testing.expect(child.widget.parent == null);
@@ -499,7 +522,7 @@ test "block deinit detaches child parent link" {
     var child = try @import("label.zig").Label.init(alloc, "child");
     defer child.deinit();
 
-    block.setChild(&child.widget);
+    try block.setChild(&child.widget);
     block.deinit();
 
     try std.testing.expect(child.widget.parent == null);

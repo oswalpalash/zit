@@ -57,40 +57,36 @@ pub const SplitPane = struct {
         self.widget.markDirty();
     }
 
-    pub fn setFirst(self: *SplitPane, widget: *base.Widget) void {
-        var changed = false;
-        if (self.first != widget) {
-            self.detachSlot(&self.first);
-            self.first = widget;
-            changed = true;
+    pub fn setFirst(self: *SplitPane, widget: *base.Widget) !void {
+        if (self.first == widget) {
+            try widget.attachTo(&self.widget);
+            return;
         }
-        if (self.second == widget) {
-            self.second = null;
-            changed = true;
-        }
-        if (widget.parent != &self.widget) {
-            changed = true;
-        }
-        widget.parent = &self.widget;
-        if (changed) self.widget.markDirty();
+
+        const moving_from_second = self.second == widget;
+        if (!moving_from_second and widget.parent != null) return error.WidgetAlreadyAttached;
+        try widget.attachTo(&self.widget);
+
+        self.detachSlot(&self.first);
+        self.first = widget;
+        if (moving_from_second) self.second = null;
+        self.widget.markDirty();
     }
 
-    pub fn setSecond(self: *SplitPane, widget: *base.Widget) void {
-        var changed = false;
-        if (self.second != widget) {
-            self.detachSlot(&self.second);
-            self.second = widget;
-            changed = true;
+    pub fn setSecond(self: *SplitPane, widget: *base.Widget) !void {
+        if (self.second == widget) {
+            try widget.attachTo(&self.widget);
+            return;
         }
-        if (self.first == widget) {
-            self.first = null;
-            changed = true;
-        }
-        if (widget.parent != &self.widget) {
-            changed = true;
-        }
-        widget.parent = &self.widget;
-        if (changed) self.widget.markDirty();
+
+        const moving_from_first = self.first == widget;
+        if (!moving_from_first and widget.parent != null) return error.WidgetAlreadyAttached;
+        try widget.attachTo(&self.widget);
+
+        self.detachSlot(&self.second);
+        self.second = widget;
+        if (moving_from_first) self.first = null;
+        self.widget.markDirty();
     }
 
     fn detachChildren(self: *SplitPane) void {
@@ -279,8 +275,8 @@ test "split pane lays out children" {
     var right = try @import("label.zig").Label.init(alloc, "right");
     defer right.deinit();
 
-    pane.setFirst(&left.widget);
-    pane.setSecond(&right.widget);
+    try pane.setFirst(&left.widget);
+    try pane.setSecond(&right.widget);
     pane.setRatio(0.4);
     try pane.widget.layout(layout_module.Rect.init(0, 0, 30, 4));
 
@@ -301,8 +297,8 @@ test "split pane marks dirty when visible state changes" {
     var replacement = try @import("label.zig").Label.init(alloc, "replacement");
     defer replacement.deinit();
 
-    pane.setFirst(&first.widget);
-    pane.setSecond(&second.widget);
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&second.widget);
     try pane.widget.layout(layout_module.Rect.init(0, 0, 30, 6));
     var renderer = try render.Renderer.init(alloc, 30, 6);
     defer renderer.deinit();
@@ -339,11 +335,11 @@ test "split pane marks dirty when visible state changes" {
     try pane.setTheme(theme.Theme.dark());
     try std.testing.expect(!pane.widget.dirty);
 
-    pane.setFirst(&replacement.widget);
+    try pane.setFirst(&replacement.widget);
     try std.testing.expect(pane.widget.dirty);
     try pane.widget.draw(&renderer);
     try std.testing.expect(!pane.widget.dirty);
-    pane.setFirst(&replacement.widget);
+    try pane.setFirst(&replacement.widget);
     try std.testing.expect(!pane.widget.dirty);
 }
 
@@ -390,8 +386,8 @@ test "split pane clamps horizontal edge layout and draw coordinates" {
     var second = try @import("label.zig").Label.init(alloc, "second");
     defer second.deinit();
 
-    pane.setFirst(&first.widget);
-    pane.setSecond(&second.widget);
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&second.widget);
     pane.min_child_size = std.math.maxInt(u16);
     pane.setRatio(0.5);
 
@@ -415,8 +411,8 @@ test "split pane clamps vertical edge layout and invalid ratios" {
     var second = try @import("label.zig").Label.init(alloc, "second");
     defer second.deinit();
 
-    pane.setFirst(&first.widget);
-    pane.setSecond(&second.widget);
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&second.widget);
     pane.setOrientation(.vertical);
     pane.min_child_size = std.math.maxInt(u16);
     pane.ratio = std.math.nan(f32);
@@ -441,8 +437,8 @@ test "split pane replacing first child detaches previous child" {
     var new_child = try @import("label.zig").Label.init(alloc, "new");
     defer new_child.deinit();
 
-    pane.setFirst(&old_child.widget);
-    pane.setFirst(&new_child.widget);
+    try pane.setFirst(&old_child.widget);
+    try pane.setFirst(&new_child.widget);
 
     try std.testing.expect(pane.first != null);
     try std.testing.expectEqual(&new_child.widget, pane.first.?);
@@ -458,13 +454,44 @@ test "split pane moves child between slots without duplicate ownership" {
     var child = try @import("label.zig").Label.init(alloc, "child");
     defer child.deinit();
 
-    pane.setFirst(&child.widget);
-    pane.setSecond(&child.widget);
+    try pane.setFirst(&child.widget);
+    try pane.setSecond(&child.widget);
 
     try std.testing.expect(pane.first == null);
     try std.testing.expect(pane.second != null);
     try std.testing.expectEqual(&child.widget, pane.second.?);
     try std.testing.expectEqual(&pane.widget, child.widget.parent.?);
+}
+
+test "split pane rejects children attached to another parent transactionally" {
+    const alloc = std.testing.allocator;
+    var owner = try @import("block.zig").Block.init(alloc);
+    var pane = try SplitPane.init(alloc);
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    var second = try @import("label.zig").Label.init(alloc, "second");
+    var attached = try @import("label.zig").Label.init(alloc, "attached");
+    defer {
+        pane.deinit();
+        owner.deinit();
+        first.deinit();
+        second.deinit();
+        attached.deinit();
+    }
+
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&second.widget);
+    try owner.setChild(&attached.widget);
+    pane.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, pane.setFirst(&attached.widget));
+    try std.testing.expectError(error.WidgetAlreadyAttached, pane.setSecond(&attached.widget));
+    try std.testing.expectEqual(&first.widget, pane.first.?);
+    try std.testing.expectEqual(&second.widget, pane.second.?);
+    try std.testing.expectEqual(&pane.widget, first.widget.parent.?);
+    try std.testing.expectEqual(&pane.widget, second.widget.parent.?);
+    try std.testing.expectEqual(&attached.widget, owner.child.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!pane.widget.dirty);
 }
 
 test "split pane deinit detaches owned child parent links" {
@@ -476,8 +503,8 @@ test "split pane deinit detaches owned child parent links" {
     var second = try @import("label.zig").Label.init(alloc, "second");
     defer second.deinit();
 
-    pane.setFirst(&first.widget);
-    pane.setSecond(&second.widget);
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&second.widget);
     pane.deinit();
 
     try std.testing.expect(first.widget.parent == null);

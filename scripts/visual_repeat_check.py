@@ -69,8 +69,9 @@ def ensure_binaries(root: Path) -> None:
     env = os.environ.copy()
     env.setdefault("TERM", "xterm-256color")
     env.setdefault("COLORTERM", "truecolor")
+    zig = os.environ.get("ZIG") or "zig"
     proc = subprocess.run(
-        ["zig", "build"],
+        [zig, "build"],
         cwd=root,
         env=env,
         stdout=subprocess.PIPE,
@@ -79,7 +80,7 @@ def ensure_binaries(root: Path) -> None:
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout.decode("utf-8", errors="replace"))
-        raise RuntimeError(f"`zig build` failed with exit code {proc.returncode}")
+        raise RuntimeError(f"`{zig} build` failed with exit code {proc.returncode}")
 
 
 def capture_target(root: Path, target: str) -> bytes:

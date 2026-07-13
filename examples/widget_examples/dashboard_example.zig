@@ -75,15 +75,15 @@ pub fn main() !void {
     defer metrics_split.deinit();
     metrics_split.setOrientation(.vertical);
     metrics_split.setRatio(0.35);
-    metrics_split.setFirst(&gauge.widget);
-    metrics_split.setSecond(&sparkline.widget);
+    try metrics_split.setFirst(&gauge.widget);
+    try metrics_split.setSecond(&sparkline.widget);
 
     var main_split = try widget.SplitPane.init(memory_manager.getWidgetPoolAllocator());
     defer main_split.deinit();
     main_split.setOrientation(.horizontal);
     main_split.setRatio(0.38);
-    main_split.setFirst(&tree.widget);
-    main_split.setSecond(&metrics_split.widget);
+    try main_split.setFirst(&tree.widget);
+    try main_split.setSecond(&metrics_split.widget);
 
     const seed: u64 = 0x5a17_da5b_0a11_d001;
     var prng = std.Random.DefaultPrng.init(seed);

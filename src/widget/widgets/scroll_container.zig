@@ -112,12 +112,16 @@ pub const ScrollContainer = struct {
         self.allocator.destroy(self);
     }
 
-    /// Set the content widget
-    pub fn setContent(self: *ScrollContainer, content: *base.Widget) void {
+    /// Set the content widget. Ownership stays with the caller.
+    pub fn setContent(self: *ScrollContainer, content: *base.Widget) !void {
+        if (self.content != content and content.parent != null) return error.WidgetAlreadyAttached;
+        try content.attachTo(&self.widget);
+
         const previous = self.content;
-        self.detachContent();
-        self.content = content;
-        content.parent = &self.widget;
+        if (previous != content) {
+            self.detachContent();
+            self.content = content;
+        }
         const size_changed = self.updateContentSize();
         if (previous != content or size_changed) self.widget.markDirty();
     }
@@ -777,12 +781,42 @@ test "scroll container maintains parent linkage for content" {
     var second = try @import("block.zig").Block.init(alloc);
     defer second.deinit();
 
-    container.setContent(&first.widget);
+    try container.setContent(&first.widget);
     try std.testing.expectEqual(&container.widget, first.widget.parent.?);
 
-    container.setContent(&second.widget);
+    try container.setContent(&second.widget);
     try std.testing.expect(first.widget.parent == null);
     try std.testing.expectEqual(&container.widget, second.widget.parent.?);
+}
+
+test "scroll container rejects content attached to another parent transactionally" {
+    const alloc = std.testing.allocator;
+    var owner = try ScrollContainer.init(alloc);
+    var target = try ScrollContainer.init(alloc);
+    var current = try @import("block.zig").Block.init(alloc);
+    var attached = try @import("block.zig").Block.init(alloc);
+    defer {
+        target.deinit();
+        owner.deinit();
+        current.deinit();
+        attached.deinit();
+    }
+
+    current.setPadding(.{ .left = 3, .right = 4, .top = 5, .bottom = 6 });
+    try target.setContent(&current.widget);
+    try owner.setContent(&attached.widget);
+    const width_before = target.content_width;
+    const height_before = target.content_height;
+    target.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, target.setContent(&attached.widget));
+    try std.testing.expectEqual(&current.widget, target.content.?);
+    try std.testing.expectEqual(width_before, target.content_width);
+    try std.testing.expectEqual(height_before, target.content_height);
+    try std.testing.expectEqual(&target.widget, current.widget.parent.?);
+    try std.testing.expectEqual(&attached.widget, owner.content.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!target.widget.dirty);
 }
 
 test "scroll container visible mutations mark dirty" {
@@ -824,14 +858,14 @@ test "scroll container visible mutations mark dirty" {
     try std.testing.expect(!container.widget.dirty);
 
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
     try std.testing.expect(container.widget.dirty);
 
     try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
     try container.widget.draw(&renderer);
     try std.testing.expect(!container.widget.dirty);
 
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
     try std.testing.expect(!container.widget.dirty);
 
     container.setShowScrollbars(false, true);
@@ -902,7 +936,7 @@ test "scroll container deinit detaches content parent link" {
     var content = try @import("block.zig").Block.init(alloc);
     defer content.deinit();
 
-    container.setContent(&content.widget);
+    try container.setContent(&content.widget);
     container.deinit();
 
     try std.testing.expect(content.widget.parent == null);
@@ -936,7 +970,7 @@ test "scroll container scrolls content with mouse wheel" {
     var container = try ScrollContainer.init(alloc);
     defer container.deinit();
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
 
     try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
     try std.testing.expectEqual(@as(i16, 0), container.v_offset);
@@ -987,7 +1021,7 @@ test "scroll container tolerates tiny layouts with overflowing content" {
     var container = try ScrollContainer.init(alloc);
     defer container.deinit();
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
 
     var renderer = try render.Renderer.init(alloc, 4, 4);
     defer renderer.deinit();
@@ -1051,7 +1085,7 @@ test "scroll container preferred size saturates chrome inflation" {
     var container = try ScrollContainer.init(alloc);
     defer container.deinit();
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
 
     const size = try container.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, @intCast(std.math.maxInt(i16))), size.width);
@@ -1105,7 +1139,7 @@ test "scroll container clamps keyboard offsets after saturating overflow edges" 
     var container = try ScrollContainer.init(alloc);
     defer container.deinit();
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
     try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
     container.widget.focused = true;
 
@@ -1148,7 +1182,7 @@ test "scroll container saturates large wheel deltas before clamping" {
     var container = try ScrollContainer.init(alloc);
     defer container.deinit();
     var dummy = Dummy{};
-    container.setContent(&dummy.widget);
+    try container.setContent(&dummy.widget);
     try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
 
     container.v_offset = std.math.maxInt(i16);
@@ -1210,7 +1244,7 @@ test "scroll container translates mouse events into scrolled content space" {
     defer container.deinit();
 
     var clickable = Clickable{};
-    container.setContent(&clickable.widget);
+    try container.setContent(&clickable.widget);
     try container.widget.layout(layout_module.Rect.init(0, 0, 10, 6));
     container.applyHOffset(2);
     container.applyVOffset(3);

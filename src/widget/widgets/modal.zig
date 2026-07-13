@@ -80,12 +80,16 @@ pub const Modal = struct {
         self.allocator.destroy(self);
     }
 
-    /// Set the modal content
-    pub fn setContent(self: *Modal, content: *Widget) void {
+    /// Set the modal content. Ownership stays with the caller.
+    pub fn setContent(self: *Modal, content: *Widget) !void {
+        if (self.content != content and content.parent != null) return error.WidgetAlreadyAttached;
+        try content.attachTo(&self.widget);
+
         const previous = self.content;
-        self.detachContent();
-        self.content = content;
-        content.parent = &self.widget;
+        if (previous != content) {
+            self.detachContent();
+            self.content = content;
+        }
         if (previous != content) {
             self.widget.markDirty();
         }
@@ -399,10 +403,10 @@ test "modal visible mutations mark dirty" {
     defer modal.deinit();
 
     modal.widget.clearDirty();
-    modal.setContent(&content.widget);
+    try modal.setContent(&content.widget);
     try std.testing.expect(modal.widget.dirty);
     modal.widget.clearDirty();
-    modal.setContent(&content.widget);
+    try modal.setContent(&content.widget);
     try std.testing.expect(!modal.widget.dirty);
 
     try modal.setTitle("Confirm");
@@ -567,7 +571,7 @@ test "modal clamps edge title and content coordinates" {
     modal.width = 2;
     modal.height = 2;
     try modal.setTitle("Edge");
-    modal.setContent(&content.widget);
+    try modal.setContent(&content.widget);
 
     try modal.widget.layout(layout_module.Rect.init(std.math.maxInt(u16), std.math.maxInt(u16), 4, 4));
     try std.testing.expectEqual(std.math.maxInt(u16), modal.widget.rect.x);
@@ -593,7 +597,7 @@ test "modal preferred size saturates large content" {
         .top = std.math.maxInt(u16),
         .bottom = 1,
     });
-    modal.setContent(&content.widget);
+    try modal.setContent(&content.widget);
 
     const preferred = try modal.widget.getPreferredSize();
     try std.testing.expectEqual(@as(u16, std.math.maxInt(u16)), preferred.width);
@@ -610,12 +614,37 @@ test "modal maintains parent linkage for content" {
     var second = try @import("block.zig").Block.init(alloc);
     defer second.deinit();
 
-    modal.setContent(&first.widget);
+    try modal.setContent(&first.widget);
     try std.testing.expectEqual(&modal.widget, first.widget.parent.?);
 
-    modal.setContent(&second.widget);
+    try modal.setContent(&second.widget);
     try std.testing.expect(first.widget.parent == null);
     try std.testing.expectEqual(&modal.widget, second.widget.parent.?);
+}
+
+test "modal rejects content attached to another parent transactionally" {
+    const alloc = std.testing.allocator;
+    var owner = try Modal.init(alloc);
+    var target = try Modal.init(alloc);
+    var current = try @import("block.zig").Block.init(alloc);
+    var attached = try @import("block.zig").Block.init(alloc);
+    defer {
+        target.deinit();
+        owner.deinit();
+        current.deinit();
+        attached.deinit();
+    }
+
+    try target.setContent(&current.widget);
+    try owner.setContent(&attached.widget);
+    target.widget.clearDirty();
+
+    try std.testing.expectError(error.WidgetAlreadyAttached, target.setContent(&attached.widget));
+    try std.testing.expectEqual(&current.widget, target.content.?);
+    try std.testing.expectEqual(&target.widget, current.widget.parent.?);
+    try std.testing.expectEqual(&attached.widget, owner.content.?);
+    try std.testing.expectEqual(&owner.widget, attached.widget.parent.?);
+    try std.testing.expect(!target.widget.dirty);
 }
 
 test "modal deinit detaches content parent link" {
@@ -625,7 +654,7 @@ test "modal deinit detaches content parent link" {
     var content = try @import("block.zig").Block.init(alloc);
     defer content.deinit();
 
-    modal.setContent(&content.widget);
+    try modal.setContent(&content.widget);
     modal.deinit();
 
     try std.testing.expect(content.widget.parent == null);
