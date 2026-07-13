@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Container widget for holding and arranging other widgets
 pub const Container = struct {
@@ -12,6 +13,8 @@ pub const Container = struct {
     widget: base.Widget,
     /// Child widgets
     children: std.ArrayList(*base.Widget),
+    /// Reused child-state storage for transactional layout.
+    layout_snapshots: std.ArrayList(layout_transaction.Snapshot),
     /// Foreground color
     fg: render.Color = render.Color{ .named_color = render.NamedColor.default },
     /// Background color
@@ -39,6 +42,7 @@ pub const Container = struct {
         self.* = Container{
             .widget = base.Widget.init(&vtable),
             .children = std.ArrayList(*base.Widget).empty,
+            .layout_snapshots = std.ArrayList(layout_transaction.Snapshot).empty,
             .allocator = allocator,
         };
         self.setTheme(theme.Theme.dark());
@@ -53,6 +57,7 @@ pub const Container = struct {
             _ = child.detachFrom(&self.widget);
         }
         self.children.deinit(self.allocator);
+        self.layout_snapshots.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -61,6 +66,7 @@ pub const Container = struct {
         const existing_index = self.childIndex(child);
         if (existing_index == null) {
             try self.children.ensureUnusedCapacity(self.allocator, 1);
+            try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.children.items.len + 1);
         }
 
         const was_last = if (existing_index) |idx| idx + 1 == self.children.items.len else false;
@@ -186,6 +192,13 @@ pub const Container = struct {
         const self: *Container = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.children.items.len);
+        self.layout_snapshots.clearRetainingCapacity();
+        defer self.layout_snapshots.clearRetainingCapacity();
+        for (self.children.items) |child| {
+            self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(child));
+        }
+
         // Simple layout: just give each child the full container area
         // (can be overridden by more sophisticated container implementations)
         const border_adjust: u16 = if (self.show_border) 1 else 0;
@@ -197,7 +210,10 @@ pub const Container = struct {
         );
 
         for (self.children.items) |child| {
-            try child.*.layout(inner_rect);
+            child.*.layout(inner_rect) catch |err| {
+                layout_transaction.rollback(self.layout_snapshots.items);
+                return err;
+            };
         }
     }
 
@@ -592,4 +608,76 @@ test "container rejects child attached to another collection parent" {
     try std.testing.expectEqual(&child.widget, first.children.items[0]);
     try std.testing.expectEqual(@as(usize, 0), second.children.items.len);
     try std.testing.expectEqual(&first.widget, child.widget.parent.?);
+}
+
+test "container rolls back child layout state and accessibility bounds on failure" {
+    const Child = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        fail_layout: bool = false,
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, _: layout_module.Rect) anyerror!void {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            if (self.fail_layout) return error.LayoutRejected;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+    const Bounds = struct {
+        calls: usize = 0,
+        last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+        fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            self.calls += 1;
+            self.last = rect;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var container = try Container.init(alloc);
+    defer container.deinit();
+
+    const original = layout_module.Rect.init(7, 3, 2, 1);
+    var first = Child{};
+    first.widget.rect = original;
+    first.widget.dirty = false;
+    var bounds = Bounds{ .last = original };
+    first.widget.accessibility_ctx = &bounds;
+    first.widget.accessibility_update_bounds = Bounds.update;
+    var second = Child{ .fail_layout = true };
+    second.widget.rect = layout_module.Rect.init(9, 4, 1, 1);
+    second.widget.dirty = false;
+    try container.addChild(&first.widget);
+    try container.addChild(&second.widget);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = container.allocator;
+    container.allocator = failing.allocator();
+    defer container.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutRejected, container.widget.layout(layout_module.Rect.init(0, 0, 20, 4)));
+    try std.testing.expectEqual(original, first.widget.rect);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(original, bounds.last);
+    try std.testing.expectEqual(layout_module.Rect.init(9, 4, 1, 1), second.widget.rect);
+    try std.testing.expect(!second.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), container.layout_snapshots.items.len);
 }

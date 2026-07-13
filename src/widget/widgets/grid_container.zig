@@ -4,12 +4,14 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Grid container widget that arranges children using GridLayout.
 pub const GridContainer = struct {
     widget: base.Widget,
     layout: *layout_module.GridLayout,
     children: std.ArrayList(Child),
+    layout_snapshots: std.ArrayList(layout_transaction.Snapshot),
     allocator: std.mem.Allocator,
 
     const Child = struct {
@@ -41,6 +43,7 @@ pub const GridContainer = struct {
             .widget = base.Widget.init(&vtable),
             .layout = layout,
             .children = std.ArrayList(Child).empty,
+            .layout_snapshots = std.ArrayList(layout_transaction.Snapshot).empty,
             .allocator = allocator,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Grid container", "");
@@ -50,6 +53,7 @@ pub const GridContainer = struct {
     pub fn deinit(self: *GridContainer) void {
         self.clearChildren();
         self.children.deinit(self.allocator);
+        self.layout_snapshots.deinit(self.allocator);
         self.layout.deinit();
         self.allocator.destroy(self);
     }
@@ -61,9 +65,11 @@ pub const GridContainer = struct {
 
         const has_child = self.childIndex(child) != null;
         const has_target = self.childIndexAt(column, row) != null;
+        const target_len = self.children.items.len + @intFromBool(!has_child and !has_target);
         if (!has_child and !has_target) {
             try self.children.ensureUnusedCapacity(self.allocator, 1);
         }
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, target_len);
 
         try child.attachTo(&self.widget);
         self.removeChildForReplacement(child);
@@ -218,9 +224,19 @@ pub const GridContainer = struct {
         const self: *GridContainer = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.children.items.len);
+        self.layout_snapshots.clearRetainingCapacity();
+        defer self.layout_snapshots.clearRetainingCapacity();
+        for (self.children.items) |child| {
+            self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(child.widget));
+        }
+
         var ctx = LayoutContext{};
         self.layout.forEachCellRect(rect, &ctx, layoutCell);
-        if (ctx.err) |err| return err;
+        if (ctx.err) |err| {
+            layout_transaction.rollback(self.layout_snapshots.items);
+            return err;
+        }
     }
 
     fn layoutCell(ctx_ptr: *anyopaque, cell: layout_module.LayoutElement, rect: layout_module.Rect) void {
@@ -654,4 +670,62 @@ test "grid container moves existing child without duplicate ownership" {
     try std.testing.expect(grid.layout.cells.items[0] == null);
     try std.testing.expect(grid.layout.cells.items[1].?.ctx == @as(*anyopaque, @ptrCast(&child.widget)));
     try std.testing.expectEqual(&grid.widget, child.widget.parent.?);
+}
+
+test "grid container rolls back earlier child layout state on failure" {
+    const ChildWidget = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        fail_layout: bool = false,
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, _: layout_module.Rect) anyerror!void {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            if (self.fail_layout) return error.LayoutRejected;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(1, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var grid = try GridContainer.init(alloc, 2, 1);
+    defer grid.deinit();
+
+    const first_original = layout_module.Rect.init(5, 5, 1, 1);
+    const second_original = layout_module.Rect.init(6, 5, 1, 1);
+    var first = ChildWidget{};
+    first.widget.rect = first_original;
+    first.widget.dirty = false;
+    var second = ChildWidget{ .fail_layout = true };
+    second.widget.rect = second_original;
+    second.widget.dirty = false;
+    try grid.addChild(&first.widget, 0, 0);
+    try grid.addChild(&second.widget, 1, 0);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = grid.allocator;
+    grid.allocator = failing.allocator();
+    defer grid.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutRejected, grid.widget.layout(layout_module.Rect.init(0, 0, 8, 2)));
+    try std.testing.expectEqual(first_original, first.widget.rect);
+    try std.testing.expectEqual(second_original, second.widget.rect);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expect(!second.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), grid.layout_snapshots.items.len);
 }

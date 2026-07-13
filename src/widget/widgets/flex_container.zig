@@ -4,12 +4,14 @@ const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Flex container widget that arranges children using FlexLayout.
 pub const FlexContainer = struct {
     widget: base.Widget,
     layout: *layout_module.FlexLayout,
     children: std.ArrayList(*base.Widget),
+    layout_snapshots: std.ArrayList(layout_transaction.Snapshot),
     allocator: std.mem.Allocator,
     const LayoutContext = struct {
         err: ?anyerror = null,
@@ -34,6 +36,7 @@ pub const FlexContainer = struct {
             .widget = base.Widget.init(&vtable),
             .layout = layout,
             .children = std.ArrayList(*base.Widget).empty,
+            .layout_snapshots = std.ArrayList(layout_transaction.Snapshot).empty,
             .allocator = allocator,
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Flex container", "");
@@ -43,6 +46,7 @@ pub const FlexContainer = struct {
     pub fn deinit(self: *FlexContainer) void {
         self.detachChildren();
         self.children.deinit(self.allocator);
+        self.layout_snapshots.deinit(self.allocator);
         self.layout.deinit();
         self.allocator.destroy(self);
     }
@@ -54,6 +58,7 @@ pub const FlexContainer = struct {
 
         if (!has_child) {
             try self.children.ensureUnusedCapacity(self.allocator, 1);
+            try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.children.items.len + 1);
         }
         try self.layout.naturals_scratch.ensureTotalCapacity(self.layout.base.allocator, target_layout_len);
         try self.layout.assigned_scratch.ensureTotalCapacity(self.layout.base.allocator, target_layout_len);
@@ -195,9 +200,19 @@ pub const FlexContainer = struct {
         const self: *FlexContainer = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.children.items.len);
+        self.layout_snapshots.clearRetainingCapacity();
+        defer self.layout_snapshots.clearRetainingCapacity();
+        for (self.children.items) |child| {
+            self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(child));
+        }
+
         var ctx = LayoutContext{};
         self.layout.forEachChildRect(rect, &ctx, layoutChild);
-        if (ctx.err) |err| return err;
+        if (ctx.err) |err| {
+            layout_transaction.rollback(self.layout_snapshots.items);
+            return err;
+        }
     }
 
     fn layoutChild(ctx_ptr: *anyopaque, child: *layout_module.FlexChild, rect: layout_module.Rect) void {
@@ -500,4 +515,62 @@ test "flex container deinit detaches child parent links" {
     flex.deinit();
     flex_live = false;
     try std.testing.expect(child.widget.parent == null);
+}
+
+test "flex container rolls back earlier child layout state on failure" {
+    const Child = struct {
+        widget: base.Widget = base.Widget.init(&vtable),
+        fail_layout: bool = false,
+
+        const vtable = base.Widget.VTable{
+            .draw = drawFn,
+            .handle_event = handleEventFn,
+            .layout = layoutFn,
+            .get_preferred_size = preferredFn,
+            .can_focus = canFocusFn,
+        };
+
+        fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+        fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+            return false;
+        }
+        fn layoutFn(widget_ptr: *anyopaque, _: layout_module.Rect) anyerror!void {
+            const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
+            const self: *@This() = @fieldParentPtr("widget", widget_ref);
+            if (self.fail_layout) return error.LayoutRejected;
+        }
+        fn preferredFn(_: *anyopaque) anyerror!layout_module.Size {
+            return layout_module.Size.init(2, 1);
+        }
+        fn canFocusFn(_: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var flex = try FlexContainer.init(alloc, .row);
+    defer flex.deinit();
+
+    const first_original = layout_module.Rect.init(5, 5, 1, 1);
+    const second_original = layout_module.Rect.init(6, 5, 1, 1);
+    var first = Child{};
+    first.widget.rect = first_original;
+    first.widget.dirty = false;
+    var second = Child{ .fail_layout = true };
+    second.widget.rect = second_original;
+    second.widget.dirty = false;
+    try flex.addChild(&first.widget, 1);
+    try flex.addChild(&second.widget, 1);
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = flex.allocator;
+    flex.allocator = failing.allocator();
+    defer flex.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutRejected, flex.widget.layout(layout_module.Rect.init(0, 0, 8, 2)));
+    try std.testing.expectEqual(first_original, first.widget.rect);
+    try std.testing.expectEqual(second_original, second.widget.rect);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expect(!second.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 0), flex.layout_snapshots.items.len);
 }
