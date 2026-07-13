@@ -73,6 +73,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_widget_coverage.py` to require every public widget export to have a catalog row, coverage reference, valid documented file paths, and every public widget factory/helper to appear in `docs/API.md`.
 - `python3 scripts/check_widget_owner_casts.py`
 - `python3 scripts/check_widget_lifecycle_mutation.py` to require production widget code and public examples to use lifecycle setters instead of direct focus, enabled, or visibility mutation.
+- `python3 scripts/check_widget_parent_attachment.py` to require production widget code and public examples to create parent links through `Widget.attachTo` while allowing explicit detach cleanup and test-only invalid-state setup.
 - `python3 scripts/interactive_example_smoke.py`
 - `python3 scripts/resize_smoke.py --no-build` to verify `input_test` receives live PTY resize events, every public interactive example survives rapid tiny-size stress down to 1x1, redraws a visible `resize: WxH` marker at the final geometry, and quits cleanly.
 - `python3 scripts/mouse_alignment_smoke.py --no-build` to verify real SGR mouse input maps terminal 1-based coordinates to Zit screen coordinates and clicks the rendered demo button only at its actual row.
@@ -87,6 +88,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable, and rejects empty `catch {}` blocks on terminal cleanup paths.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
+- `python3 scripts/check_widget_parent_attachment.py` rejects direct positive `Widget.parent` assignments outside the guarded `Widget.attachTo` primitive so new composite widgets cannot silently reparent caller-owned children.
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.
 - Navigation stacks that own copied route/screen metadata must reserve collection and transition capacity before taking ownership, then roll back appended entries if a later hook or transition setup fails.

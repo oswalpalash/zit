@@ -50,7 +50,7 @@ pub const AutocompleteInput = struct {
             .filtered = filtered,
             .theme_value = theme_value,
         };
-        self.input_field.widget.parent = &self.widget;
+        try self.input_field.widget.attachTo(&self.widget);
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.input), "Autocomplete input", "");
         return self;
     }

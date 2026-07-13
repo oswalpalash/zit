@@ -30,6 +30,7 @@ REQUIRED_WORKFLOW_GATES = (
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "python3 scripts/check_widget_lifecycle_mutation.py",
+    "python3 scripts/check_widget_parent_attachment.py",
     "zig build release-check",
 )
 
@@ -55,6 +56,7 @@ REQUIRED_PR_GATES = (
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "python3 scripts/check_widget_lifecycle_mutation.py",
+    "python3 scripts/check_widget_parent_attachment.py",
     "zig build release-check",
 )
 
@@ -87,12 +89,15 @@ REQUIRED_RELEASE_VERIFY_GATES = (
     '"mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build")',
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
     '"widget lifecycle mutations", ("python3", "scripts/check_widget_lifecycle_mutation.py")',
+    '"widget parent attachments", ("python3", "scripts/check_widget_parent_attachment.py")',
 )
 
 REQUIRED_BUILD_GATES = (
     'const ci_script_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_ci_script_coverage.py" });',
     'const ci_script_coverage_step = b.step("ci-script-coverage", "Check CI compiles release verification scripts");',
     "quality_step.dependOn(ci_script_coverage_step);",
+    'const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent links use guarded attachment");',
+    "quality_step.dependOn(widget_parent_attachment_step);",
 )
 
 REQUIRED_SMOKE_ZIG_CONTRACT = (
@@ -122,6 +127,7 @@ REQUIRED_CONTRIBUTING_GATES = (
     "python3 scripts/check_unreachable_catches.py",
     "python3 scripts/check_widget_owner_casts.py",
     "python3 scripts/check_widget_lifecycle_mutation.py",
+    "python3 scripts/check_widget_parent_attachment.py",
     "zig build release-check",
 )
 

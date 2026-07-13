@@ -89,8 +89,8 @@ pub const ScrollContainer = struct {
             .v_scrollbar = v_scrollbar_widget,
             .allocator = allocator,
         };
-        h_scrollbar_widget.widget.parent = &self.widget;
-        v_scrollbar_widget.widget.parent = &self.widget;
+        try h_scrollbar_widget.widget.attachTo(&self.widget);
+        try v_scrollbar_widget.widget.attachTo(&self.widget);
         self.setTheme(theme.Theme.dark());
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Scroll container", "");
 

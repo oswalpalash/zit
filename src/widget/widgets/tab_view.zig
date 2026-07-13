@@ -403,12 +403,14 @@ pub const TabView = struct {
         errdefer header.deinit();
 
         const self = try allocator.create(TabView);
+        errdefer allocator.destroy(self);
         self.* = TabView{
             .widget = base.Widget.init(&vtable),
             .tabs = std.ArrayList(TabItem).empty,
             .tab_bar = header,
             .allocator = allocator,
         };
+        try self.tab_bar.widget.attachTo(&self.widget);
         self.setTheme(theme.Theme.dark());
         self.configureHeader();
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.tabpanel), "Tab panel", "");
@@ -668,7 +670,6 @@ pub const TabView = struct {
     }
 
     fn configureHeader(self: *TabView) void {
-        self.tab_bar.widget.parent = &self.widget;
         self.tab_bar.tab_height = self.tab_height;
         self.tab_bar.tab_padding = self.tab_padding;
         self.tab_bar.setTabColors(self.fg, self.bg, self.active_fg, self.active_bg, self.inactive_fg, self.inactive_bg);

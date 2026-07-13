@@ -24,6 +24,7 @@ Mark all that apply. Use `zig build release-check` before maintainers cut or mer
 - [ ] `python3 scripts/check_unreachable_catches.py`
 - [ ] `python3 scripts/check_widget_owner_casts.py`
 - [ ] `python3 scripts/check_widget_lifecycle_mutation.py`
+- [ ] `python3 scripts/check_widget_parent_attachment.py`
 - [ ] `zig build release-check`
 - [ ] Targeted examples/benchmarks (list):
 

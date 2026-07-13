@@ -371,6 +371,10 @@ pub fn build(b: *std.Build) void {
     const widget_lifecycle_mutation_step = b.step("widget-lifecycle-mutation", "Check widget lifecycle changes use notifying setters");
     widget_lifecycle_mutation_step.dependOn(&widget_lifecycle_mutation_cmd.step);
 
+    const widget_parent_attachment_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_parent_attachment.py" });
+    const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent links use guarded attachment");
+    widget_parent_attachment_step.dependOn(&widget_parent_attachment_cmd.step);
+
     const owned_alloc_patterns_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_owned_allocation_patterns.py" });
     const owned_alloc_patterns_step = b.step("owned-allocation-patterns", "Check owned allocations are transactional");
     owned_alloc_patterns_step.dependOn(&owned_alloc_patterns_cmd.step);
@@ -435,6 +439,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(mouse_coordinate_contract_step);
     quality_step.dependOn(widget_owner_casts_step);
     quality_step.dependOn(widget_lifecycle_mutation_step);
+    quality_step.dependOn(widget_parent_attachment_step);
     quality_step.dependOn(owned_alloc_patterns_step);
     quality_step.dependOn(io_event_ownership_docs_step);
     quality_step.dependOn(unreachable_catches_step);
