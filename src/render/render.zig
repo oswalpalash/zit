@@ -1210,10 +1210,21 @@ pub const Renderer = struct {
         }
     }
 
+    const max_consecutive_zero_writes = 8;
+
     fn writeAllGeneric(writer: anytype, data: []const u8) !void {
         var remaining = data;
+        var consecutive_zero_writes: usize = 0;
         while (remaining.len > 0) {
             const written = try writer.write(remaining);
+            if (written == 0) {
+                consecutive_zero_writes += 1;
+                if (consecutive_zero_writes >= max_consecutive_zero_writes) {
+                    return error.WriteNoProgress;
+                }
+                continue;
+            }
+            consecutive_zero_writes = 0;
             remaining = remaining[written..];
         }
     }
@@ -1778,6 +1789,65 @@ pub const Renderer = struct {
         self.resetDirty();
     }
 };
+
+const ChunkedTestWriter = struct {
+    bytes: [64]u8 = undefined,
+    len: usize = 0,
+    max_chunk: usize,
+    zero_writes_remaining: usize,
+
+    fn write(self: *ChunkedTestWriter, data: []const u8) !usize {
+        if (self.zero_writes_remaining > 0) {
+            self.zero_writes_remaining -= 1;
+            return 0;
+        }
+        const written = @min(data.len, @min(self.max_chunk, self.bytes.len - self.len));
+        if (written == 0) return error.TestWriterFull;
+        @memcpy(self.bytes[self.len..][0..written], data[0..written]);
+        self.len += written;
+        return written;
+    }
+};
+
+const StalledTestWriter = struct {
+    calls: usize = 0,
+
+    fn write(self: *StalledTestWriter, data: []const u8) !usize {
+        std.debug.assert(data.len > 0);
+        self.calls += 1;
+        return 0;
+    }
+};
+
+test "renderer full write tolerates transient zero and partial progress" {
+    var writer = ChunkedTestWriter{
+        .max_chunk = 3,
+        .zero_writes_remaining = 2,
+    };
+
+    try Renderer.writeAllGeneric(&writer, "partial output");
+
+    try std.testing.expectEqualStrings("partial output", writer.bytes[0..writer.len]);
+}
+
+test "renderer output stall is bounded and frame remains retryable" {
+    const alloc = std.testing.allocator;
+    var renderer = try Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+    renderer.drawStr(0, 0, "zit", Color.named(.white), Color.named(.black), .{});
+
+    var stalled = StalledTestWriter{};
+    try std.testing.expectError(error.WriteNoProgress, renderer.renderToWriter(&stalled));
+    try std.testing.expectEqual(Renderer.max_consecutive_zero_writes, stalled.calls);
+    try std.testing.expect(renderer.has_dirty);
+
+    var output = std.Io.Writer.Allocating.init(alloc);
+    defer output.deinit();
+    try renderer.renderToWriter(&output.writer);
+
+    try std.testing.expect(std.mem.indexOf(u8, output.written(), "zit") != null);
+    try std.testing.expect(!renderer.has_dirty);
+}
 
 test "renderer draws box outlines" {
     const alloc = std.testing.allocator;

@@ -40,6 +40,7 @@ Before a feature is promoted as stable, it needs:
 - Input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait. The PTY gate injects protocol bytes individually, and the native Windows matrix exercises wait timeout/readiness behavior.
 - Input polling must distinguish ordinary timeouts from transport failure. Hangup, invalid-descriptor, poll, and read errors must propagate instead of becoming no-event, Escape, or unknown-key results.
 - Bound resize handling must publish renderer dimensions and widget geometry as one transaction; allocation or layout failure preserves the previously committed size on both sides.
+- Renderer output must tolerate short and transient zero-byte writes without losing bytes, bound sustained zero-progress retries, and preserve dirty state when a frame cannot be flushed so callers can retry it.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
 ## Release Checklist
