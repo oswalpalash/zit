@@ -22,10 +22,12 @@ pub fn main() !void {
     // Initialize input handler with the parent allocator
     var input_handler = zit.input.InputHandler.init(allocator, &term);
 
-    // Enable raw mode and mouse tracking
+    // Enable raw mode, mouse tracking, and terminal focus reporting.
     try term.enableRawMode();
     try input_handler.enableMouse();
+    try input_handler.enableFocus();
     defer {
+        input_handler.disableFocus() catch |err| zit.terminal.reportCleanupError("input_handler.disableFocus", err);
         input_handler.disableMouse() catch |err| zit.terminal.reportCleanupError("input_handler.disableMouse", err);
         term.disableRawMode() catch |err| zit.terminal.reportCleanupError("term.disableRawMode", err);
     }
@@ -54,6 +56,7 @@ pub fn main() !void {
     try writer.writeAll("  Key events: 0\n");
     try writer.writeAll("  Mouse events: 0\n");
     try writer.writeAll("  Resize events: 0\n");
+    try writer.writeAll("  Focus events: 0\n");
 
     // Enable chord mode
     input_handler.chord_mode = true;
@@ -64,6 +67,7 @@ pub fn main() !void {
     var key_count: u32 = 0;
     var mouse_count: u32 = 0;
     var resize_count: u32 = 0;
+    var focus_count: u32 = 0;
 
     // Main event loop
     while (true) {
@@ -115,6 +119,10 @@ pub fn main() !void {
                         mouse.button,
                     });
                 },
+                .focus => |focus| {
+                    focus_count += 1;
+                    try writer.print("Focus: {s}", .{if (focus.focused) "gained" else "lost"});
+                },
                 .resize => |resize| {
                     resize_count += 1;
 
@@ -145,6 +153,8 @@ pub fn main() !void {
             try writer.print("  Mouse events: {d}    ", .{mouse_count});
             try term.moveCursor(0, 10);
             try writer.print("  Resize events: {d}    ", .{resize_count});
+            try term.moveCursor(0, 11);
+            try writer.print("  Focus events: {d}    ", .{focus_count});
             try stdout_writer.flush();
         }
     }

@@ -188,6 +188,7 @@ def run_example(
     *,
     term: str = "xterm-256color",
     interaction: tuple[bytes, str] | None = None,
+    required_text_markers: tuple[str, ...] = (),
     required_raw_markers: tuple[bytes, ...] = (),
 ) -> bytes:
     if pty is None:
@@ -290,6 +291,12 @@ def run_example(
                     f"{example.binary} emitted fatal diagnostic marker {marker!r}\n"
                     f"--- terminal tail ---\n{tail_text(bytes(output))}"
                 )
+        for marker in required_text_markers:
+            if marker not in text:
+                raise RuntimeError(
+                    f"{example.binary} omitted terminal protocol marker {marker!r}\n"
+                    f"--- terminal tail ---\n{tail_text(bytes(output))}"
+                )
         for marker in required_raw_markers:
             if marker not in output:
                 raise RuntimeError(
@@ -355,10 +362,11 @@ def main() -> int:
             args.rows,
             args.cols,
             term="xterm-kitty",
-            interaction=(b"\x1b[99;5u", "Key: Ctrl+'c' (ASCII: 99)"),
-            required_raw_markers=(b"\x1b[>1u", b"\x1b[<u"),
+            interaction=(b"\x1b[I\x1b[O\x1b[99;5u", "Key: Ctrl+'c' (ASCII: 99)"),
+            required_text_markers=("Focus: gained", "Focus: lost", "Focus events: 2"),
+            required_raw_markers=(b"\x1b[>1u", b"\x1b[<u", b"\x1b[?1004h", b"\x1b[?1004l"),
         )
-        print(f"ok input_test: Kitty CSI-u decoded and protocol stack restored ({len(kitty_data)} bytes)")
+        print(f"ok input_test: Kitty CSI-u and focus events decoded; protocol modes restored ({len(kitty_data)} bytes)")
 
     print(f"interactive PTY smoke passed for {len(examples)} example(s)")
     return 0

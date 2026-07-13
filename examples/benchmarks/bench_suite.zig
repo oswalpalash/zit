@@ -282,6 +282,8 @@ fn benchmarkInputLatency() !InputBench {
         "\x1b[1;5C",
         "\x1b[99;5u",
         "\x1b[57417;2u",
+        "\x1b[I",
+        "\x1b[O",
         "a",
         "Z",
         "\x1b[<64;10;5M",

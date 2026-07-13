@@ -12,13 +12,14 @@ PAIRS = (
     ("enterAlternateScreen", "exitAlternateScreen"),
     ("enableRawMode", "disableRawMode"),
     ("enableMouse", "disableMouse"),
+    ("enableFocus", "disableFocus"),
     ("hideCursor", "showCursor"),
 )
 
 SILENT_CLEANUP_PATTERNS = (
     re.compile(r"\b(?:term|terminal)\.deinit\(\)\s+catch\s+\{\s*\}"),
     re.compile(r"\.(?:exitAlternateScreen|disableRawMode|showCursor)\(\)\s+catch\s+\{\s*\}"),
-    re.compile(r"\binput_handler\.disableMouse\(\)\s+catch\s+\{\s*\}"),
+    re.compile(r"\binput_handler\.(?:disableMouse|disableFocus)\(\)\s+catch\s+\{\s*\}"),
 )
 
 PUBLIC_SNIPPET_PATHS = (
@@ -30,6 +31,7 @@ PUBLIC_SNIPPET_PATHS = (
 
 MODE_SETUP_CONTRACTS = (
     ("enableMouseEvents", "self.is_mouse_enabled = true", "compat.fileWriteAll"),
+    ("enableFocusEvents", "self.is_focus_reporting_enabled = true", "compat.fileWriteAll"),
     ("beginSynchronizedOutput", "self.is_sync_output = true", "compat.fileWriteAll"),
     ("enableBracketedPaste", "self.is_bracketed_paste = true", "compat.fileWriteAll"),
     ("enterAlternateScreen", "self.is_alt_screen = true", "compat.fileWriteAll"),
@@ -112,7 +114,14 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
         failures.append("src/terminal/terminal.zig: missing Terminal.deinit")
     else:
         raw_index = deinit_body.find("self.disableRawMode()")
-        for cleanup in ("showCursor", "disableMouseEvents", "endSynchronizedOutput", "disableBracketedPaste", "exitAlternateScreen"):
+        for cleanup in (
+            "showCursor",
+            "disableMouseEvents",
+            "disableFocusEvents",
+            "endSynchronizedOutput",
+            "disableBracketedPaste",
+            "exitAlternateScreen",
+        ):
             cleanup_index = deinit_body.find(f"self.{cleanup}()")
             if raw_index < 0 or cleanup_index < 0 or cleanup_index > raw_index:
                 failures.append(
@@ -121,6 +130,8 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
 
     if "mouse_enabled:" in input_text:
         failures.append("src/input/input.zig: InputHandler must not duplicate terminal mouse protocol state")
+    if "focus_reporting_enabled:" in input_text:
+        failures.append("src/input/input.zig: InputHandler must not duplicate terminal focus protocol state")
     enable_body = function_body(input_text, "enableMouse")
     disable_body = function_body(input_text, "disableMouse")
     if enable_body is not None and "?1000h" in enable_body:
@@ -131,6 +142,13 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
         failures.append("src/input/input.zig: InputHandler.enableMouse must delegate to Terminal.enableMouseEvents")
     if disable_body is None or "self.term.disableMouseEvents()" not in disable_body:
         failures.append("src/input/input.zig: InputHandler.disableMouse must delegate to Terminal.disableMouseEvents")
+
+    enable_focus_body = function_body(input_text, "enableFocus")
+    disable_focus_body = function_body(input_text, "disableFocus")
+    if enable_focus_body is None or "self.term.enableFocusEvents()" not in enable_focus_body:
+        failures.append("src/input/input.zig: InputHandler.enableFocus must delegate to Terminal.enableFocusEvents")
+    if disable_focus_body is None or "self.term.disableFocusEvents()" not in disable_focus_body:
+        failures.append("src/input/input.zig: InputHandler.disableFocus must delegate to Terminal.disableFocusEvents")
 
     return failures
 

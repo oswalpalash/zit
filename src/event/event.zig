@@ -42,6 +42,8 @@ pub const EventType = enum {
     drop,
     /// Window resize event
     resize,
+    /// Terminal window focus changed
+    terminal_focus,
     /// Focus change event
     focus_change,
     /// Custom application event
@@ -101,6 +103,8 @@ pub const Event = struct {
         drop: DragEventData,
         /// Window resize event data
         resize: ResizeEventData,
+        /// Terminal window focus event data
+        terminal_focus: TerminalFocusEventData,
         /// Focus change event data
         focus_change: FocusEventData,
         /// Custom application event data
@@ -183,6 +187,9 @@ pub fn fromInputEvent(ie: input.Event, target: ?*widget.Widget) Event {
         .resize => |resize_event| Event.init(.resize, target, .{ .resize = .{
             .width = resize_event.width,
             .height = resize_event.height,
+        } }),
+        .focus => |focus_event| Event.init(.terminal_focus, target, .{ .terminal_focus = .{
+            .focused = focus_event.focused,
         } }),
         .unknown => Event.init(.custom, target, .{ .custom = .{
             .id = 0,
@@ -384,6 +391,11 @@ pub const FocusEventData = struct {
     gained: bool,
     /// Previous focused widget
     previous: ?*widget.Widget,
+};
+
+/// Terminal-window focus event data, separate from widget focus ownership.
+pub const TerminalFocusEventData = struct {
+    focused: bool,
 };
 
 /// Custom event data
@@ -3494,6 +3506,16 @@ test "fromInputEvent converts resize events" {
     try std.testing.expectEqual(EventType.resize, event.type);
     try std.testing.expectEqual(@as(u16, 80), event.data.resize.width);
     try std.testing.expectEqual(@as(u16, 24), event.data.resize.height);
+}
+
+test "fromInputEvent keeps terminal focus separate from widget focus" {
+    const gained = fromInputEvent(input.Event{ .focus = input.FocusEvent.init(true) }, null);
+    try std.testing.expectEqual(EventType.terminal_focus, gained.type);
+    try std.testing.expect(gained.data.terminal_focus.focused);
+
+    const lost = fromInputEvent(input.Event{ .focus = input.FocusEvent.init(false) }, null);
+    try std.testing.expectEqual(EventType.terminal_focus, lost.type);
+    try std.testing.expect(!lost.data.terminal_focus.focused);
 }
 
 test "fromInputEvent converts unknown events to custom" {

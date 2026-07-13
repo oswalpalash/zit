@@ -246,6 +246,8 @@ pub const Terminal = struct {
     is_cursor_visible: bool,
     /// Whether mouse events are enabled
     is_mouse_enabled: bool,
+    /// Whether terminal focus reporting is enabled.
+    is_focus_reporting_enabled: bool = false,
     /// Allocator for terminal operations
     allocator: std.mem.Allocator,
     /// Detected terminal capabilities
@@ -323,6 +325,7 @@ pub const Terminal = struct {
             .is_raw_mode = false,
             .is_cursor_visible = true,
             .is_mouse_enabled = false,
+            .is_focus_reporting_enabled = false,
             .allocator = allocator,
             .capabilities = capabilities.detectWithAllocator(allocator),
             .is_sync_output = false,
@@ -361,6 +364,10 @@ pub const Terminal = struct {
 
         if (self.is_mouse_enabled) {
             self.disableMouseEvents() catch |err| rememberFirstError(&first_error, err);
+        }
+
+        if (self.is_focus_reporting_enabled) {
+            self.disableFocusEvents() catch |err| rememberFirstError(&first_error, err);
         }
 
         if (self.is_sync_output) {
@@ -659,6 +666,31 @@ pub const Terminal = struct {
 
         try compat.fileWriteAll(self.stdout_fd, "\x1b[?1006l\x1b[?1002l\x1b[?1000l");
         self.is_mouse_enabled = false;
+    }
+
+    /// Enable xterm-compatible terminal focus reporting (DECSET 1004).
+    pub fn enableFocusEvents(self: *Terminal) !void {
+        if (self.is_focus_reporting_enabled) return;
+        if (builtin.os.tag == .windows and !self.windows_vt_enabled) return;
+
+        self.is_focus_reporting_enabled = true;
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1004h");
+    }
+
+    /// Report whether this instance owns a focus-reporting cleanup obligation.
+    pub fn isFocusEnabled(self: *const Terminal) bool {
+        return self.is_focus_reporting_enabled;
+    }
+
+    /// Disable xterm-compatible terminal focus reporting (DECRST 1004).
+    pub fn disableFocusEvents(self: *Terminal) !void {
+        if (!self.is_focus_reporting_enabled) return;
+        if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
+            return error.VirtualTerminalUnavailable;
+        }
+
+        try compat.fileWriteAll(self.stdout_fd, "\x1b[?1004l");
+        self.is_focus_reporting_enabled = false;
     }
 
     /// Enable synchronized output mode (DEC 2026) to reduce flicker during large updates.

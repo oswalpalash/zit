@@ -69,6 +69,7 @@ pub fn main() !void {
                     // Redraw UI
                     drawUI(&renderer);
                 },
+                .focus => {},
                 .unknown => {},
             }
 

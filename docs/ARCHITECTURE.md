@@ -3,15 +3,15 @@
 This document explains how Zit fits together internally: the main modules, how data flows through the system, and the memory and event models that keep TUIs responsive.
 
 ## Module Overview
-- **terminal** – Cross-platform terminal driver (raw mode, cursor control, alt screen, sync output, mouse enable/disable, capability detection).
-- **input** – Decodes bytes from the terminal into semantic `KeyEvent`/`MouseEvent`/`resize` notifications and normalizes modifiers and special keys.
+- **terminal** – Cross-platform terminal driver (raw mode, cursor control, alt screen, sync output, mouse/focus reporting, capability detection).
+- **input** – Decodes bytes from the terminal into semantic key, mouse, terminal-focus, and resize notifications and normalizes modifiers and special keys.
 - **event** – Event types, dispatchers, queues, and propagation helpers (capturing/target/bubbling) used by widgets and application code.
 - **layout** – Geometry primitives (`Rect`, `Constraints`, flex helpers) plus adapters that let widgets plug into layout containers.
 - **render** – Double-buffered renderer with drawing primitives, ANSI/truecolor support, gradients, focus rings, and glyph width helpers.
 - **widget** – Base `Widget` + vtable, theme helpers, builder APIs, and the built-in widget set.
 - **memory** – `MemoryManager` composed of an arena for per-frame/temp allocations and a pool allocator sized for widgets.
 
-`Terminal` is the sole owner of process-terminal mode state. Its ANSI writes target the instance's `stdout_fd`, and mode flags represent cleanup obligations rather than optimistic success: if setup writes fail after changing some bytes, `deinit` still attempts the matching restoration. `InputHandler.enableMouse` / `disableMouse` are convenience delegates to that terminal-owned state.
+`Terminal` is the sole owner of process-terminal mode state. Its ANSI writes target the instance's `stdout_fd`, and mode flags represent cleanup obligations rather than optimistic success: if setup writes fail after changing some bytes, `deinit` still attempts the matching restoration. `InputHandler` mouse and terminal-focus controls are convenience delegates to that terminal-owned state.
 
 ## Data Flow (Text Diagrams)
 - **Input → Event → Widget → Render → Terminal**

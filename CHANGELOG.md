@@ -5,6 +5,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ## Unreleased
 
 ### Added
+- Opt-in terminal focus reporting with terminal-owned DECSET/DECRST 1004 lifecycle, decoded `CSI I` / `CSI O` input events, distinct application `.terminal_focus` events, benchmark coverage, and an end-to-end PTY release probe.
 - Rich widget catalog (tables with typeahead, context menus, tree and file browser, gauges/charts, dialogs, popups, drag targets, text inputs with bracketed paste, focus rings).
 - Theming system with light/dark/high-contrast palettes and per-widget `setTheme`/role-driven colors.
 - Event loop with timers, animations (easing/yoyo), background tasks, and non-blocking `tickOnce`/`pollUntil` helpers for embedding.
@@ -190,5 +191,5 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).
 
 ### Breaking Changes
+- `input.Event` adds `.focus`, and `event.EventType` / `Event.EventData` add `.terminal_focus`. Update exhaustive switches with the new cases (or an `else`) while keeping terminal focus distinct from widget `.focus_change`.
 - `InputHandler.mouse_enabled` was removed so mouse mode has one owner. Replace direct field reads with `input_handler.isMouseEnabled()`; `enableMouse` and `disableMouse` keep their existing signatures and now delegate to `Terminal`.
-- None.

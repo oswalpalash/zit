@@ -209,7 +209,7 @@ Quick starts
 
 System checks
 - `zig build terminal-test` (`examples/terminal_test.zig`): verify terminal capabilities, resize handling, and cursor control.
-- `zig build input-test` (`examples/input_test.zig`): stream key and mouse events to the screen to confirm input wiring.
+- `zig build input-test` (`examples/input_test.zig`): stream key, mouse, resize, and terminal-focus events to the screen to confirm input wiring.
 - `zig build render-test` (`examples/render_test.zig`): exercise color, style, and box drawing primitives.
 - `zig build layout-test` (`examples/layout_test.zig`): lay out widgets and layout primitives to validate sizing math.
 - `zig build widget-test` (`examples/widget_test.zig`): composite widget smoke test that renders a basic UI frame.

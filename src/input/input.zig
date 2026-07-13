@@ -40,11 +40,13 @@ fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
 /// This module provides functionality for processing keyboard and mouse input:
 /// - Keyboard event decoding (including special keys)
 /// - Mouse event handling
+/// - Terminal-window focus reporting
 /// - Focus navigation between UI elements
 /// Represents different types of input events
 pub const EventType = enum {
     key,
     mouse,
+    focus,
     resize,
     unknown,
 };
@@ -310,6 +312,15 @@ pub const MouseEvent = struct {
     }
 };
 
+/// Terminal-window focus event reported by DECSET 1004.
+pub const FocusEvent = struct {
+    focused: bool,
+
+    pub fn init(focused: bool) FocusEvent {
+        return .{ .focused = focused };
+    }
+};
+
 /// Represents a terminal resize event
 pub const ResizeEvent = struct {
     /// New width in columns
@@ -330,6 +341,7 @@ pub const ResizeEvent = struct {
 pub const Event = union(EventType) {
     key: KeyEvent,
     mouse: MouseEvent,
+    focus: FocusEvent,
     resize: ResizeEvent,
     unknown: void,
 };
@@ -1343,6 +1355,21 @@ pub const InputHandler = struct {
         try self.term.disableMouseEvents();
     }
 
+    /// Enable terminal-window focus reporting.
+    pub fn enableFocus(self: *InputHandler) !void {
+        try self.term.enableFocusEvents();
+    }
+
+    /// Report the terminal-owned focus-reporting state.
+    pub fn isFocusEnabled(self: *const InputHandler) bool {
+        return self.term.isFocusEnabled();
+    }
+
+    /// Disable terminal-window focus reporting.
+    pub fn disableFocus(self: *InputHandler) !void {
+        try self.term.disableFocusEvents();
+    }
+
     /// Read an event from input
     pub fn readEvent(self: *InputHandler) !Event {
         self.buffer_pos = 0;
@@ -1888,6 +1915,10 @@ fn parseCSISequence(reader: anytype, sink: anytype) !Event {
             return try parseMouseEventLegacy(reader, sink);
         }
 
+        if (param_count == 0 and !has_value and (next_byte == 'I' or next_byte == 'O')) {
+            return Event{ .focus = FocusEvent.init(next_byte == 'I') };
+        }
+
         if (next_byte >= '0' and next_byte <= '9') {
             current = appendDecimalParamDigit(current, next_byte - '0') orelse return Event{ .unknown = {} };
             has_value = true;
@@ -2080,6 +2111,19 @@ test "parse CSI shift tab" {
     const key_event = event.key;
     try std.testing.expectEqual(@as(u21, KeyCode.TAB), key_event.key);
     try std.testing.expect(key_event.modifiers.shift);
+}
+
+test "parse terminal focus reporting events" {
+    const gained = (try decodeEventFromBytes("\x1b[I")).?;
+    try std.testing.expectEqual(EventType.focus, std.meta.activeTag(gained));
+    try std.testing.expect(gained.focus.focused);
+
+    const lost = (try decodeEventFromBytes("\x1b[O")).?;
+    try std.testing.expectEqual(EventType.focus, std.meta.activeTag(lost));
+    try std.testing.expect(!lost.focus.focused);
+
+    const parameterized = (try decodeEventFromBytes("\x1b[1I")).?;
+    try std.testing.expectEqual(EventType.unknown, std.meta.activeTag(parameterized));
 }
 
 test "parse Kitty keyboard protocol flag one keys" {
@@ -2360,7 +2404,7 @@ test "resize polling throttle handles first poll interval and clock movement" {
     try std.testing.expect(shouldPollResize(1000, 900, 125));
 }
 
-test "input mouse mode is restored by terminal deinit before raw cleanup" {
+test "input terminal modes are restored by terminal deinit before raw cleanup" {
     if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
         return error.SkipZigTest;
     }
@@ -2395,9 +2439,12 @@ test "input mouse mode is restored by terminal deinit before raw cleanup" {
 
     try handler.enableMouse();
     try std.testing.expect(handler.isMouseEnabled());
+    try handler.enableFocus();
+    try std.testing.expect(handler.isFocusEnabled());
     term.is_raw_mode = true;
     try term.deinit();
     try std.testing.expect(!handler.isMouseEnabled());
+    try std.testing.expect(!handler.isFocusEnabled());
     try std.testing.expect(!term.is_mouse_enabled);
     try std.testing.expect(!term.is_raw_mode);
 
@@ -2413,7 +2460,9 @@ test "input mouse mode is restored by terminal deinit before raw cleanup" {
     }
     try std.testing.expectEqualStrings(
         "\x1b[?1000h\x1b[?1002h\x1b[?1006h" ++
+            "\x1b[?1004h" ++
             "\x1b[?1006l\x1b[?1002l\x1b[?1000l" ++
+            "\x1b[?1004l" ++
             "\x1b[0m",
         output[0..output_len],
     );
