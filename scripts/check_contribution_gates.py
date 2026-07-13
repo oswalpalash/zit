@@ -101,7 +101,7 @@ REQUIRED_BUILD_GATES = (
     'const ci_script_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_ci_script_coverage.py" });',
     'const ci_script_coverage_step = b.step("ci-script-coverage", "Check CI compiles release verification scripts");',
     "quality_step.dependOn(ci_script_coverage_step);",
-    'const draw_layout_boundary_step = b.step("draw-layout-boundary", "Check widget draw callbacks do not perform layout");',
+    'const draw_layout_boundary_step = b.step("draw-layout-boundary", "Check widget draw callbacks do not perform layout or allocate");',
     "quality_step.dependOn(draw_layout_boundary_step);",
     'const widget_parent_attachment_step = b.step("widget-parent-attachment", "Check widget parent mutations use guarded ownership helpers");',
     "quality_step.dependOn(widget_parent_attachment_step);",

@@ -28,7 +28,7 @@ pub const TableCellView = struct {
 
 const ViewRow = union(enum) {
     data: usize,
-    group: []u8,
+    group: usize,
 };
 
 /// TableColumn structure
@@ -44,6 +44,7 @@ pub const TableColumn = struct {
 };
 
 /// Delegate for supplying table rows without storing them in the widget.
+/// Returned cell text must remain valid across provider calls and drawing.
 pub const RowProvider = struct {
     ctx: ?*anyopaque = null,
     row_count: *const fn (?*anyopaque) usize,
@@ -257,12 +258,14 @@ pub const Table = struct {
         self.widget.markDirty();
     }
 
-    /// Group rows by the provided column (null disables grouping).
-    pub fn groupBy(self: *Table, column: ?usize) void {
+    /// Group rows by the provided column (null disables grouping), preflighting
+    /// retained draw-cache capacity before changing state.
+    pub fn groupBy(self: *Table, column: ?usize) !void {
         if (column) |idx| {
             if (idx >= self.columns.items.len) return;
         }
         if (self.grouping_column == column) return;
+        try self.ensureViewCapacity(self.dataRowCount(), column != null);
         self.grouping_column = column;
         self.view_dirty = true;
         self.widget.markDirty();
@@ -286,6 +289,8 @@ pub const Table = struct {
     /// Add a row to the table
     pub fn addRow(self: *Table, cells: []const []const u8) !void {
         if (self.row_provider != null) return error.VirtualRowsActive;
+        try self.rows.ensureUnusedCapacity(self.allocator, 1);
+        try self.ensureViewCapacity(self.rows.items.len + 1, self.grouping_column != null);
         var new_row = std.ArrayList(TableCell).empty;
         errdefer self.freeRow(&new_row);
         try new_row.ensureTotalCapacityPrecise(self.allocator, self.columns.items.len);
@@ -312,7 +317,7 @@ pub const Table = struct {
             });
         }
 
-        try self.rows.append(self.allocator, new_row);
+        self.rows.appendAssumeCapacity(new_row);
         self.view_dirty = true;
         self.widget.markDirty();
     }
@@ -533,12 +538,6 @@ pub const Table = struct {
     }
 
     fn clearViewRows(self: *Table) void {
-        for (self.view_rows.items) |row| {
-            switch (row) {
-                .group => |label| self.allocator.free(label),
-                else => {},
-            }
-        }
         self.view_rows.clearRetainingCapacity();
     }
 
@@ -748,12 +747,23 @@ pub const Table = struct {
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
     }
 
-    /// Switch to virtual row mode using an external provider.
-    pub fn useRowProvider(self: *Table, provider: RowProvider) void {
+    /// Switch to virtual row mode using an external provider after preflighting
+    /// retained draw-cache capacity for its current row count.
+    pub fn useRowProvider(self: *Table, provider: RowProvider) !void {
+        try self.ensureViewCapacity(provider.row_count(provider.ctx), self.grouping_column != null);
         self.clearRows();
         self.row_provider = provider;
         self.scroll_driver.snap(@floatFromInt(self.first_visible_row));
         self.cancelEdit();
+        self.view_dirty = true;
+        self.widget.markDirty();
+    }
+
+    /// Refresh retained view capacity after an attached provider changes row count.
+    /// Call this before drawing or handling input that observes the new row count.
+    pub fn refreshRowProvider(self: *Table) !void {
+        if (self.row_provider == null) return;
+        try self.ensureViewCapacity(self.dataRowCount(), self.grouping_column != null);
         self.view_dirty = true;
         self.widget.markDirty();
     }
@@ -792,43 +802,56 @@ pub const Table = struct {
         return self.rows.items.len;
     }
 
-    fn ensureView(self: *Table) void {
-        if (!self.view_dirty) return;
-
-        var next_order = self.buildOrder() catch return;
-        const next_rows = self.buildViewRows(next_order.items) catch {
-            next_order.deinit(self.allocator);
-            return;
-        };
-
-        self.visible_order.deinit(self.allocator);
-        self.clearViewRows();
-        self.view_rows.deinit(self.allocator);
-        self.visible_order = next_order;
-        self.view_rows = next_rows;
-        self.view_dirty = false;
+    fn viewCapacity(row_count: usize, grouped: bool) !usize {
+        return if (grouped) try std.math.mul(usize, row_count, 2) else row_count;
     }
 
-    fn buildOrder(self: *Table) !std.ArrayList(usize) {
+    fn ensureViewCapacity(self: *Table, row_count: usize, grouped: bool) !void {
+        try self.visible_order.ensureTotalCapacityPrecise(self.allocator, row_count);
+        try self.view_rows.ensureTotalCapacityPrecise(
+            self.allocator,
+            try viewCapacity(row_count, grouped),
+        );
+    }
+
+    fn ensureView(self: *Table) void {
+        if (!self.view_dirty) return;
         const count = self.dataRowCount();
-        var next_order = std.ArrayList(usize).empty;
-        if (count == 0) return next_order;
+        const required_view_capacity = viewCapacity(count, self.grouping_column != null) catch return;
+        if (self.visible_order.capacity < count or self.view_rows.capacity < required_view_capacity) return;
 
-        errdefer next_order.deinit(self.allocator);
-        try next_order.ensureTotalCapacityPrecise(self.allocator, count);
-        var i: usize = 0;
-        while (i < count) : (i += 1) {
-            next_order.appendAssumeCapacity(i);
+        self.visible_order.clearRetainingCapacity();
+        var row_idx: usize = 0;
+        while (row_idx < count) : (row_idx += 1) {
+            self.visible_order.appendAssumeCapacity(row_idx);
         }
-
         const lessThan = struct {
             fn less(ctx: *Table, lhs: usize, rhs: usize) bool {
                 return ctx.rowLessThan(lhs, rhs);
             }
         }.less;
+        std.sort.pdq(usize, self.visible_order.items, self, lessThan);
 
-        std.sort.pdq(usize, next_order.items, self, lessThan);
-        return next_order;
+        self.clearViewRows();
+        if (self.grouping_column) |group_col| {
+            var last_key: []const u8 = "";
+            var has_key = false;
+            for (self.visible_order.items) |visible_row| {
+                const key = self.cellView(visible_row, group_col).text;
+                const is_new = !has_key or !std.mem.eql(u8, key, last_key);
+                if (is_new) {
+                    self.view_rows.appendAssumeCapacity(.{ .group = visible_row });
+                    last_key = key;
+                    has_key = true;
+                }
+                self.view_rows.appendAssumeCapacity(.{ .data = visible_row });
+            }
+        } else {
+            for (self.visible_order.items) |visible_row| {
+                self.view_rows.appendAssumeCapacity(.{ .data = visible_row });
+            }
+        }
+        self.view_dirty = false;
     }
 
     fn rowLessThan(self: *Table, lhs: usize, rhs: usize) bool {
@@ -852,53 +875,6 @@ pub const Table = struct {
         const a_text = self.cellView(lhs, col).text;
         const b_text = self.cellView(rhs, col).text;
         return std.mem.order(u8, a_text, b_text);
-    }
-
-    fn freeViewRows(self: *Table, rows: []const ViewRow) void {
-        for (rows) |row| {
-            switch (row) {
-                .group => |label| self.allocator.free(label),
-                else => {},
-            }
-        }
-    }
-
-    fn buildViewRows(self: *Table, order: []const usize) !std.ArrayList(ViewRow) {
-        var next_rows = std.ArrayList(ViewRow).empty;
-        if (order.len == 0) return next_rows;
-
-        errdefer {
-            self.freeViewRows(next_rows.items);
-            next_rows.deinit(self.allocator);
-        }
-
-        const max_view_rows = if (self.grouping_column != null) try std.math.mul(usize, order.len, 2) else order.len;
-        try next_rows.ensureTotalCapacity(self.allocator, max_view_rows);
-
-        if (self.grouping_column) |group_col| {
-            var last_key: []const u8 = "";
-            var has_key = false;
-            for (order) |row_idx| {
-                const key = self.cellView(row_idx, group_col).text;
-                const is_new = !has_key or !std.mem.eql(u8, key, last_key);
-                if (is_new) {
-                    const copy = try self.allocator.dupe(u8, key);
-                    next_rows.append(self.allocator, .{ .group = copy }) catch |err| {
-                        self.allocator.free(copy);
-                        return err;
-                    };
-                    last_key = copy;
-                    has_key = true;
-                }
-                try next_rows.append(self.allocator, .{ .data = row_idx });
-            }
-        } else {
-            for (order) |row_idx| {
-                next_rows.appendAssumeCapacity(.{ .data = row_idx });
-            }
-        }
-
-        return next_rows;
     }
 
     fn viewIndexForDataRow(self: *Table, row: usize) ?usize {
@@ -1235,7 +1211,8 @@ pub const Table = struct {
             if (view_row == .group) {
                 x = content_x;
                 fillTableSpan(renderer, x, y, content_width, ' ', self.header_fg, self.header_bg, render.Style{ .bold = true });
-                const group_text = view_row.group;
+                const group_col = self.grouping_column orelse continue;
+                const group_text = self.cellView(view_row.group, group_col).text;
                 if (group_text.len > 0 and content_width > 2) {
                     if (u16Coord(x + 1)) |draw_x| {
                         if (u16Coord(y)) |draw_y| {
@@ -1711,7 +1688,7 @@ test "table typeahead search finds matching rows" {
         },
     };
 
-    table.useRowProvider(.{
+    try table.useRowProvider(.{
         .ctx = &provider_ctx,
         .row_count = Provider.rowCount,
         .cell_at = Provider.cellAt,
@@ -1774,10 +1751,10 @@ test "table visible mutations mark dirty" {
     try std.testing.expect(!table.widget.dirty);
 
     table.widget.clearDirty();
-    table.groupBy(0);
+    try table.groupBy(0);
     try std.testing.expect(table.widget.dirty);
     table.widget.clearDirty();
-    table.groupBy(0);
+    try table.groupBy(0);
     try std.testing.expect(!table.widget.dirty);
 
     table.widget.clearDirty();
@@ -1868,7 +1845,7 @@ test "table selection and provider changes mark dirty" {
     try std.testing.expect(table.first_visible_row > 0);
 
     table.widget.clearDirty();
-    table.useRowProvider(.{
+    try table.useRowProvider(.{
         .row_count = Provider.rowCount,
         .cell_at = Provider.cellAt,
     });
@@ -1883,6 +1860,60 @@ test "table selection and provider changes mark dirty" {
     table.widget.clearDirty();
     table.clearRowProvider();
     try std.testing.expect(!table.widget.dirty);
+}
+
+test "table row provider refresh preflights allocation-free draw capacity" {
+    const ProviderContext = struct {
+        row_count: usize,
+    };
+    const Provider = struct {
+        fn rowCount(ctx: ?*anyopaque) usize {
+            const provider_ctx: *ProviderContext = @ptrCast(@alignCast(ctx.?));
+            return provider_ctx.row_count;
+        }
+
+        fn cellAt(_: usize, _: usize, _: ?*anyopaque) TableCellView {
+            return .{ .text = "virtual" };
+        }
+    };
+
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+    try table.addColumn("Name", 8, true);
+
+    var provider_ctx = ProviderContext{ .row_count = 2 };
+    try table.useRowProvider(.{
+        .ctx = &provider_ctx,
+        .row_count = Provider.rowCount,
+        .cell_at = Provider.cellAt,
+    });
+    try table.widget.layout(layout_module.Rect.init(0, 0, 8, 4));
+    var renderer = try render.Renderer.init(alloc, 8, 4);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(usize, 2), table.view_rows.items.len);
+
+    provider_ctx.row_count = 4;
+    const original_allocator = table.allocator;
+    {
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        table.allocator = failing.allocator();
+        defer table.allocator = original_allocator;
+        try std.testing.expectError(error.OutOfMemory, table.refreshRowProvider());
+    }
+    try std.testing.expect(!table.view_dirty);
+    try std.testing.expectEqual(@as(usize, 2), table.view_rows.items.len);
+
+    try table.refreshRowProvider();
+    {
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        table.allocator = failing.allocator();
+        defer table.allocator = original_allocator;
+        try table.widget.draw(&renderer);
+    }
+    try std.testing.expect(!table.view_dirty);
+    try std.testing.expectEqual(@as(usize, 4), table.view_rows.items.len);
 }
 
 test "table border preserves header and row content" {
@@ -2075,7 +2106,7 @@ test "table sorts and groups rows" {
     try table.addRow(&.{ "A", "3" });
     try table.addRow(&.{ "A", "1" });
 
-    table.groupBy(0);
+    try table.groupBy(0);
     table.toggleSort(1);
     try table.widget.layout(layout_module.Rect.init(0, 0, 16, 6));
     table.ensureView();
@@ -2092,7 +2123,7 @@ test "table sorts and groups rows" {
     try std.testing.expectEqualStrings("1", first_cell);
 }
 
-test "table view cache preserves old rows on rebuild allocation failure" {
+test "table grouping capacity failure preserves view cache and draw rebuild is allocation-free" {
     const alloc = std.testing.allocator;
     var table = try Table.init(alloc);
     defer table.deinit();
@@ -2115,16 +2146,16 @@ test "table view cache preserves old rows on rebuild allocation failure" {
         try std.testing.expect(row == .data);
     }
 
-    table.groupBy(0);
-    table.toggleSort(1);
-
     const original_allocator = table.allocator;
-    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
-    table.allocator = failing.allocator();
-    table.ensureView();
-    table.allocator = original_allocator;
+    {
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        table.allocator = failing.allocator();
+        defer table.allocator = original_allocator;
+        try std.testing.expectError(error.OutOfMemory, table.groupBy(0));
+    }
 
-    try std.testing.expect(table.view_dirty);
+    try std.testing.expectEqual(@as(?usize, null), table.grouping_column);
+    try std.testing.expect(!table.view_dirty);
     try std.testing.expectEqual(@as(usize, 3), table.visible_order.items.len);
     try std.testing.expectEqual(@as(usize, 3), table.view_rows.items.len);
     for (table.visible_order.items, 0..) |row_idx, expected| {
@@ -2134,7 +2165,19 @@ test "table view cache preserves old rows on rebuild allocation failure" {
         try std.testing.expect(row == .data);
     }
 
-    table.ensureView();
+    try table.groupBy(0);
+    table.toggleSort(1);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 16, 6));
+    var renderer = try render.Renderer.init(alloc, 16, 6);
+    defer renderer.deinit();
+
+    {
+        var draw_failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        table.allocator = draw_failing.allocator();
+        defer table.allocator = original_allocator;
+        try table.widget.draw(&renderer);
+    }
+
     try std.testing.expect(!table.view_dirty);
     var group_count: usize = 0;
     for (table.view_rows.items) |row| {
@@ -2390,7 +2433,7 @@ test "table row provider sampling caps preferred height" {
     };
 
     table.virtual_sample_limit = 3;
-    table.useRowProvider(.{
+    try table.useRowProvider(.{
         .ctx = null,
         .row_count = Provider.rowCount,
         .cell_at = Provider.cellAt,

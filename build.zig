@@ -373,7 +373,7 @@ pub fn build(b: *std.Build) void {
     widget_lifecycle_mutation_step.dependOn(&widget_lifecycle_mutation_cmd.step);
 
     const draw_layout_boundary_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_draw_layout_boundary.py" });
-    const draw_layout_boundary_step = b.step("draw-layout-boundary", "Check widget draw callbacks do not perform layout");
+    const draw_layout_boundary_step = b.step("draw-layout-boundary", "Check widget draw callbacks do not perform layout or allocate");
     draw_layout_boundary_step.dependOn(&draw_layout_boundary_cmd.step);
 
     const widget_parent_attachment_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_widget_parent_attachment.py" });

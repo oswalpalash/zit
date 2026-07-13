@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Reject child layout calls from production widget draw callbacks.
+"""Reject layout and allocation work from production widget draw callbacks.
 
 Layout publishes geometry, dirty regions, and accessibility bounds. Calling it
 from draw makes render cost stateful and can republish bounds every frame.
-Widget draw callbacks must consume geometry prepared by their layout callback.
+Allocating from draw adds frame-time latency and makes rendering fail after
+successful widget setup. Draw callbacks must consume prepared geometry and
+retained storage.
 """
 
 from __future__ import annotations
@@ -17,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = (ROOT / "src" / "widget", ROOT / "examples")
 DRAW_ASSIGNMENT = re.compile(r"\.draw\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
 LAYOUT_CALL = re.compile(r"\.\s*layout\s*\(")
+DRAW_ALLOCATION = re.compile(
+    r"\bstd\.fmt\.allocPrint\s*\("
+    r"|\b(?:self\.)?allocator\.(?:alloc(?:WithOptions|Sentinel)?|alignedAlloc|create|dupeZ?|realloc|remap|resize)\s*\("
+    r"|\.(?:append|insert|resize|addOne|addManyAsArray|ensure(?:Total|Unused)Capacity(?:Precise)?|initCapacity|toOwnedSlice)\s*\(\s*self\.allocator\b",
+)
 SELF_CALL = re.compile(r"\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 TEST_DECLARATION = re.compile(r"(?m)^test\b")
 
@@ -97,7 +104,7 @@ def in_ranges(index: int, ranges: list[tuple[int, int]]) -> bool:
     return any(start <= index < end for start, end in ranges)
 
 
-def violations_in(source: str) -> list[tuple[int, str]]:
+def violations_in(source: str) -> list[tuple[int, str, str]]:
     masked = mask_non_code(source)
     tests = test_ranges(masked)
     callbacks = {
@@ -105,9 +112,9 @@ def violations_in(source: str) -> list[tuple[int, str]]:
         for match in DRAW_ASSIGNMENT.finditer(masked)
         if not in_ranges(match.start(), tests)
     }
-    violations: list[tuple[int, str]] = []
+    violations: list[tuple[int, str, str]] = []
 
-    def find_layout_call(function: str, seen: set[str]) -> int | None:
+    def find_forbidden_call(function: str, seen: set[str]) -> tuple[int, str] | None:
         if function in seen:
             return None
         seen.add(function)
@@ -118,17 +125,27 @@ def violations_in(source: str) -> list[tuple[int, str]]:
             start, end = body_range(masked, match.end())
             call = LAYOUT_CALL.search(masked, start, end)
             if call is not None:
-                return call.start()
+                return (
+                    call.start(),
+                    "must consume geometry prepared by layout; do not call Widget.layout() from draw",
+                )
+            allocation = DRAW_ALLOCATION.search(masked, start, end)
+            if allocation is not None:
+                return (
+                    allocation.start(),
+                    "must remain allocation-free; prepare data and capacity outside draw",
+                )
             for helper_call in SELF_CALL.finditer(masked, start, end):
-                indirect = find_layout_call(helper_call.group(1), seen)
+                indirect = find_forbidden_call(helper_call.group(1), seen)
                 if indirect is not None:
                     return indirect
         return None
 
     for callback in sorted(callbacks):
-        call = find_layout_call(callback, set())
-        if call is not None:
-            violations.append((call, callback))
+        violation = find_forbidden_call(callback, set())
+        if violation is not None:
+            index, message = violation
+            violations.append((index, callback, message))
     return violations
 
 
@@ -151,6 +168,15 @@ const vtable = VTable{ .draw = renderFrame, };
 fn renderFrame(_: *anyopaque) !void { try self.prepareFrame(); }
 fn prepareFrame(self: *Widget) !void { try self.child.layout(rect); }
 """
+    allocation_violation = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void { const text = try std.fmt.allocPrint(self.allocator, "{s}", .{value}); }
+"""
+    indirect_allocation = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void { try self.collectVisible(); }
+fn collectVisible(self: *Widget) !void { try self.visible.append(self.allocator, item); }
+"""
     test_only = """
 test "fixture" {
     const vtable = VTable{ .draw = drawFn, };
@@ -161,13 +187,21 @@ test "fixture" {
 const vtable = VTable{ .draw = drawFn, };
 fn drawFn(_: *anyopaque) !void { const message = ".layout("; _ = message; }
 """
+    retained_storage = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void { self.visible.appendAssumeCapacity(item); }
+"""
     if not violations_in(violation):
         raise AssertionError("draw-time layout was not detected")
     if not violations_in(indirect_violation):
         raise AssertionError("indirect draw-time layout was not detected")
-    for source in (clean, test_only, literal_only):
+    if not violations_in(allocation_violation):
+        raise AssertionError("draw-time allocation was not detected")
+    if not violations_in(indirect_allocation):
+        raise AssertionError("indirect draw-time allocation was not detected")
+    for source in (clean, test_only, literal_only, retained_storage):
         if violations_in(source):
-            raise AssertionError("clean or test-only layout was rejected")
+            raise AssertionError("clean or test-only draw code was rejected")
 
 
 def main() -> int:
@@ -187,20 +221,22 @@ def main() -> int:
                 if not in_ranges(match.start(), tests)
             }
         )
-        for index, callback in found:
+        for index, callback, message in found:
             rel = path.relative_to(ROOT)
             violations.append(
-                f"{rel}:{line_number(source, index)}: {callback} must consume geometry prepared by layout; "
-                "do not call Widget.layout() from draw"
+                f"{rel}:{line_number(source, index)}: {callback} {message}"
             )
 
     if violations:
-        sys.stderr.write("draw/layout boundary violation(s) found:\n")
+        sys.stderr.write("draw boundary violation(s) found:\n")
         for violation in violations:
             sys.stderr.write(f"  - {violation}\n")
         return 1
 
-    print(f"checked draw/layout boundaries for {callback_count} callback name(s) in {len(files)} file(s)")
+    print(
+        f"checked draw layout/allocation boundaries for {callback_count} "
+        f"callback name(s) in {len(files)} file(s)"
+    )
     return 0
 
 
@@ -208,5 +244,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (AssertionError, RuntimeError) as err:
-        sys.stderr.write(f"draw/layout boundary check failed: {err}\n")
+        sys.stderr.write(f"draw boundary check failed: {err}\n")
         raise SystemExit(1)

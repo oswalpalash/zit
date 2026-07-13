@@ -826,13 +826,22 @@ pub const Toolbar = struct {
         var cursor = offsetCoord(rect.x, 1);
         for (self.items.items, 0..) |item, idx| {
             if (cursor >= limit) break;
-            const display = try std.fmt.allocPrint(self.allocator, "[{s}]", .{item});
-            defer self.allocator.free(display);
-            const draw_len = @min(display.len, @as(usize, @intCast(limit - cursor)));
             const fg = if (idx == self.active) render.Color.named(.black) else render.Color.named(.white);
             const bg = if (idx == self.active) render.Color.named(.cyan) else render.Color.named(.bright_black);
-            renderer.drawStr(cursor, rect.y, display[0..draw_len], fg, bg, render.Style{ .bold = idx == self.active });
-            cursor = offsetCoord(cursor, draw_len + 1);
+            const style = render.Style{ .bold = idx == self.active };
+
+            renderer.drawChar(cursor, rect.y, '[', fg, bg, style);
+            cursor = offsetCoord(cursor, 1);
+            if (cursor < limit) {
+                const draw_len = @min(item.len, @as(usize, @intCast(limit - cursor)));
+                renderer.drawStr(cursor, rect.y, item[0..draw_len], fg, bg, style);
+                cursor = offsetCoord(cursor, draw_len);
+            }
+            if (cursor < limit) {
+                renderer.drawChar(cursor, rect.y, ']', fg, bg, style);
+                cursor = offsetCoord(cursor, 1);
+            }
+            cursor = offsetCoord(cursor, 1);
         }
     }
 
@@ -970,9 +979,9 @@ pub const Breadcrumbs = struct {
         return clampUsizeToU16(addUsizeClamped(icon_width, part.label.len));
     }
 
-    const VisibleSegment = struct {
-        idx: ?usize,
-        width: u16,
+    const VisibleRange = struct {
+        first: usize,
+        show_overflow: bool,
     };
 
     fn remaining(cursor: u16, limit: u16) usize {
@@ -980,28 +989,25 @@ pub const Breadcrumbs = struct {
         return @intCast(limit - cursor);
     }
 
-    fn computeVisible(self: *Breadcrumbs, available: u16, visible: *std.ArrayListUnmanaged(VisibleSegment)) !void {
-        visible.clearRetainingCapacity();
-        if (self.parts.items.len == 0 or available == 0) return;
+    fn computeVisible(self: *Breadcrumbs, available: u16) VisibleRange {
+        var first = self.parts.items.len;
+        if (first == 0 or available == 0) return .{ .first = first, .show_overflow = false };
         const available_width: usize = available;
         const sep_width = self.separator.len;
         var used: usize = 0;
-        var idx: usize = self.parts.items.len;
-        while (idx > 0) {
-            idx -= 1;
-            const width = segmentWidth(self.parts.items[idx]);
+        var visible_count: usize = 0;
+        while (first > 0) {
+            const candidate = first - 1;
+            const width = segmentWidth(self.parts.items[candidate]);
             const width_usize: usize = width;
-            const extra = if (visible.items.len > 0) sep_width else 0;
+            const extra = if (visible_count > 0) sep_width else 0;
             const needed = addUsizeClamped(addUsizeClamped(used, width_usize), extra);
-            if (visible.items.len > 0 and needed > available_width) break;
+            if (visible_count > 0 and needed > available_width) break;
+            first = candidate;
             used = needed;
-            try visible.append(self.allocator, .{ .idx = idx, .width = width });
+            visible_count += 1;
         }
-        std.mem.reverse(VisibleSegment, visible.items);
-        if (visible.items.len < self.parts.items.len and visible.items.len > 0) {
-            const overflow_width: u16 = @intCast(@min(self.overflow_token.len, @as(usize, available)));
-            try visible.insert(self.allocator, 0, .{ .idx = null, .width = overflow_width });
-        }
+        return .{ .first = first, .show_overflow = first > 0 and visible_count > 0 };
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1009,39 +1015,42 @@ pub const Breadcrumbs = struct {
         const self: *Breadcrumbs = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.visible) return;
         const rect = self.widget.rect;
-        var segments = std.ArrayListUnmanaged(VisibleSegment).empty;
-        defer segments.deinit(self.allocator);
-        try self.computeVisible(rect.width, &segments);
+        const visible = self.computeVisible(rect.width);
 
         var cursor: u16 = rect.x;
         const limit = offsetCoord(rect.x, rect.width);
-        for (segments.items, 0..) |seg, idx| {
-            if (seg.idx) |real_idx| {
-                const part = self.parts.items[real_idx];
-                if (part.icon) |icon_text| {
-                    const icon_draw_len = @min(icon_text.len, remaining(cursor, limit));
-                    const icon_draw = icon_text[0..icon_draw_len];
-                    renderer.drawStr(cursor, rect.y, icon_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
-                    cursor = offsetCoord(cursor, icon_draw_len);
-                    if (cursor < limit and remaining(cursor, limit) > 0) {
-                        renderer.drawChar(cursor, rect.y, ' ', render.Color.named(.default), render.Color.named(.default), render.Style{});
-                        cursor = offsetCoord(cursor, 1);
-                    }
-                }
+        if (visible.show_overflow) {
+            const overflow_draw = self.overflow_token[0..@min(self.overflow_token.len, remaining(cursor, limit))];
+            renderer.drawStr(cursor, rect.y, overflow_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+            cursor = offsetCoord(cursor, overflow_draw.len);
+            if (visible.first < self.parts.items.len and cursor < limit) {
+                const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
+                renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
+                cursor = offsetCoord(cursor, sep_draw.len);
+            }
+        }
 
-                const draw_part = part.label[0..@min(part.label.len, remaining(cursor, limit))];
-                const is_last = idx == segments.items.len - 1;
-                const color = if (is_last) render.Color.named(.white) else render.Color.named(.cyan);
-                const style = if (is_last) render.Style{ .bold = true } else render.Style{};
-                renderer.drawStr(cursor, rect.y, draw_part, color, render.Color.named(.default), style);
-                cursor = offsetCoord(cursor, draw_part.len);
-            } else {
-                const overflow_draw = self.overflow_token[0..@min(self.overflow_token.len, remaining(cursor, limit))];
-                renderer.drawStr(cursor, rect.y, overflow_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
-                cursor = offsetCoord(cursor, overflow_draw.len);
+        for (self.parts.items[visible.first..], visible.first..) |part, real_idx| {
+            if (cursor >= limit) break;
+            if (part.icon) |icon_text| {
+                const icon_draw_len = @min(icon_text.len, remaining(cursor, limit));
+                const icon_draw = icon_text[0..icon_draw_len];
+                renderer.drawStr(cursor, rect.y, icon_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{ .bold = true });
+                cursor = offsetCoord(cursor, icon_draw_len);
+                if (cursor < limit) {
+                    renderer.drawChar(cursor, rect.y, ' ', render.Color.named(.default), render.Color.named(.default), render.Style{});
+                    cursor = offsetCoord(cursor, 1);
+                }
             }
 
-            if (idx + 1 < segments.items.len and cursor < limit) {
+            const draw_part = part.label[0..@min(part.label.len, remaining(cursor, limit))];
+            const is_last = real_idx + 1 == self.parts.items.len;
+            const color = if (is_last) render.Color.named(.white) else render.Color.named(.cyan);
+            const style = if (is_last) render.Style{ .bold = true } else render.Style{};
+            renderer.drawStr(cursor, rect.y, draw_part, color, render.Color.named(.default), style);
+            cursor = offsetCoord(cursor, draw_part.len);
+
+            if (!is_last and cursor < limit) {
                 const sep_draw = self.separator[0..@min(self.separator.len, remaining(cursor, limit))];
                 renderer.drawStr(cursor, rect.y, sep_draw, render.Color.named(.bright_black), render.Color.named(.default), render.Style{});
                 cursor = offsetCoord(cursor, sep_draw.len);
@@ -1058,25 +1067,28 @@ pub const Breadcrumbs = struct {
         if (mouse.action != .press or mouse.button != 1) return false;
         const mx = mouse.x;
         const my = mouse.y;
-        if (my != self.widget.rect.y) return false;
+        if (!self.widget.rect.contains(mx, my)) return false;
 
-        var segments = std.ArrayListUnmanaged(VisibleSegment).empty;
-        defer segments.deinit(self.allocator);
-        try self.computeVisible(self.widget.rect.width, &segments);
-
+        const visible = self.computeVisible(self.widget.rect.width);
         var cursor: u16 = self.widget.rect.x;
         const limit = offsetCoord(self.widget.rect.x, self.widget.rect.width);
-        for (segments.items) |seg| {
-            if (seg.idx) |idx| {
-                const start = cursor;
-                const end = offsetCoord(cursor, seg.width);
-                if (mx >= start and mx < end) {
-                    self.on_click.?(idx);
-                    return true;
-                }
+        if (visible.show_overflow) {
+            cursor = offsetCoord(cursor, @min(self.overflow_token.len, remaining(cursor, limit)));
+            if (visible.first < self.parts.items.len and cursor < limit) {
+                cursor = offsetCoord(cursor, @min(self.separator.len, remaining(cursor, limit)));
             }
-            cursor = offsetCoord(cursor, seg.width);
-            if (cursor < limit) {
+        }
+
+        var idx = visible.first;
+        while (idx < self.parts.items.len and cursor < limit) : (idx += 1) {
+            const start = cursor;
+            const end = @min(offsetCoord(cursor, segmentWidth(self.parts.items[idx])), limit);
+            if (mx >= start and mx < end) {
+                self.on_click.?(idx);
+                return true;
+            }
+            cursor = end;
+            if (idx + 1 < self.parts.items.len and cursor < limit) {
                 cursor = offsetCoord(cursor, @min(self.separator.len, remaining(cursor, limit)));
             }
         }
@@ -2702,6 +2714,45 @@ test "breadcrumbs mouse clicks rendered segment only" {
     try std.testing.expectEqual(@as(?usize, null), test_breadcrumb_click_index);
 
     try std.testing.expect(try crumbs.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 13, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
+}
+
+test "toolbar and breadcrumbs draw and hit test without allocating" {
+    const alloc = std.testing.allocator;
+    var toolbar = try Toolbar.init(alloc, &[_][]const u8{ "Open", "Save" });
+    defer toolbar.deinit();
+    var crumbs = try Breadcrumbs.init(alloc, &[_][]const u8{ "home", "repo" });
+    defer crumbs.deinit();
+
+    try toolbar.widget.layout(layout_module.Rect.init(0, 0, 20, 1));
+    try crumbs.widget.layout(layout_module.Rect.init(0, 1, 20, 1));
+    var renderer = try render.Renderer.init(alloc, 20, 2);
+    defer renderer.deinit();
+
+    {
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        const original = toolbar.allocator;
+        toolbar.allocator = failing.allocator();
+        defer toolbar.allocator = original;
+        try toolbar.widget.draw(&renderer);
+    }
+
+    test_breadcrumb_click_index = null;
+    crumbs.setOnClick(struct {
+        fn call(idx: usize) void {
+            test_breadcrumb_click_index = idx;
+        }
+    }.call);
+    {
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        const original = crumbs.allocator;
+        crumbs.allocator = failing.allocator();
+        defer crumbs.allocator = original;
+        try crumbs.widget.draw(&renderer);
+        try std.testing.expect(try crumbs.widget.handleEvent(.{
+            .mouse = input.MouseEvent.init(.press, 8, 1, 1, 0),
+        }));
+    }
     try std.testing.expectEqual(@as(?usize, 1), test_breadcrumb_click_index);
 }
 

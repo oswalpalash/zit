@@ -177,6 +177,23 @@ table.setTypeaheadTimeout(750);
 browser.resetTypeahead(); // after directory changes
 ```
 
+Table sorting and grouping rebuild retained view caches without allocating in
+`draw`. Enabling grouping and attaching a virtual provider therefore preflight
+that storage at explicit fallible boundaries:
+
+```zig
+try table.groupBy(0);
+try table.useRowProvider(provider);
+
+// After provider.row_count starts returning a different value:
+try table.refreshRowProvider();
+```
+
+`RowProvider.cell_at` text is borrowed and must remain valid across provider
+calls and drawing. Call `refreshRowProvider` before drawing or handling table
+input after the provider's row count changes. A failed preflight leaves the
+existing grouping or row source unchanged.
+
 ### Timers & Animations
 ```zig
 var app = zit.event.Application.init(allocator);
