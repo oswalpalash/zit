@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Orientation for the split pane divider.
 pub const SplitOrientation = enum {
@@ -223,27 +224,51 @@ pub const SplitPane = struct {
         const self: *SplitPane = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
 
+        var snapshots: [2]layout_transaction.Snapshot = undefined;
+        var snapshot_count: usize = 0;
+        if (self.first) |child| {
+            snapshots[snapshot_count] = layout_transaction.Snapshot.capture(child);
+            snapshot_count += 1;
+        }
+        if (self.second) |child| {
+            snapshots[snapshot_count] = layout_transaction.Snapshot.capture(child);
+            snapshot_count += 1;
+        }
+        const child_snapshots = snapshots[0..snapshot_count];
+
         if (self.orientation == .horizontal) {
             const available = if (rect.width > 1) rect.width - 1 else rect.width;
             const first_width = firstChildSpan(self.ratio, available, self.min_child_size);
             const second_width = available - first_width;
             if (self.first) |child| {
-                try child.layout(layout_module.Rect.init(rect.x, rect.y, first_width, rect.height));
+                child.layout(layout_module.Rect.init(rect.x, rect.y, first_width, rect.height)) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
             if (self.second) |child| {
                 const second_x = addOffsetClamped(addOffsetClamped(rect.x, first_width), if (rect.width > 1) 1 else 0);
-                try child.layout(layout_module.Rect.init(second_x, rect.y, second_width, rect.height));
+                child.layout(layout_module.Rect.init(second_x, rect.y, second_width, rect.height)) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
         } else {
             const available = if (rect.height > 1) rect.height - 1 else rect.height;
             const first_height = firstChildSpan(self.ratio, available, self.min_child_size);
             const second_height = available - first_height;
             if (self.first) |child| {
-                try child.layout(layout_module.Rect.init(rect.x, rect.y, rect.width, first_height));
+                child.layout(layout_module.Rect.init(rect.x, rect.y, rect.width, first_height)) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
             if (self.second) |child| {
                 const second_y = addOffsetClamped(addOffsetClamped(rect.y, first_height), if (rect.height > 1) 1 else 0);
-                try child.layout(layout_module.Rect.init(rect.x, second_y, rect.width, second_height));
+                child.layout(layout_module.Rect.init(rect.x, second_y, rect.width, second_height)) catch |err| {
+                    layout_transaction.rollback(child_snapshots);
+                    return err;
+                };
             }
         }
     }
@@ -259,6 +284,47 @@ pub const SplitPane = struct {
         const first_focusable = if (self.first) |child| child.canFocus() else false;
         const second_focusable = if (self.second) |child| child.canFocus() else false;
         return first_focusable or second_focusable;
+    }
+};
+
+const FailingLayoutWidget = struct {
+    widget: base.Widget = base.Widget.init(&vtable),
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = getPreferredSizeFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {
+        return error.LayoutFailed;
+    }
+
+    fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(1, 1);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
+    }
+};
+
+const BoundsRecorder = struct {
+    calls: usize = 0,
+    last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+    fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+        const self: *BoundsRecorder = @ptrCast(@alignCast(ctx.?));
+        self.calls += 1;
+        self.last = rect;
     }
 };
 
@@ -281,6 +347,46 @@ test "split pane lays out children" {
     try std.testing.expectEqual(@as(u16, 30), pane.widget.rect.width);
     try std.testing.expect(left.widget.rect.width > 0);
     try std.testing.expect(right.widget.rect.width > 0);
+}
+
+test "split pane rolls back both children on late layout failure" {
+    const alloc = std.testing.allocator;
+    var pane = try SplitPane.init(alloc);
+    defer pane.deinit();
+
+    var first = try @import("label.zig").Label.init(alloc, "first");
+    defer first.deinit();
+    var failing = FailingLayoutWidget{};
+    try pane.setFirst(&first.widget);
+    try pane.setSecond(&failing.widget);
+
+    const pane_original = layout_module.Rect.init(1, 2, 3, 4);
+    const first_original = layout_module.Rect.init(5, 6, 7, 8);
+    const second_original = layout_module.Rect.init(9, 10, 11, 12);
+    pane.widget.rect = pane_original;
+    pane.widget.clearDirty();
+    first.widget.rect = first_original;
+    first.widget.clearDirty();
+    failing.widget.rect = second_original;
+    failing.widget.clearDirty();
+
+    var bounds = BoundsRecorder{ .last = first_original };
+    first.widget.accessibility_ctx = &bounds;
+    first.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    var failing_allocator = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = pane.allocator;
+    pane.allocator = failing_allocator.allocator();
+    defer pane.allocator = original_allocator;
+
+    try std.testing.expectError(error.LayoutFailed, pane.widget.layout(layout_module.Rect.init(0, 0, 30, 8)));
+    try std.testing.expectEqual(pane_original, pane.widget.rect);
+    try std.testing.expectEqual(first_original, first.widget.rect);
+    try std.testing.expectEqual(second_original, failing.widget.rect);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expect(!failing.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(first_original, bounds.last);
 }
 
 test "split pane marks dirty when visible state changes" {

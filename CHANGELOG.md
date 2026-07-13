@@ -28,6 +28,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - `Container`, `FlexContainer`, and `GridContainer` now roll back direct-child geometry, dirty regions, and accessibility bounds when a later child rejects layout, using retained snapshot storage to avoid steady-state frame allocations.
 - `TabView.layout` now rolls back its header and every loaded tab, including inactive content, when a later child rejects layout; tab insertion reserves reusable snapshot capacity so normal layout remains allocation-free.
 - `ScrollContainer.layout` now uses fixed stack snapshots to restore both scrollbars and content when content rejects layout, preserving accessibility bounds and content-size caches without heap work.
+- `SplitPane.layout` now uses fixed stack snapshots to restore both child slots when either child rejects layout, preserving accessibility bounds without heap work.
 - Terminal state cleanup checker (`scripts/check_terminal_state_cleanup.py`, `zig build terminal-state-cleanup`) fails when public interactive examples enable raw mode, mouse tracking, hidden cursor, or alternate screen without matching restoration.
 - Unreachable catch checker (`scripts/check_unreachable_catches.py`, `zig build unreachable-catches`) rejects `catch unreachable` in Zig sources so recoverable failures are not converted into panics.
 - DebugAllocator cleanup checker (`scripts/check_debug_allocator_cleanup.py`) fails when public examples or memory tests ignore allocator deinit status.
