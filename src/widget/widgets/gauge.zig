@@ -191,9 +191,10 @@ pub const Gauge = struct {
 
         // Render label centered.
         if (self.label.len > 0 and inner_width > 2 and inner_height > 0) {
-            const text_x = addOffsetClamped(inner_x, (inner_width - @as(u16, @intCast(@min(self.label.len, inner_width)))) / 2);
+            const clipped = render.clipTextToWidth(self.label, inner_width);
+            const text_x = addOffsetClamped(inner_x, (inner_width - clipped.width) / 2);
             const text_y = addOffsetClamped(inner_y, inner_height / 2);
-            renderer.drawStr(text_x, text_y, self.label, self.fg, self.bg, render.Style{ .bold = true });
+            renderer.drawStr(text_x, text_y, clipped.text, self.fg, self.bg, render.Style{ .bold = true });
         }
     }
 
@@ -246,6 +247,26 @@ test "gauge fills proportionally" {
 
     try std.testing.expect(filled > 0);
     try std.testing.expect(empty > 0);
+}
+
+test "gauge centers and clips unicode label by terminal cells" {
+    const alloc = std.testing.allocator;
+    var gauge = try Gauge.init(alloc);
+    defer gauge.deinit();
+    gauge.border = .none;
+    try gauge.setLabel("界e\u{301}👩‍💻Z");
+
+    try gauge.widget.layout(layout_module.Rect.init(0, 0, 6, 1));
+    var renderer = try render.Renderer.init(alloc, 6, 1);
+    defer renderer.deinit();
+    try gauge.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(0, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(1, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(2, 0).glyph.slice());
+    try std.testing.expectEqualStrings("👩‍💻", renderer.back.getCell(3, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(4, 0).continuation);
+    try std.testing.expectEqual(@as(u21, 'Z'), renderer.back.getCell(5, 0).codepoint());
 }
 
 test "gauge clamps edge draw coordinates" {

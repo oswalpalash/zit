@@ -91,10 +91,10 @@ pub const Popup = struct {
         if (rect.width <= 2 or rect.height <= 2) return;
 
         const inner_width = rect.width - 2;
-        const text_len = @as(u16, @intCast(@min(self.message.len, inner_width)));
-        const text_x = addOffsetClamped(rect.x, 1 + (inner_width - text_len) / 2);
+        const clipped = render.clipTextToWidth(self.message, inner_width);
+        const text_x = addOffsetClamped(rect.x, 1 + (inner_width - clipped.width) / 2);
         const text_y = addOffsetClamped(rect.y, rect.height / 2);
-        renderer.drawStr(text_x, text_y, self.message[0..text_len], self.fg, self.bg, render.Style{ .bold = true });
+        renderer.drawStr(text_x, text_y, clipped.text, self.fg, self.bg, render.Style{ .bold = true });
     }
 
     fn handleEventFn(widget_ptr: *anyopaque, event: input.Event) anyerror!bool {
@@ -140,7 +140,7 @@ pub const Popup = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *Popup = @fieldParentPtr("widget", widget_ref);
         const min_width: u16 = 10;
-        const text_width = @as(u16, @intCast(@min(self.message.len, @as(usize, self.width -| 4)) + 4));
+        const text_width = @min(render.measureText(self.message).width, self.width -| 4) + 4;
         return layout_module.Size.init(@max(min_width, @min(text_width, self.width)), self.height);
     }
 
@@ -163,6 +163,22 @@ test "popup centers and dismisses" {
     const handled = try popup.widget.handleEvent(event);
     try std.testing.expect(handled);
     try std.testing.expect(!popup.widget.visible);
+}
+
+test "popup centers grapheme-clipped text by terminal cells" {
+    const alloc = std.testing.allocator;
+    var popup = try Popup.init(alloc, "界e\u{301}👩‍💻Z");
+    defer popup.deinit();
+
+    try popup.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+    try popup.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 1).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 1).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 1).glyph.slice());
+    try std.testing.expectEqual(@as(u16, 10), (try popup.widget.getPreferredSize()).width);
 }
 
 fn popupInitAllocationFailureHarness(allocator: std.mem.Allocator) !void {

@@ -1216,7 +1216,8 @@ pub const Table = struct {
                 if (group_text.len > 0 and content_width > 2) {
                     if (u16Coord(x + 1)) |draw_x| {
                         if (u16Coord(y)) |draw_y| {
-                            renderer.drawStr(draw_x, draw_y, group_text[0..@min(group_text.len, @as(usize, @intCast(content_width - 2)))], self.header_fg, self.header_bg, render.Style{ .bold = true });
+                            const clipped = render.clipTextToWidth(group_text, content_width - 2);
+                            renderer.drawStr(draw_x, draw_y, clipped.text, self.header_fg, self.header_bg, render.Style{ .bold = true });
                         }
                     }
                 }
@@ -2121,6 +2122,24 @@ test "table sorts and groups rows" {
     const first_data = table.dataIndexForView(1).?;
     const first_cell = table.cellView(first_data, 1).text;
     try std.testing.expectEqualStrings("1", first_cell);
+}
+
+test "table group headers clip unicode by terminal cells" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+    try table.addColumn("Group", 6, true);
+    try table.addRow(&.{"界e\u{301}👩‍💻"});
+    try table.groupBy(0);
+    try table.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 2).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 2).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 2).glyph.slice());
 }
 
 test "table grouping capacity failure preserves view cache and draw rebuild is allocation-free" {

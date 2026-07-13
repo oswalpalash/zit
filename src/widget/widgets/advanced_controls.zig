@@ -180,22 +180,23 @@ pub const ToggleSwitch = struct {
         if (rect.width == 0 or rect.height == 0) return;
 
         // Switch pill representation: [ ON ]
-        const width: usize = rect.width;
-        const pill_width: usize = 6;
+        const width = rect.width;
+        const pill_width: u16 = 6;
         renderer.drawChar(rect.x, rect.y, '[', fg, bg, self.track_style);
         if (width >= pill_width) {
             renderer.drawChar(offsetCoord(rect.x, pill_width - 1), rect.y, ']', fg, bg, self.track_style);
         }
         const text = if (self.on) " ON " else " OFF";
         if (width > 1) {
-            renderer.drawStr(offsetCoord(rect.x, 1), rect.y, text[0..@min(text.len, width - 1)], fg, bg, render.Style{ .bold = true });
+            const clipped = render.clipTextToWidth(text, width - 1);
+            renderer.drawStr(offsetCoord(rect.x, 1), rect.y, clipped.text, fg, bg, render.Style{ .bold = true });
         }
 
         if (width > pill_width and self.label.len > 0) {
             const available = width - pill_width - 1;
             if (available > 0) {
-                const draw_text = self.label[0..@min(self.label.len, available)];
-                renderer.drawStr(offsetCoord(rect.x, pill_width + 1), rect.y, draw_text, fg, bg, self.track_style);
+                const clipped = render.clipTextToWidth(self.label, available);
+                renderer.drawStr(offsetCoord(rect.x, pill_width + 1), rect.y, clipped.text, fg, bg, self.track_style);
             }
         }
     }
@@ -232,7 +233,7 @@ pub const ToggleSwitch = struct {
     fn getPreferredSizeFn(widget_ptr: *anyopaque) anyerror!layout_module.Size {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *ToggleSwitch = @fieldParentPtr("widget", widget_ref);
-        const width = cappedPaddedWidth(self.label.len, 8, 60);
+        const width = cappedPaddedWidth(render.measureText(self.label).width, 8, 60);
         return layout_module.Size.init(width, 1);
     }
 
@@ -314,11 +315,12 @@ pub const RadioGroup = struct {
             const option = self.options.items[idx];
             const marker = if (idx == self.selected) "(*)" else "( )";
             const row_y = offsetCoord(rect.y, y);
-            renderer.drawStr(rect.x, row_y, marker[0..@min(marker.len, rect.width)], fg, bg, render.Style{});
-            if (rect.width > marker.len + 1) {
-                const available = rect.width - @as(u16, @intCast(marker.len)) - 1;
-                const draw_text = option[0..@min(option.len, available)];
-                renderer.drawStr(offsetCoord(rect.x, 4), row_y, draw_text, fg, bg, render.Style{});
+            const clipped_marker = render.clipTextToWidth(marker, rect.width);
+            renderer.drawStr(rect.x, row_y, clipped_marker.text, fg, bg, render.Style{});
+            if (rect.width > clipped_marker.width + 1) {
+                const available = rect.width - clipped_marker.width - 1;
+                const clipped_option = render.clipTextToWidth(option, available);
+                renderer.drawStr(offsetCoord(rect.x, clipped_marker.width + 1), row_y, clipped_option.text, fg, bg, render.Style{});
             }
         }
     }
@@ -377,7 +379,7 @@ pub const RadioGroup = struct {
         const self: *RadioGroup = @fieldParentPtr("widget", widget_ref);
         var max_len: usize = 0;
         for (self.options.items) |opt| {
-            max_len = @max(max_len, opt.len);
+            max_len = @max(max_len, render.measureText(opt).width);
         }
         const width = cappedPaddedWidth(max_len, 5, 80);
         const height = clampUsizeToU16(self.options.items.len);
@@ -686,20 +688,6 @@ pub const StatusBar = struct {
         return @intCast(@min(@as(usize, rect_x) + offset, std.math.maxInt(u16)));
     }
 
-    fn drawBoundedText(
-        renderer: *render.Renderer,
-        x: u16,
-        y: u16,
-        text: []const u8,
-        max_width: usize,
-        fg: render.Color,
-        bg: render.Color,
-        style: render.Style,
-    ) void {
-        if (max_width == 0 or text.len == 0) return;
-        renderer.drawStr(x, y, text[0..@min(text.len, max_width)], fg, bg, style);
-    }
-
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *StatusBar = @fieldParentPtr("widget", widget_ref);
@@ -708,48 +696,22 @@ pub const StatusBar = struct {
         renderer.fillRect(rect.x, rect.y, rect.width, rect.height, ' ', self.fg, self.bg, render.Style{ .bold = true });
         if (rect.width == 0) return;
 
-        const width: usize = rect.width;
-        const left_padding: usize = if (width > 1) 1 else 0;
-        drawBoundedText(
-            renderer,
-            xOffset(rect.x, left_padding),
-            rect.y,
-            self.left,
-            width - left_padding,
-            self.fg,
-            self.bg,
-            render.Style{},
-        );
+        const width = rect.width;
+        const left_padding: u16 = if (width > 1) 1 else 0;
+        const left = render.clipTextToWidth(self.left, width - left_padding);
+        renderer.drawStr(xOffset(rect.x, left_padding), rect.y, left.text, self.fg, self.bg, render.Style{});
 
         if (self.center.len > 0) {
-            const display_len = @min(self.center.len, width);
-            const center_offset = (width - display_len) / 2;
-            drawBoundedText(
-                renderer,
-                xOffset(rect.x, center_offset),
-                rect.y,
-                self.center,
-                display_len,
-                self.fg,
-                self.bg,
-                render.Style{ .bold = true },
-            );
+            const clipped = render.clipTextToWidth(self.center, width);
+            const center_offset = (width - clipped.width) / 2;
+            renderer.drawStr(xOffset(rect.x, center_offset), rect.y, clipped.text, self.fg, self.bg, render.Style{ .bold = true });
         }
 
         if (self.right.len > 0) {
-            const display_len = @min(self.right.len, width);
-            const right_padding: usize = if (width > display_len) 1 else 0;
-            const right_offset = width - display_len - right_padding;
-            drawBoundedText(
-                renderer,
-                xOffset(rect.x, right_offset),
-                rect.y,
-                self.right,
-                display_len,
-                self.fg,
-                self.bg,
-                render.Style{},
-            );
+            const clipped = render.clipTextToWidth(self.right, width);
+            const right_padding: u16 = if (width > clipped.width) 1 else 0;
+            const right_offset = width - clipped.width - right_padding;
+            renderer.drawStr(xOffset(rect.x, right_offset), rect.y, clipped.text, self.fg, self.bg, render.Style{});
         }
     }
 
@@ -1217,11 +1179,11 @@ pub const Pagination = struct {
             var buf: [8]u8 = undefined;
             const rendered = std.fmt.bufPrint(&buf, "{d}", .{page}) catch buf[0..0];
             const remaining_width = page_limit - cursor_offset;
-            const draw_text = rendered[0..@min(rendered.len, remaining_width)];
+            const clipped = render.clipTextToWidth(rendered, @intCast(remaining_width));
             const fg_page = if (page == self.current) render.Color.named(.black) else fg;
             const bg_page = if (page == self.current) render.Color.named(.green) else render.Color.named(.default);
-            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, draw_text, fg_page, bg_page, render.Style{ .bold = page == self.current });
-            cursor_offset += rendered.len + 1;
+            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, clipped.text, fg_page, bg_page, render.Style{ .bold = page == self.current });
+            cursor_offset += clipped.width + 1;
         }
         if (width > 1) {
             const next_offset = if (width > 2) width - 2 else width - 1;
@@ -1359,21 +1321,24 @@ pub const CommandPalette = struct {
         renderer.drawBox(rect.x, rect.y, rect.width, rect.height, .rounded, fg, bg, render.Style{ .bold = true });
         if (rect.height < 3) return;
 
-        const width: usize = rect.width;
-        const content_offset: usize = if (width > 2) 2 else 0;
-        const content_width: usize = if (width > 4) width - 4 else width - content_offset;
+        const width = rect.width;
+        const content_offset: u16 = if (width > 2) 2 else 0;
+        const content_width = if (width > 4) width - 4 else width - content_offset;
         if (content_width == 0) return;
 
         const content_x = offsetCoord(rect.x, content_offset);
-        renderer.drawStr(content_x, offsetCoord(rect.y, 1), self.title[0..@min(self.title.len, content_width)], fg, bg, render.Style{ .bold = true });
-        renderer.drawStr(content_x, offsetCoord(rect.y, 2), self.query[0..@min(self.query.len, content_width)], render.Color.named(.bright_cyan), bg, render.Style{});
+        const clipped_title = render.clipTextToWidth(self.title, content_width);
+        const clipped_query = render.clipTextToWidth(self.query, content_width);
+        renderer.drawStr(content_x, offsetCoord(rect.y, 1), clipped_title.text, fg, bg, render.Style{ .bold = true });
+        renderer.drawStr(content_x, offsetCoord(rect.y, 2), clipped_query.text, render.Color.named(.bright_cyan), bg, render.Style{});
 
         const max_rows = if (rect.height > 4) rect.height - 4 else 0;
         for (self.commands.items, 0..) |cmd, idx| {
             if (idx >= max_rows) break;
             const cmd_fg = if (idx == self.selected) render.Color.named(.black) else fg;
             const cmd_bg = if (idx == self.selected) render.Color.named(.cyan) else bg;
-            renderer.drawStr(content_x, offsetCoord(rect.y, 3 + idx), cmd[0..@min(cmd.len, content_width)], cmd_fg, cmd_bg, render.Style{});
+            const clipped = render.clipTextToWidth(cmd, content_width);
+            renderer.drawStr(content_x, offsetCoord(rect.y, 3 + idx), clipped.text, cmd_fg, cmd_bg, render.Style{});
         }
     }
 
@@ -1504,15 +1469,15 @@ pub const NotificationCenter = struct {
             renderer.fillRect(rect.x, row_y, rect.width, 1, ' ', colors[0], colors[1], render.Style{});
 
             const text_x = if (rect.width > 1) offsetCoord(rect.x, 1) else rect.x;
-            const title_width: usize = if (rect.width > 1) rect.width - 1 else rect.width;
-            const title = note.title[0..@min(note.title.len, title_width)];
-            renderer.drawStr(text_x, row_y, title, colors[0], colors[1], render.Style{ .bold = true });
+            const title_width = if (rect.width > 1) rect.width - 1 else rect.width;
+            const title = render.clipTextToWidth(note.title, title_width);
+            renderer.drawStr(text_x, row_y, title.text, colors[0], colors[1], render.Style{ .bold = true });
 
-            const body_offset = title.len + 1;
+            const body_offset = title.width + 1;
             if (rect.width > 2 and body_offset < rect.width - 1) {
                 const space_left = rect.width - 1 - body_offset;
-                const body = note.body[0..@min(note.body.len, space_left)];
-                renderer.drawStr(offsetCoord(text_x, body_offset), row_y, body, colors[0], colors[1], render.Style{});
+                const body = render.clipTextToWidth(note.body, space_left);
+                renderer.drawStr(offsetCoord(text_x, body_offset), row_y, body.text, colors[0], colors[1], render.Style{});
             }
             _ = idx;
             y += 1;
@@ -1613,15 +1578,15 @@ pub const Accordion = struct {
             const prefix = if (section.expanded) "▼" else "►";
             renderer.drawStr(rect.x, y, prefix, render.Color.named(.yellow), render.Color.named(.default), render.Style{ .bold = true });
             if (rect.width > 2) {
-                const title = section.title[0..@min(section.title.len, rect.width - 2)];
-                renderer.drawStr(offsetCoord(rect.x, 2), y, title, render.Color.named(.white), render.Color.named(.default), render.Style{});
+                const title = render.clipTextToWidth(section.title, rect.width - 2);
+                renderer.drawStr(offsetCoord(rect.x, 2), y, title.text, render.Color.named(.white), render.Color.named(.default), render.Style{});
             }
             row += 1;
             if (section.expanded and row < rect.height) {
                 const body_y = offsetCoord(rect.y, row);
                 if (rect.width > 2) {
-                    const body = section.body[0..@min(section.body.len, rect.width - 2)];
-                    renderer.drawStr(offsetCoord(rect.x, 2), body_y, body, render.Color.named(.bright_white), render.Color.named(.default), render.Style{});
+                    const body = render.clipTextToWidth(section.body, rect.width - 2);
+                    renderer.drawStr(offsetCoord(rect.x, 2), body_y, body.text, render.Color.named(.bright_white), render.Color.named(.default), render.Style{});
                 }
                 row += 1;
             }
@@ -1773,14 +1738,18 @@ pub const WizardStepper = struct {
         for (self.steps.items, 0..) |step, idx| {
             if (cursor_offset >= rect.width) break;
             var buf: [32]u8 = undefined;
-            const rendered = std.fmt.bufPrint(&buf, "{d}. {s}", .{ idx + 1, step }) catch buf[0..0];
-            const slice = rendered;
-            const remaining_width = rect.width - cursor_offset;
+            const prefix = std.fmt.bufPrint(&buf, "{d}. ", .{idx + 1}) catch buf[0..0];
             const selected = idx == active;
             const fg = if (selected) render.Color.named(.black) else render.Color.named(.white);
             const bg = if (selected) render.Color.named(.green) else render.Color.named(.default);
-            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, slice[0..@min(slice.len, remaining_width)], fg, bg, render.Style{ .bold = selected });
-            cursor_offset += slice.len + 2;
+            var remaining_width: u16 = @intCast(rect.width - cursor_offset);
+            const clipped_prefix = render.clipTextToWidth(prefix, remaining_width);
+            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, clipped_prefix.text, fg, bg, render.Style{ .bold = selected });
+            cursor_offset += clipped_prefix.width;
+            remaining_width -= clipped_prefix.width;
+            const clipped_step = render.clipTextToWidth(step, remaining_width);
+            renderer.drawStr(offsetCoord(rect.x, cursor_offset), rect.y, clipped_step.text, fg, bg, render.Style{ .bold = selected });
+            cursor_offset += clipped_step.width + 2;
         }
 
         // Progress bar along bottom if height > 1
@@ -1829,7 +1798,11 @@ pub const WizardStepper = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *WizardStepper = @fieldParentPtr("widget", widget_ref);
         var width: usize = 0;
-        for (self.steps.items) |step| width = addPaddedLenClamped(width, step.len, 4);
+        for (self.steps.items, 0..) |step, idx| {
+            var buf: [32]u8 = undefined;
+            const prefix = std.fmt.bufPrint(&buf, "{d}. ", .{idx + 1}) catch buf[0..0];
+            width = addPaddedLenClamped(width, render.measureText(step).width, render.measureText(prefix).width + 2);
+        }
         return layout_module.Size.init(@min(clampUsizeToU16(width), 200), 2);
     }
 
@@ -1863,6 +1836,93 @@ test "toggle switch renders state" {
     var snap = try testing.renderWidget(alloc, &toggle.widget, layout_module.Size.init(16, 1));
     defer snap.deinit(alloc);
     try snap.expectEqual("[ ON ] Turbo    \n");
+}
+
+test "advanced text controls clip and size unicode by terminal cells" {
+    const alloc = std.testing.allocator;
+
+    {
+        var toggle = try ToggleSwitch.init(alloc, "界e\u{301}");
+        defer toggle.deinit();
+        try std.testing.expectEqual(@as(u16, 11), (try toggle.widget.getPreferredSize()).width);
+        var snap = try testing.renderWidget(alloc, &toggle.widget, layout_module.Size.init(10, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+    }
+
+    {
+        var radio = try RadioGroup.init(alloc, &[_][]const u8{ "界", "e\u{301}" });
+        defer radio.deinit();
+        try std.testing.expectEqual(@as(u16, 7), (try radio.widget.getPreferredSize()).width);
+        var snap = try testing.renderWidget(alloc, &radio.widget, layout_module.Size.init(6, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+    }
+
+    {
+        var status = try StatusBar.init(alloc);
+        defer status.deinit();
+        status.setSegments("界", "e\u{301}", "👩‍💻");
+        var snap = try testing.renderWidget(alloc, &status.widget, layout_module.Size.init(12, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+        try snap.expectContains("👩‍💻");
+    }
+
+    {
+        var palette = try CommandPalette.init(alloc, &[_][]const u8{"界e\u{301}👩‍💻"});
+        defer palette.deinit();
+        palette.title = "界";
+        palette.query = "e\u{301}";
+        var snap = try testing.renderWidget(alloc, &palette.widget, layout_module.Size.init(8, 6));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+    }
+
+    {
+        var notifications = try NotificationCenter.init(alloc);
+        defer notifications.deinit();
+        try notifications.push("界", "e\u{301}👩‍💻", .info);
+        var snap = try testing.renderWidget(alloc, &notifications.widget, layout_module.Size.init(8, 1));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+    }
+
+    {
+        var accordion = try Accordion.init(alloc, &[_]Accordion.Section{.{
+            .title = "界e\u{301}X",
+            .body = "👩‍💻e\u{301}",
+            .expanded = true,
+        }});
+        defer accordion.deinit();
+        var snap = try testing.renderWidget(alloc, &accordion.widget, layout_module.Size.init(5, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+        try snap.expectContains("👩‍💻");
+    }
+
+    {
+        var wizard = try WizardStepper.init(alloc, &[_][]const u8{ "界", "e\u{301}" });
+        defer wizard.deinit();
+        try std.testing.expectEqual(@as(u16, 13), (try wizard.widget.getPreferredSize()).width);
+        var snap = try testing.renderWidget(alloc, &wizard.widget, layout_module.Size.init(13, 2));
+        defer snap.deinit(alloc);
+        try snap.expectWellFormed();
+        try snap.expectContains("界");
+        try snap.expectContains("e\u{301}");
+    }
 }
 
 test "toggle switch marks dirty when visible state changes" {

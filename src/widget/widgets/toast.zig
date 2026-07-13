@@ -112,13 +112,13 @@ pub const ToastManager = struct {
 
             const toast = self.toasts.items[idx];
             const colors = self.levelColors(toast.level);
-            const text_len = @as(u16, @intCast(@min(toast.message.len, rect.width - 2)));
+            const clipped = render.clipTextToWidth(toast.message, rect.width - 2);
             const box_height: u16 = 3;
             if (y_offset > rect.height - box_height) break;
             const y = addOffsetClamped(rect.y, y_offset);
 
             renderer.drawBox(rect.x, y, rect.width, box_height, .rounded, colors.fg, colors.bg, render.Style{});
-            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(y, 1), toast.message[0..text_len], colors.fg, colors.bg, render.Style{});
+            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(y, 1), clipped.text, colors.fg, colors.bg, render.Style{});
             y_offset += box_height;
         }
     }
@@ -168,6 +168,22 @@ test "toast manager drops expired messages" {
 
     manager.tick(2);
     try std.testing.expectEqual(@as(usize, 0), manager.toasts.items.len);
+}
+
+test "toast manager clips unicode messages on grapheme boundaries" {
+    const alloc = std.testing.allocator;
+    var manager = try ToastManager.init(alloc);
+    defer manager.deinit();
+    try manager.push("界e\u{301}👩‍💻", .info, 10);
+
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+    var renderer = try render.Renderer.init(alloc, 6, 3);
+    defer renderer.deinit();
+    try manager.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 1).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 1).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 1).glyph.slice());
 }
 
 test "toast manager marks dirty when visible stack changes" {

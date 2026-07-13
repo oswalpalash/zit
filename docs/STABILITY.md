@@ -66,7 +66,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_docs_commands.py` to require public Markdown command references to point at existing scripts, build steps, and format paths.
 - `python3 scripts/check_docs_links.py` to require public Markdown relative links, heading anchors, and local image targets to resolve and every top-level docs guide to appear in `docs/README.md`.
 - `python3 scripts/check_docs_zig_snippets.py` derives public module symbols from `src/main.zig` and requires Markdown Zig snippets to reference exported APIs, use notifying widget lifecycle and ownership helpers, avoid panic/unreachable patterns, and check `DebugAllocator` cleanup. Complete snippets marked with `<!-- docs-check: compile -->` are also compiled against the current `zit` module with declaration analysis enabled.
-- `python3 scripts/check_draw_layout_boundary.py` to require widget draw callbacks to consume prepared geometry and retained storage instead of invoking child layout or allocator-backed growth during rendering.
+- `python3 scripts/check_draw_layout_boundary.py` to require widget draw callbacks to consume prepared geometry and retained storage, and to clip arbitrary text by terminal cells instead of UTF-8 bytes.
 - `zig build draw-layout-boundary`
 - `python3 scripts/check_ci_script_coverage.py`
 - `zig build ci-script-coverage`
@@ -99,7 +99,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_owned_allocation_patterns.py` rejects non-transactional owned-string append and replacement patterns so allocator failures preserve existing widget state.
 - `python3 scripts/check_terminal_state_cleanup.py` requires interactive examples to restore raw mode, mouse tracking, cursor visibility, and alternate-screen state they enable; rejects empty `catch {}` blocks on terminal cleanup paths; and enforces instance-owned input/output handles, terminal-owned mouse state, independent Windows VT input/output negotiation and restoration, bounded cross-platform input continuations with fragmented PTY and native Windows wait coverage, explicit POSIX poll/read error propagation, pre-write cleanup obligations, and VT-mode teardown before raw-mode restoration.
 - `python3 scripts/check_unreachable_catches.py` rejects `catch unreachable` so recoverable errors are propagated or handled instead of becoming panics.
-- `python3 scripts/check_draw_layout_boundary.py` recursively rejects child layout calls and allocator-backed growth from production widget draw callbacks so redraws cannot republish geometry, accessibility bounds, or fail after successful setup.
+- `python3 scripts/check_draw_layout_boundary.py` recursively rejects child layout calls, allocator-backed growth, and byte-prefix text clipping from production widget draw callbacks so redraws cannot republish geometry, fail after successful setup, or split UTF-8 graphemes.
 - `python3 scripts/check_widget_parent_attachment.py` rejects direct `Widget.parent` assignments outside the guarded ownership primitives so new composite widgets cannot silently reparent children or clear links owned elsewhere.
 - Public helpers that accept an allocator and return text, such as `KeyEvent.getName`, must return allocator-owned memory on every branch so callers can use one cleanup rule.
 - Registry-style APIs that duplicate caller data, such as shortcuts and summary materialization, must be transactional under `OutOfMemory`: no leaked partial allocations and no index maps left inconsistent with stored entries.

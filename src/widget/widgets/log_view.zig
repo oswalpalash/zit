@@ -153,16 +153,17 @@ pub const LogView = struct {
             const y = addOffsetClamped(rect.y, row);
             const level_label = levelText(entry.level);
             const level_color = levelColor(entry.level);
-            const label_len: u16 = @intCast(level_label.len);
             const available = rect.width;
             if (available == 0) break;
 
-            renderer.drawStr(rect.x, y, level_label[0..@min(level_label.len, available)], level_color, self.bg, render.Style{ .bold = true });
+            const clipped_level = render.clipTextToWidth(level_label, available);
+            renderer.drawStr(rect.x, y, clipped_level.text, level_color, self.bg, render.Style{ .bold = true });
 
-            if (available > label_len + 1) {
-                const max_text = available - label_len - 1;
-                const text_x = addOffsetClamped(rect.x, label_len + 1);
-                renderer.drawStr(text_x, y, entry.text[0..@min(entry.text.len, max_text)], self.fg, self.bg, render.Style{});
+            if (available > clipped_level.width + 1) {
+                const max_text = available - clipped_level.width - 1;
+                const text_x = addOffsetClamped(rect.x, clipped_level.width + 1);
+                const clipped_text = render.clipTextToWidth(entry.text, max_text);
+                renderer.drawStr(text_x, y, clipped_text.text, self.fg, self.bg, render.Style{});
             }
             row += 1;
         }
@@ -283,6 +284,22 @@ test "log view auto scrolls to newest entries" {
         \\[ERR ] third  
         \\
     );
+}
+
+test "log view clips unicode message after level cell geometry" {
+    const alloc = std.testing.allocator;
+    var log = try LogView.init(alloc);
+    defer log.deinit();
+    try log.append(.info, "界e\u{301}👩‍💻");
+
+    try log.widget.layout(layout_module.Rect.init(0, 0, 10, 1));
+    var renderer = try render.Renderer.init(alloc, 10, 1);
+    defer renderer.deinit();
+    try log.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(7, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(8, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(9, 0).glyph.slice());
 }
 
 test "log view mouse wheel scrolls rendered viewport" {

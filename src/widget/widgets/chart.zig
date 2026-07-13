@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
@@ -218,17 +219,20 @@ pub const Chart = struct {
             const max_width = addU16Saturating(inner.width, addU16Saturating(self.padding, self.padding));
             const widget_bottom = addOffsetClamped(self.widget.rect.y, self.widget.rect.height);
             if (label_y < widget_bottom and max_width > 0) {
-                const label_width = @min(clampUsizeToU16(label.len), max_width);
-                const start_x = addOffsetClamped(inner.x, (inner.width - @min(label_width, inner.width)) / 2);
-                renderer.drawStr(start_x, label_y, label, fg, bg, render.Style{ .bold = true });
+                const clipped = render.clipTextToWidth(label, max_width);
+                const start_x = addOffsetClamped(inner.x, (inner.width - @min(clipped.width, inner.width)) / 2);
+                renderer.drawStr(start_x, label_y, clipped.text, fg, bg, render.Style{ .bold = true });
             }
         }
 
         if (self.y_axis_label) |label| {
             if (inner.x > 0 and inner.height > 0) {
-                for (label, 0..) |char, i| {
-                    if (i >= inner.height) break;
-                    renderer.drawChar(inner.x - 1, addOffsetClamped(inner.y, @intCast(i)), char, fg, bg, render.Style{ .bold = true });
+                var row: u16 = 0;
+                var graphemes = text_metrics.GraphemeIterator.init(label);
+                while (row < inner.height) : (row += 1) {
+                    const grapheme = graphemes.next() orelse break;
+                    const clipped = render.clipTextToWidth(grapheme.slice(), 2);
+                    renderer.drawStr(inner.x - clipped.width, addOffsetClamped(inner.y, row), clipped.text, fg, bg, render.Style{ .bold = true });
                 }
             }
         }
@@ -476,7 +480,7 @@ pub const Chart = struct {
         if (inner.width < 10 or inner.height < 3 or self.series.items.len == 0) return;
         var longest: usize = 0;
         for (self.series.items) |s| {
-            longest = @max(longest, s.label.len);
+            longest = @max(longest, render.measureText(s.label).width);
         }
         const legend_width: u16 = @min(inner.width, addU16Saturating(clampUsizeToU16(longest), 6));
         const legend_height: u16 = @min(clampUsizeToU16(self.series.items.len), inner.height);
@@ -491,8 +495,8 @@ pub const Chart = struct {
             const row_y = addOffsetClamped(start_y, @intCast(idx));
             renderer.drawChar(addOffsetClamped(start_x, 1), row_y, '■', s.color, bg, render.Style{ .bold = true });
             const available = legend_width - 3;
-            const label_slice = s.label[0..@min(s.label.len, @as(usize, @intCast(available)))];
-            renderer.drawStr(addOffsetClamped(start_x, 3), row_y, label_slice, fg, bg, render.Style{});
+            const clipped = render.clipTextToWidth(s.label, available);
+            renderer.drawStr(addOffsetClamped(start_x, 3), row_y, clipped.text, fg, bg, render.Style{});
         }
     }
 
@@ -727,6 +731,38 @@ test "chart draws scatter points with legend and labels" {
     }
     try std.testing.expect(markers > 0);
     try std.testing.expect(found_label);
+}
+
+test "chart axes and legend preserve unicode graphemes" {
+    const alloc = std.testing.allocator;
+    var chart = try Chart.init(alloc);
+    defer chart.deinit();
+    chart.setType(.scatter);
+    try chart.setAxisLabels("e\u{301}", "界");
+    try chart.addSeries("👩‍💻", &[_]f32{ 0, 1, 2 }, null, null);
+    try chart.widget.layout(layout_module.Rect.init(0, 0, 20, 9));
+
+    var renderer = try render.Renderer.init(alloc, 20, 9);
+    defer renderer.deinit();
+    try chart.widget.draw(&renderer);
+
+    var found_x = false;
+    var found_y = false;
+    var found_legend = false;
+    for (0..20) |x| {
+        for (0..9) |y| {
+            const cell = renderer.back.getCell(@intCast(x), @intCast(y)).*;
+            found_x = found_x or std.mem.eql(u8, cell.glyph.slice(), "e\u{301}");
+            found_y = found_y or std.mem.eql(u8, cell.glyph.slice(), "界");
+            found_legend = found_legend or std.mem.eql(u8, cell.glyph.slice(), "👩‍💻");
+        }
+    }
+    try std.testing.expect(found_x);
+    try std.testing.expect(found_y);
+    try std.testing.expect(found_legend);
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 1).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 1).continuation);
+    try std.testing.expectEqual(@as(u21, '│'), renderer.back.getCell(3, 1).codepoint());
 }
 
 test "chart clamps edge draw coordinates across chart types" {

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Reject layout and allocation work from production widget draw callbacks.
+"""Reject layout, allocation, and byte-clipping work from widget draws.
 
 Layout publishes geometry, dirty regions, and accessibility bounds. Calling it
 from draw makes render cost stateful and can republish bounds every frame.
 Allocating from draw adds frame-time latency and makes rendering fail after
 successful widget setup. Draw callbacks must consume prepared geometry and
-retained storage.
+retained storage. Arbitrary text must be clipped by terminal-cell width so draw
+paths cannot split UTF-8 or disagree with rendered geometry.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ DRAW_ALLOCATION = re.compile(
     r"\bstd\.fmt\.allocPrint\s*\("
     r"|\b(?:self\.)?allocator\.(?:alloc(?:WithOptions|Sentinel)?|alignedAlloc|create|dupeZ?|realloc|remap|resize)\s*\("
     r"|\.(?:append|insert|resize|addOne|addManyAsArray|ensure(?:Total|Unused)Capacity(?:Precise)?|initCapacity|toOwnedSlice)\s*\(\s*self\.allocator\b",
+)
+BYTE_PREFIX_CLIP = re.compile(r"\[\s*0\s*\.\.\s*@min\s*\([^;\n]*?\.len\b")
+BYTE_CLIP_BOUND = re.compile(
+    r"\b(?:const|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"[^;]*?@min\s*\([^;]*?\.len\b[^;]*?;",
 )
 SELF_CALL = re.compile(r"\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 TEST_DECLARATION = re.compile(r"(?m)^test\b")
@@ -135,6 +141,21 @@ def violations_in(source: str) -> list[tuple[int, str, str]]:
                     allocation.start(),
                     "must remain allocation-free; prepare data and capacity outside draw",
                 )
+            byte_clip = BYTE_PREFIX_CLIP.search(masked, start, end)
+            if byte_clip is not None:
+                return (
+                    byte_clip.start(),
+                    "must clip arbitrary text by terminal cells; use render.clipTextToWidth instead of byte-prefix slicing",
+                )
+            for bound in BYTE_CLIP_BOUND.finditer(masked, start, end):
+                prefix_slice = re.compile(
+                    r"\[\s*0\s*\.\.\s*" + re.escape(bound.group(1)) + r"\s*\]"
+                ).search(masked, bound.end(), end)
+                if prefix_slice is not None:
+                    return (
+                        prefix_slice.start(),
+                        "must clip arbitrary text by terminal cells; use render.clipTextToWidth instead of byte-prefix slicing",
+                    )
             for helper_call in SELF_CALL.finditer(masked, start, end):
                 indirect = find_forbidden_call(helper_call.group(1), seen)
                 if indirect is not None:
@@ -177,6 +198,17 @@ const vtable = VTable{ .draw = drawFn, };
 fn drawFn(_: *anyopaque) !void { try self.collectVisible(); }
 fn collectVisible(self: *Widget) !void { try self.visible.append(self.allocator, item); }
 """
+    byte_clip_violation = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void { renderer.drawStr(x, y, self.label[0..@min(self.label.len, width)]); }
+"""
+    indirect_byte_clip = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void {
+    const label_len = @as(u16, @intCast(@min(self.label.len, width)));
+    renderer.drawStr(x, y, self.label[0..label_len]);
+}
+"""
     test_only = """
 test "fixture" {
     const vtable = VTable{ .draw = drawFn, };
@@ -191,6 +223,14 @@ fn drawFn(_: *anyopaque) !void { const message = ".layout("; _ = message; }
 const vtable = VTable{ .draw = drawFn, };
 fn drawFn(_: *anyopaque) !void { self.visible.appendAssumeCapacity(item); }
 """
+    cell_clipping = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void {
+    const clipped = render.clipTextToWidth(self.label, width);
+    renderer.drawStr(x, y, clipped.text);
+    const fixed = buffer[0..len];
+}
+"""
     if not violations_in(violation):
         raise AssertionError("draw-time layout was not detected")
     if not violations_in(indirect_violation):
@@ -199,7 +239,11 @@ fn drawFn(_: *anyopaque) !void { self.visible.appendAssumeCapacity(item); }
         raise AssertionError("draw-time allocation was not detected")
     if not violations_in(indirect_allocation):
         raise AssertionError("indirect draw-time allocation was not detected")
-    for source in (clean, test_only, literal_only, retained_storage):
+    if not violations_in(byte_clip_violation):
+        raise AssertionError("draw-time byte clipping was not detected")
+    if not violations_in(indirect_byte_clip):
+        raise AssertionError("indirect draw-time byte clipping was not detected")
+    for source in (clean, test_only, literal_only, retained_storage, cell_clipping):
         if violations_in(source):
             raise AssertionError("clean or test-only draw code was rejected")
 
@@ -234,7 +278,7 @@ def main() -> int:
         return 1
 
     print(
-        f"checked draw layout/allocation boundaries for {callback_count} "
+        f"checked draw layout/allocation/text-geometry boundaries for {callback_count} "
         f"callback name(s) in {len(files)} file(s)"
     )
     return 0

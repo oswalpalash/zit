@@ -137,9 +137,9 @@ pub const Block = struct {
             const border_inset: u16 = if (self.border == .none) 0 else 1;
             if (rect.width > border_inset * 2 and rect.height > 0) {
                 const start_x = addOffsetClamped(rect.x, border_inset);
-                const available: usize = @intCast(rect.width - border_inset * 2);
-                const slice_len = @min(title_text.len, available);
-                renderer.drawStr(start_x, rect.y, title_text[0..slice_len], self.title_color, self.bg, self.title_style);
+                const available = rect.width - border_inset * 2;
+                const clipped = render.clipTextToWidth(title_text, available);
+                renderer.drawStr(start_x, rect.y, clipped.text, self.title_color, self.bg, self.title_style);
             }
         }
 
@@ -283,6 +283,23 @@ test "block draws title inside border" {
 
     const cell = renderer.back.getCell(1, 0).*;
     try std.testing.expectEqual('S', cell.codepoint());
+}
+
+test "block title clipping preserves wide and combining graphemes" {
+    const alloc = std.testing.allocator;
+    var block = try Block.init(alloc);
+    defer block.deinit();
+    try block.setTitle("界e\u{301}X");
+    block.setBorder(.single);
+
+    try block.widget.layout(layout_module.Rect.init(0, 0, 5, 3));
+    var renderer = try render.Renderer.init(alloc, 5, 3);
+    defer renderer.deinit();
+    try block.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 0).glyph.slice());
 }
 
 test "block marks dirty when visible state changes" {

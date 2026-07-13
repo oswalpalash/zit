@@ -310,7 +310,8 @@ pub const ResourceMeter = struct {
         const percent = @as(u8, @intFromFloat(value * 100));
         const text = std.fmt.bufPrint(&buf, "{s}: {d}%", .{ self.label, percent }) catch "meter";
         if (text.len > 0 and rect.height > 0) {
-            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(rect.y, rect.height / 2), text[0..@min(text.len, @as(usize, @intCast(rect.width - 2)))], self.fg, self.bg, render.Style{ .bold = true });
+            const clipped = render.clipTextToWidth(text, rect.width - 2);
+            renderer.drawStr(addOffsetClamped(rect.x, 1), addOffsetClamped(rect.y, rect.height / 2), clipped.text, self.fg, self.bg, render.Style{ .bold = true });
         }
     }
 
@@ -637,6 +638,24 @@ test "resource meter writes label text" {
         if (cell.codepoint() == 'C') seen_c = true;
     }
     try std.testing.expect(seen_c);
+}
+
+test "resource meter clips formatted unicode label by cells" {
+    const alloc = std.testing.allocator;
+    var meter = try ResourceMeter.init(alloc);
+    defer meter.deinit();
+    try meter.setLabel("界e\u{301}");
+    meter.setValue(0.42);
+    try meter.widget.layout(layout_module.Rect.init(0, 0, 7, 3));
+
+    var renderer = try render.Renderer.init(alloc, 7, 3);
+    defer renderer.deinit();
+    try meter.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 1).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 1).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 1).glyph.slice());
+    try std.testing.expectEqual(@as(u21, ':'), renderer.back.getCell(4, 1).codepoint());
 }
 
 test "resource meter setLabel preserves label on allocation failure" {

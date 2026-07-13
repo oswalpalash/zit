@@ -99,12 +99,12 @@ pub const MenuBar = struct {
         for (self.items.items, 0..) |item, idx| {
             if (x >= right) break;
             const draw_x = u16Coord(x) orelse break;
-            const available: usize = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
-            const label_len = @min(item.label.len, available);
+            const available: u16 = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
+            const clipped = render.clipTextToWidth(item.label, available);
             const fg = if (idx == self.active_index) self.active_fg else self.fg;
             const bg = if (idx == self.active_index) self.active_bg else self.bg;
-            renderer.drawStr(draw_x, rect.y, item.label[0..label_len], fg, bg, render.Style{ .bold = idx == self.active_index });
-            x += @as(u32, @intCast(label_len)) + 2; // add spacing
+            renderer.drawStr(draw_x, rect.y, clipped.text, fg, bg, render.Style{ .bold = idx == self.active_index });
+            x += @as(u32, clipped.width) + 2;
         }
     }
 
@@ -135,10 +135,10 @@ pub const MenuBar = struct {
                     var x: u32 = self.widget.rect.x;
                     for (self.items.items, 0..) |item, idx| {
                         if (x >= right) break;
-                        const available: usize = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
-                        const label_len = @min(item.label.len, available);
+                        const available: u16 = @intCast(@min(right - x, @as(u32, std.math.maxInt(u16))));
+                        const clipped = render.clipTextToWidth(item.label, available);
                         const start = x;
-                        const end = start + @as(u32, @intCast(label_len));
+                        const end = start + @as(u32, clipped.width);
                         if (mouse_x >= start and mouse_x < end) {
                             _ = self.setActiveIndex(idx);
                             if (item.on_select) |cb| cb();
@@ -165,7 +165,7 @@ pub const MenuBar = struct {
         const self: *MenuBar = @fieldParentPtr("widget", widget_ref);
         var width: usize = 0;
         for (self.items.items) |item| {
-            width = preferredWidthAfterItem(width, item.label.len);
+            width = preferredWidthAfterItem(width, render.measureText(item.label).width);
         }
         return layout_module.Size.init(@as(u16, @intCast(@max(width, 6))), 1);
     }
@@ -299,6 +299,34 @@ test "menubar mouse selects rendered item row" {
     try std.testing.expect(try bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 10, 4, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), bar.active_index);
     try std.testing.expectEqual(@as(usize, 1), test_menu_bar_calls);
+}
+
+test "menubar uses terminal cells for preferred width and mouse columns" {
+    const alloc = std.testing.allocator;
+    var bar = try MenuBar.init(alloc);
+    defer bar.deinit();
+    try bar.addItem("界", null);
+    try bar.addItem("e\u{301}", null);
+    try bar.addItem("👩‍💻", null);
+
+    try std.testing.expectEqual(@as(u16, 11), (try bar.widget.getPreferredSize()).width);
+    try bar.widget.layout(layout_module.Rect.init(0, 0, 11, 1));
+    var renderer = try render.Renderer.init(alloc, 11, 1);
+    defer renderer.deinit();
+    try bar.widget.draw(&renderer);
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(0, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(1, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(4, 0).glyph.slice());
+    try std.testing.expectEqualStrings("👩‍💻", renderer.back.getCell(7, 0).glyph.slice());
+
+    try std.testing.expect(try bar.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 4, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(usize, 1), bar.active_index);
+    try std.testing.expect(try bar.widget.handleEvent(.{
+        .mouse = input.MouseEvent.init(.press, 8, 0, 1, 0),
+    }));
+    try std.testing.expectEqual(@as(usize, 2), bar.active_index);
 }
 
 test "menubar mouse selection marks dirty when active item changes" {
