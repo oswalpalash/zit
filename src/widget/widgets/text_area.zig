@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base_widget.zig");
 const layout_module = @import("../../layout/layout.zig");
 const render = @import("../../render/render.zig");
+const text_metrics = @import("../../render/text_metrics.zig");
 const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
 const theme = @import("../theme.zig");
@@ -284,8 +285,14 @@ pub const TextArea = struct {
     }
 
     pub fn selectRange(self: *TextArea, start: usize, end: usize) void {
-        const clamped_start = @min(start, self.buffer.items.len);
-        const clamped_end = @min(end, self.buffer.items.len);
+        const clamped_start = if (start <= end)
+            graphemeBoundaryAtOrBefore(self.buffer.items, start)
+        else
+            graphemeBoundaryAtOrAfter(self.buffer.items, start);
+        const clamped_end = if (start <= end)
+            graphemeBoundaryAtOrAfter(self.buffer.items, end)
+        else
+            graphemeBoundaryAtOrBefore(self.buffer.items, end);
         if (self.selection) |sel| {
             if (sel.start == clamped_start and sel.end == clamped_end) return;
         }
@@ -312,7 +319,7 @@ pub const TextArea = struct {
     }
 
     pub fn addCursor(self: *TextArea, position: usize) !void {
-        const clamped = codepointBoundaryAtOrBefore(self.buffer.items, position);
+        const clamped = graphemeBoundaryAtOrBefore(self.buffer.items, position);
         if (clamped == self.cursor) return;
         if (std.mem.indexOfScalar(usize, self.extra_cursors.items, clamped) != null) return;
         try self.extra_cursors.append(self.allocator, clamped);
@@ -332,12 +339,12 @@ pub const TextArea = struct {
             return;
         }
 
-        const next_primary = codepointBoundaryAtOrBefore(self.buffer.items, positions[0]);
+        const next_primary = graphemeBoundaryAtOrBefore(self.buffer.items, positions[0]);
         var next_extra = std.ArrayList(usize).empty;
         errdefer next_extra.deinit(self.allocator);
 
         for (positions[1..]) |pos| {
-            const clamped = codepointBoundaryAtOrBefore(self.buffer.items, pos);
+            const clamped = graphemeBoundaryAtOrBefore(self.buffer.items, pos);
             if (clamped == next_primary) continue;
             if (std.mem.indexOfScalar(usize, next_extra.items, clamped) != null) continue;
             try next_extra.append(self.allocator, clamped);
@@ -454,10 +461,6 @@ pub const TextArea = struct {
         return self.max_bytes - self.buffer.items.len;
     }
 
-    fn isUtf8Continuation(byte: u8) bool {
-        return (byte & 0b1100_0000) == 0b1000_0000;
-    }
-
     fn utf8PrefixLen(value: []const u8, max_bytes: usize) usize {
         const limit = @min(value.len, max_bytes);
         var idx: usize = 0;
@@ -486,30 +489,105 @@ pub const TextArea = struct {
         return last_valid;
     }
 
-    fn previousCodepointBoundary(bytes: []const u8, pos: usize) usize {
-        if (pos == 0) return 0;
-        var idx = @min(pos, bytes.len) - 1;
-        while (idx > 0 and isUtf8Continuation(bytes[idx])) {
-            idx -= 1;
-        }
-        return idx;
+    const LineBounds = struct { start: usize, end: usize };
+
+    fn lineBoundsForIndex(bytes: []const u8, pos: usize) LineBounds {
+        const bounded = @min(pos, bytes.len);
+        var start = bounded;
+        while (start > 0 and bytes[start - 1] != '\n') : (start -= 1) {}
+
+        var end = bounded;
+        while (end < bytes.len and bytes[end] != '\n') : (end += 1) {}
+        return .{ .start = start, .end = end };
     }
 
-    fn nextCodepointBoundary(bytes: []const u8, pos: usize) usize {
-        if (pos >= bytes.len) return bytes.len;
-        var idx = pos + 1;
-        while (idx < bytes.len and isUtf8Continuation(bytes[idx])) {
-            idx += 1;
+    fn graphemeBoundaryAtOrBefore(bytes: []const u8, pos: usize) usize {
+        const bounded = @min(pos, bytes.len);
+        const bounds = lineBoundsForIndex(bytes, bounded);
+        const local = bounded - bounds.start;
+        const line = bytes[bounds.start..bounds.end];
+        var boundary: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |_| {
+            const next = it.it.i;
+            if (next > local) break;
+            boundary = next;
         }
-        return idx;
+        return bounds.start + boundary;
     }
 
-    fn codepointBoundaryAtOrBefore(bytes: []const u8, pos: usize) usize {
-        var idx = @min(pos, bytes.len);
-        while (idx > 0 and idx < bytes.len and isUtf8Continuation(bytes[idx])) {
-            idx -= 1;
+    fn graphemeBoundaryAtOrAfter(bytes: []const u8, pos: usize) usize {
+        const bounded = @min(pos, bytes.len);
+        const before = graphemeBoundaryAtOrBefore(bytes, bounded);
+        if (before == bounded) return bounded;
+        return nextGraphemeBoundary(bytes, before);
+    }
+
+    fn previousGraphemeBoundary(bytes: []const u8, pos: usize) usize {
+        const bounded = graphemeBoundaryAtOrBefore(bytes, pos);
+        if (bounded == 0) return 0;
+
+        const bounds = lineBoundsForIndex(bytes, bounded);
+        if (bounded == bounds.start) return bounded - 1;
+
+        const target = bounded - bounds.start;
+        var previous: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(bytes[bounds.start..bounds.end]);
+        while (it.next()) |_| {
+            const next = it.it.i;
+            if (next >= target) break;
+            previous = next;
         }
-        return idx;
+        return bounds.start + previous;
+    }
+
+    fn nextGraphemeBoundary(bytes: []const u8, pos: usize) usize {
+        const bounded = graphemeBoundaryAtOrBefore(bytes, pos);
+        if (bounded >= bytes.len) return bytes.len;
+
+        const bounds = lineBoundsForIndex(bytes, bounded);
+        if (bounded == bounds.end) return bounded + 1;
+
+        const target = bounded - bounds.start;
+        var it = text_metrics.GraphemeIterator.init(bytes[bounds.start..bounds.end]);
+        while (it.next()) |_| {
+            if (it.it.i > target) return bounds.start + it.it.i;
+        }
+        return bounds.end;
+    }
+
+    fn lineDisplayWidthThroughByte(line: []const u8, byte_offset: usize) usize {
+        const bounded = @min(byte_offset, line.len);
+        var cells: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |grapheme| {
+            if (it.it.i > bounded) break;
+            cells += grapheme.width;
+        }
+        return cells;
+    }
+
+    fn lineByteOffsetForColumn(line: []const u8, target_col: usize) usize {
+        var cells: usize = 0;
+        var boundary: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |grapheme| {
+            const next_cells = cells + grapheme.width;
+            if (next_cells > target_col) break;
+            cells = next_cells;
+            boundary = it.it.i;
+        }
+        return boundary;
+    }
+
+    fn lineColumnAtOrAfter(line: []const u8, target_col: usize) usize {
+        var cells: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |grapheme| {
+            if (cells >= target_col) return cells;
+            cells += grapheme.width;
+        }
+        return cells;
     }
 
     fn removeRange(self: *TextArea, start: usize, end: usize) void {
@@ -684,7 +762,7 @@ pub const TextArea = struct {
                 continue;
             }
 
-            const target = previousCodepointBoundary(self.buffer.items, cursor_pos);
+            const target = previousGraphemeBoundary(self.buffer.items, cursor_pos);
             self.removeRange(target, cursor_pos);
             removed += cursor_pos - target;
             try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
@@ -711,7 +789,7 @@ pub const TextArea = struct {
                 continue;
             }
 
-            const remove_end = nextCodepointBoundary(self.buffer.items, target);
+            const remove_end = nextGraphemeBoundary(self.buffer.items, target);
             self.removeRange(target, remove_end);
             removed += remove_end - target;
             try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
@@ -741,7 +819,7 @@ pub const TextArea = struct {
     }
 
     fn clampCursor(self: *TextArea) void {
-        self.cursor = codepointBoundaryAtOrBefore(self.buffer.items, self.cursor);
+        self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, self.cursor);
     }
 
     fn resetPreferredColumn(self: *TextArea) void {
@@ -757,17 +835,15 @@ pub const TextArea = struct {
     const Position = struct { row: usize, col: usize };
 
     fn positionForIndex(self: *const TextArea, idx: usize) Position {
+        const bounded = graphemeBoundaryAtOrBefore(self.buffer.items, idx);
+        const bounds = lineBoundsForIndex(self.buffer.items, bounded);
         var row: usize = 0;
-        var col: usize = 0;
         var i: usize = 0;
-        while (i < idx and i < self.buffer.items.len) : (i += 1) {
-            if (self.buffer.items[i] == '\n') {
-                row += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
+        while (i < bounds.start) : (i += 1) {
+            if (self.buffer.items[i] == '\n') row += 1;
         }
+        const line = self.buffer.items[bounds.start..bounds.end];
+        const col = lineDisplayWidthThroughByte(line, bounded - bounds.start);
         return .{ .row = row, .col = col };
     }
 
@@ -814,7 +890,9 @@ pub const TextArea = struct {
         } else {
             const right = self.scroll_col + @as(usize, @intCast(inner_width - 1));
             if (pos.col > right) {
-                self.scroll_col = pos.col - @as(usize, @intCast(inner_width - 1));
+                const candidate = pos.col - @as(usize, @intCast(inner_width - 1));
+                const range = self.lineRange(pos.row).?;
+                self.scroll_col = lineColumnAtOrAfter(self.buffer.items[range.start..range.end], candidate);
             }
         }
     }
@@ -831,7 +909,7 @@ pub const TextArea = struct {
         switch (action) {
             .cursor_left => {
                 if (self.cursor > 0) {
-                    self.cursor = previousCodepointBoundary(self.buffer.items, self.cursor);
+                    self.cursor = previousGraphemeBoundary(self.buffer.items, self.cursor);
                     self.resetPreferredColumn();
                     self.ensureVisible(viewport.width, viewport.height);
                     return true;
@@ -840,7 +918,7 @@ pub const TextArea = struct {
             },
             .cursor_right => {
                 if (self.cursor < self.buffer.items.len) {
-                    self.cursor = nextCodepointBoundary(self.buffer.items, self.cursor);
+                    self.cursor = nextGraphemeBoundary(self.buffer.items, self.cursor);
                     self.resetPreferredColumn();
                     self.ensureVisible(viewport.width, viewport.height);
                     return true;
@@ -899,13 +977,11 @@ pub const TextArea = struct {
 
         const target_row: usize = @intCast(target_row_signed);
         if (self.lineRange(target_row)) |range| {
-            const line_len = range.end - range.start;
-            const new_col = @min(line_len, desired_col);
-            self.cursor = range.start + new_col;
+            const line = self.buffer.items[range.start..range.end];
+            self.cursor = range.start + lineByteOffsetForColumn(line, desired_col);
         } else {
             self.cursor = self.buffer.items.len;
         }
-        self.resetPreferredColumn();
         self.ensureVisible(self.viewportSize().width, inner_height);
         return true;
     }
@@ -987,7 +1063,7 @@ pub const TextArea = struct {
         if (self.buffer.items.len == 0) return false;
         if (self.extra_cursors.items.len == 0) {
             if (self.cursor == 0) return false;
-            const remove_start = previousCodepointBoundary(self.buffer.items, self.cursor);
+            const remove_start = previousGraphemeBoundary(self.buffer.items, self.cursor);
             self.removeRange(remove_start, self.cursor);
             self.cursor = remove_start;
             self.resetPreferredColumn();
@@ -1006,7 +1082,7 @@ pub const TextArea = struct {
 
         if (self.extra_cursors.items.len == 0) {
             if (self.cursor >= self.buffer.items.len) return false;
-            const remove_end = nextCodepointBoundary(self.buffer.items, self.cursor);
+            const remove_end = nextGraphemeBoundary(self.buffer.items, self.cursor);
             self.removeRange(self.cursor, remove_end);
             self.resetPreferredColumn();
             try self.finalizeChange(true, self.validate_on_change);
@@ -1014,6 +1090,50 @@ pub const TextArea = struct {
         }
 
         return try self.deleteForwardMulti();
+    }
+
+    fn drawLine(
+        renderer: *render.Renderer,
+        x: u16,
+        y: u16,
+        line: []const u8,
+        global_start: usize,
+        scroll_col: usize,
+        width: u16,
+        selection_range: ?Selection,
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    ) void {
+        const right = scroll_col + @as(usize, @intCast(width));
+        var cells: usize = 0;
+        var byte_start: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |grapheme| {
+            const byte_end = it.it.i;
+            const next_cells = cells + grapheme.width;
+            defer {
+                cells = next_cells;
+                byte_start = byte_end;
+            }
+
+            if (next_cells <= scroll_col) continue;
+            if (cells < scroll_col) continue;
+            if (cells >= right or next_cells > right) break;
+
+            var cell_style = style;
+            if (selection_range) |selection| {
+                const cluster_start = global_start + byte_start;
+                const cluster_end = global_start + byte_end;
+                if (cluster_start < selection.end and cluster_end > selection.start) {
+                    cell_style.reverse = true;
+                    cell_style.bold = true;
+                }
+            }
+
+            const draw_x = addOffsetClamped(x, @intCast(cells - scroll_col));
+            renderer.drawStr(draw_x, y, line[byte_start..byte_end], fg, bg, cell_style);
+        }
     }
 
     fn drawFn(widget_ptr: *anyopaque, renderer: *render.Renderer) anyerror!void {
@@ -1070,8 +1190,7 @@ pub const TextArea = struct {
         const selection_range = self.normalizedSelection();
 
         if (self.buffer.items.len == 0 and self.placeholder.len > 0) {
-            const clipped = self.placeholder[0..@min(self.placeholder.len, viewport.width)];
-            renderer.drawStr(inner_x, inner_y, clipped, fg, bg, style);
+            drawLine(renderer, inner_x, inner_y, self.placeholder, 0, 0, viewport.width, null, fg, bg, style);
         } else {
             var row: u16 = 0;
             while (row < viewport.height) : (row += 1) {
@@ -1079,24 +1198,7 @@ pub const TextArea = struct {
                 if (self.lineRange(line_idx)) |range| {
                     if (range.start == range.end and range.start >= self.buffer.items.len) break;
                     const line = self.buffer.items[range.start..range.end];
-                    if (self.scroll_col < line.len) {
-                        const slice_start = self.scroll_col;
-                        const end = @min(line.len, self.scroll_col + @as(usize, @intCast(viewport.width)));
-                        var col: usize = slice_start;
-                        while (col < end) : (col += 1) {
-                            const ch = line[col];
-                            const global_idx = range.start + col;
-                            var cell_style = style;
-                            if (selection_range) |sel| {
-                                if (global_idx >= sel.start and global_idx < sel.end) {
-                                    cell_style.reverse = true;
-                                    cell_style.bold = true;
-                                }
-                            }
-                            const draw_x = addOffsetClamped(inner_x, @intCast(col - slice_start));
-                            renderer.drawChar(draw_x, addOffsetClamped(inner_y, row), ch, fg, bg, cell_style);
-                        }
-                    }
+                    drawLine(renderer, inner_x, addOffsetClamped(inner_y, row), line, range.start, self.scroll_col, viewport.width, selection_range, fg, bg, style);
                 } else {
                     break;
                 }
@@ -1108,7 +1210,7 @@ pub const TextArea = struct {
             while (marks.next()) |mark| {
                 const pos = self.positionForIndex(mark.pos);
                 if (pos.row >= self.scroll_row and pos.row < self.scroll_row + @as(usize, @intCast(viewport.height))) {
-                    if (pos.col >= self.scroll_col and pos.col <= self.scroll_col + @as(usize, @intCast(viewport.width))) {
+                    if (pos.col >= self.scroll_col and pos.col < self.scroll_col + @as(usize, @intCast(viewport.width))) {
                         const cx = addOffsetClamped(inner_x, @intCast(pos.col - self.scroll_col));
                         const cy = addOffsetClamped(inner_y, @intCast(pos.row - self.scroll_row));
                         var cursor_style = render.Style{ .underline = true };
@@ -1277,6 +1379,128 @@ test "text area cursor navigation respects lines" {
     try std.testing.expectEqual(@as(usize, 5), pos.col);
 }
 
+test "text area cursor geometry uses grapheme cell widths" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("A界e\u{0301}B");
+
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 1 }, area.positionForIndex(1));
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 3 }, area.positionForIndex(4));
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 3 }, area.positionForIndex(5));
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 4 }, area.positionForIndex(7));
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 5 }, area.cursorPosition());
+}
+
+test "text area vertical movement preserves preferred display column" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    area.widget.focused = true;
+    area.setBorder(.none);
+    try area.widget.layout(layout_module.Rect.init(0, 0, 6, 3));
+    try area.setText("a界z\nab\n12345");
+    area.cursor = 4;
+    area.resetPreferredColumn();
+
+    const down = input.Event{ .key = input.KeyEvent.init(input.KeyCode.DOWN, input.KeyModifiers{}) };
+    const up = input.Event{ .key = input.KeyEvent.init(input.KeyCode.UP, input.KeyModifiers{}) };
+
+    try std.testing.expect(try area.widget.handleEvent(down));
+    try std.testing.expectEqual(TextArea.Position{ .row = 1, .col = 2 }, area.cursorPosition());
+    try std.testing.expect(try area.widget.handleEvent(down));
+    try std.testing.expectEqual(TextArea.Position{ .row = 2, .col = 3 }, area.cursorPosition());
+    try std.testing.expect(try area.widget.handleEvent(up));
+    try std.testing.expectEqual(TextArea.Position{ .row = 1, .col = 2 }, area.cursorPosition());
+    try std.testing.expect(try area.widget.handleEvent(up));
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+}
+
+test "text area renders graphemes without splitting terminal cells" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    area.setBorder(.none);
+    try area.widget.layout(layout_module.Rect.init(0, 0, 6, 1));
+    try area.setText("A界e\u{0301}B");
+
+    var renderer = try render.Renderer.init(alloc, 6, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+
+    try area.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, 'A'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{0301}", renderer.back.getCell(3, 0).glyph.slice());
+    try std.testing.expectEqual(@as(u21, 'B'), renderer.back.getCell(4, 0).codepoint());
+
+    var narrow_renderer = try render.Renderer.init(alloc, 1, 1);
+    defer narrow_renderer.deinit();
+    narrow_renderer.capabilities.unicode = true;
+    narrow_renderer.capabilities.double_width = true;
+    try area.widget.layout(layout_module.Rect.init(0, 0, 1, 1));
+    try area.setText("界a");
+    try area.widget.draw(&narrow_renderer);
+    try std.testing.expectEqual(@as(u21, ' '), narrow_renderer.back.getCell(0, 0).codepoint());
+}
+
+test "text area horizontal scroll starts on a grapheme boundary" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    area.setBorder(.none);
+    area.widget.focused = true;
+    try area.widget.layout(layout_module.Rect.init(0, 0, 3, 1));
+    try area.setText("界ab");
+    area.ensureVisible(3, 1);
+
+    try std.testing.expectEqual(@as(usize, 2), area.scroll_col);
+
+    var renderer = try render.Renderer.init(alloc, 3, 1);
+    defer renderer.deinit();
+    renderer.capabilities.unicode = true;
+    renderer.capabilities.double_width = true;
+    try area.widget.draw(&renderer);
+
+    try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(0, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'b'), renderer.back.getCell(1, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(2, 0).codepoint());
+}
+
+test "text area navigation and deletion keep combining graphemes atomic" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    area.widget.focused = true;
+    try area.setText("Ae\u{0301}B");
+
+    const left = input.Event{ .key = input.KeyEvent.init(input.KeyCode.LEFT, input.KeyModifiers{}) };
+    const right = input.Event{ .key = input.KeyEvent.init(input.KeyCode.RIGHT, input.KeyModifiers{}) };
+    try std.testing.expect(try area.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+    try std.testing.expect(try area.widget.handleEvent(left));
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+    try std.testing.expect(try area.widget.handleEvent(right));
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+    try std.testing.expect(try area.deleteBackward());
+    try std.testing.expectEqualStrings("AB", area.getText());
+}
+
+test "text area expands partial selections to grapheme boundaries" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("Ae\u{0301}B");
+    area.selectRange(2, 3);
+
+    try std.testing.expectEqual(TextArea.Selection{ .start = 1, .end = 4 }, area.selectionRange().?);
+    try std.testing.expect(try area.deleteBackward());
+    try std.testing.expectEqualStrings("AB", area.getText());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(area.getText()));
+}
+
 test "text area validation surfaces rule failures" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 32);
@@ -1334,8 +1558,8 @@ test "text area focused multi-cursor draw remains allocation-free" {
     const alloc = std.testing.allocator;
     const area = try TextArea.init(alloc, 64);
     defer area.deinit();
-    try area.setText("abc");
-    try area.setCursors(&[_]usize{ 3, 1, 2 });
+    try area.setText("a界e\u{0301}");
+    try area.setCursors(&[_]usize{ 7, 0, 4 });
     area.widget.focused = true;
     try area.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
 
@@ -1352,9 +1576,11 @@ test "text area focused multi-cursor draw remains allocation-free" {
     }
 
     try area.widget.draw(&renderer);
-    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(2, 1).codepoint());
-    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(3, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(1, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '界'), renderer.back.getCell(2, 1).codepoint());
+    try std.testing.expect(renderer.back.getCell(3, 1).continuation);
     try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(4, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(5, 1).codepoint());
 }
 
 test "text area multi-cursor deletion preserves UTF-8" {

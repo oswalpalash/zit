@@ -49,6 +49,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- `TextArea` now renders and navigates by grapheme clusters and terminal-cell widths, so CJK, emoji, and combining text no longer corrupts cursor columns, vertical movement, horizontal scrolling, clipping, or deletion; focused draws remain allocation-free.
 - Animated visibility transitions and container-managed visibility changes now reach widget lifecycle hooks when the logical visibility state changes, so hidden editable widgets cannot retain bracketed-paste state.
 - Collection containers now reject cross-parent child attachment before mutating either collection, preventing stale duplicate ownership after a failed or accidental reparent.
 - `TabView` now rejects eager or lazy content that is already attached, including duplicate content in multiple tabs, before committing tab metadata.
