@@ -67,7 +67,7 @@ defer table.deinit();
 try table.addRow(&.{ "gateway", "alice" });
 try table.addRow(&.{ "search", "carmen" });
 table.setTypeaheadTimeout(750); // printable keys jump rows while focused
-table.widget.focused = true;
+table.widget.setFocus(true);
 ```
 
 Add motion and recurring tasks without extra plumbing:

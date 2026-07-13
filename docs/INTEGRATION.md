@@ -111,20 +111,24 @@ fn run(app: *zit.event.Application, input_handler: *zit.input.InputHandler, dash
 - Wire focus and keyboard handlers in a small `handleEvent` method so the parent can delegate easily.
 ```zig
 const SearchBox = struct {
-    input: zit.widget.Input,
+    input: *zit.widget.InputField,
 
     fn init(alloc: std.mem.Allocator) !SearchBox {
-        var input = try zit.widget.Input.init(alloc);
-        input.widget.focused = true;
+        const input = try zit.widget.InputField.init(alloc, 256);
+        input.widget.setFocus(true);
         return .{ .input = input };
+    }
+
+    fn deinit(self: *SearchBox) void {
+        self.input.deinit();
     }
 
     fn widget(self: *SearchBox) *zit.widget.Widget {
         return &self.input.widget;
     }
 
-    fn handleEvent(self: *SearchBox, event: zit.event.Event) void {
-        if (event == .input) self.input.handleEvent(event);
+    fn handleEvent(self: *SearchBox, event: zit.input.Event) !bool {
+        return self.input.widget.handleEvent(event);
     }
 };
 ```
