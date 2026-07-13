@@ -110,11 +110,6 @@ pub const ScreenManager = struct {
     /// Push a new screen onto the stack and animate it in.
     pub fn push(self: *ScreenManager, screen: Screen) !void {
         try self.validateNewScreen(screen.widget);
-
-        if (self.active_transition != null) {
-            try self.finishTransition();
-        }
-
         try self.screens.ensureUnusedCapacity(self.allocator, 1);
         try self.reserveTransitionCapacity(true, self.screens.items.len > 0);
 
@@ -125,6 +120,8 @@ pub const ScreenManager = struct {
         errdefer if (!entry_owned_by_stack) {
             _ = entry.screen.widget.detachFrom(&self.widget);
         };
+
+        try self.settleActiveTransition();
 
         if (self.topEntry()) |prev| {
             try self.runHook(prev, prev.label_copy, prev.screen.lifecycle.on_pause);
@@ -147,9 +144,9 @@ pub const ScreenManager = struct {
     /// Pop the active screen and return to the previous one.
     pub fn pop(self: *ScreenManager) !void {
         if (self.screens.items.len <= 1) return;
-        if (self.active_transition != null) {
-            try self.finishTransition();
-        }
+        try self.reserveTransitionCapacity(true, true);
+        try self.settleActiveTransition();
+        if (self.screens.items.len <= 1) return;
 
         const exiting_idx = self.screens.items.len - 1;
         const entering_idx = exiting_idx - 1;
@@ -163,12 +160,6 @@ pub const ScreenManager = struct {
         if (self.screens.items.len == 0) {
             return self.push(screen);
         }
-
-        if (self.active_transition != null) {
-            try self.finishTransition();
-        }
-
-        const exiting_idx = self.screens.items.len - 1;
         try self.screens.ensureUnusedCapacity(self.allocator, 1);
         try self.reserveTransitionCapacity(true, true);
 
@@ -179,6 +170,9 @@ pub const ScreenManager = struct {
         errdefer if (!entry_owned_by_stack) {
             _ = entry.screen.widget.detachFrom(&self.widget);
         };
+
+        try self.settleActiveTransition();
+        const exiting_idx = self.screens.items.len - 1;
         try self.runHook(&self.screens.items[exiting_idx], self.screens.items[exiting_idx].label_copy, self.screens.items[exiting_idx].screen.lifecycle.on_pause);
 
         self.screens.appendAssumeCapacity(entry);
@@ -240,6 +234,21 @@ pub const ScreenManager = struct {
         }
 
         self.active_transition = ActiveTransition{ .kind = kind, .entering = entering_idx, .exiting = exiting_idx };
+    }
+
+    fn settleActiveTransition(self: *ScreenManager) !void {
+        const active_trans = self.active_transition orelse return;
+        if (active_trans.entering) |idx| self.settleVisibility(idx, true);
+        if (active_trans.exiting) |idx| self.settleVisibility(idx, false);
+        try self.finishTransition();
+    }
+
+    fn settleVisibility(self: *ScreenManager, idx: usize, visible: bool) void {
+        const widget = self.screens.items[idx].screen.widget;
+        widget.visibility_transition.cancel(&self.animator);
+        widget.setVisible(visible);
+        widget.visibility_transition.snap(visible);
+        widget.markDirty();
     }
 
     fn finishTransition(self: *ScreenManager) !void {
@@ -532,6 +541,89 @@ test "screen manager replace updates active screen" {
 
     const active_after = manager.active().?;
     try std.testing.expectEqual(&block_b.widget, active_after.widget);
+}
+
+test "screen manager settles rapid navigation without orphaned transitions" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    var block_a = try @import("block.zig").Block.init(alloc);
+    var block_b = try @import("block.zig").Block.init(alloc);
+    var block_c = try @import("block.zig").Block.init(alloc);
+    defer {
+        manager.deinit();
+        block_a.deinit();
+        block_b.deinit();
+        block_c.deinit();
+    }
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    try std.testing.expectEqual(@as(usize, 1), manager.animator.animations.items.len);
+
+    try manager.push(.{ .widget = &block_b.widget, .label = "b" });
+    try std.testing.expectEqual(@as(usize, 2), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 2), manager.animator.animations.items.len);
+    try std.testing.expectEqual(TransitionKind.push, manager.active_transition.?.kind);
+    try std.testing.expectEqual(ScreenEntry.State.exiting, manager.screens.items[0].state);
+    try std.testing.expectEqual(ScreenEntry.State.entering, manager.screens.items[1].state);
+
+    try manager.pop();
+    try std.testing.expectEqual(@as(usize, 2), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 2), manager.animator.animations.items.len);
+    try std.testing.expectEqual(TransitionKind.pop, manager.active_transition.?.kind);
+    try std.testing.expectEqual(ScreenEntry.State.entering, manager.screens.items[0].state);
+    try std.testing.expectEqual(ScreenEntry.State.exiting, manager.screens.items[1].state);
+
+    try manager.replace(.{ .widget = &block_c.widget, .label = "c" });
+    try std.testing.expectEqual(@as(usize, 2), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 2), manager.animator.animations.items.len);
+    try std.testing.expectEqual(TransitionKind.replace, manager.active_transition.?.kind);
+    try std.testing.expectEqual(&block_c.widget, manager.active().?.widget);
+    try std.testing.expect(block_b.widget.parent == null);
+
+    try manager.tick(1000);
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expectEqual(@as(usize, 0), manager.animator.animations.items.len);
+    try std.testing.expect(manager.active_transition == null);
+    try std.testing.expectEqual(&block_c.widget, manager.active().?.widget);
+    try std.testing.expectEqual(ScreenEntry.State.steady, manager.screens.items[0].state);
+    try std.testing.expect(block_a.widget.parent == null);
+    try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expectEqual(&manager.widget, block_c.widget.parent.?);
+}
+
+test "screen manager preflight failure preserves an active transition" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
+    var block_a = try @import("block.zig").Block.init(alloc);
+    var block_b = try @import("block.zig").Block.init(alloc);
+    const original_allocator = manager.allocator;
+    defer {
+        manager.allocator = original_allocator;
+        manager.deinit();
+        block_a.deinit();
+        block_b.deinit();
+    }
+
+    try manager.push(.{ .widget = &block_a.widget, .label = "a" });
+    const transition_before = manager.active_transition.?;
+    const handle_before = block_a.widget.visibility_transition.handle.?;
+    const animation_count_before = manager.animator.animations.items.len;
+    manager.widget.clearDirty();
+
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    manager.allocator = failing.allocator();
+    try std.testing.expectError(error.OutOfMemory, manager.push(.{ .widget = &block_b.widget, .label = "b" }));
+    manager.allocator = original_allocator;
+
+    try std.testing.expect(failing.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 1), manager.screens.items.len);
+    try std.testing.expect(std.meta.eql(transition_before, manager.active_transition.?));
+    try std.testing.expect(std.meta.eql(handle_before, block_a.widget.visibility_transition.handle.?));
+    try std.testing.expectEqual(animation_count_before, manager.animator.animations.items.len);
+    try std.testing.expectEqual(ScreenEntry.State.entering, manager.screens.items[0].state);
+    try std.testing.expectEqual(&manager.widget, block_a.widget.parent.?);
+    try std.testing.expect(block_b.widget.parent == null);
+    try std.testing.expect(!manager.widget.dirty);
 }
 
 test "screen manager rejects duplicate and cross-parent pushes before transition mutation" {

@@ -47,6 +47,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - `ScreenManager.push` and `ScreenManager.replace` now reject attached or duplicate screen widgets before transitions, hooks, allocations, layout, or visibility can change; the unrestricted `Widget.setParent` bypass was removed.
 - Constructor-owned `AutocompleteInput`, `ScrollContainer`, and `TabView` children now use the same guarded `Widget.attachTo` primitive as public container APIs.
 - Widget owners now detach through `Widget.detachFrom`, preventing stale cleanup from clearing a newer parent link; `FlexContainer.deinit` now also detaches every child before destroying its collections.
+- `ScreenManager` now settles active transitions before rapid follow-up navigation instead of overwriting transition state, while allocation and layout preflight runs first so failures preserve the in-flight animation unchanged.
 - Interactive PTY and visual repeat build preflights now honor `$ZIG`, keeping `release-check` usable when the selected compiler is not on `PATH`; contribution-gate checks enforce the contract.
 - Contribution gate checker (`scripts/check_contribution_gates.py`, `zig build contribution-gates`) keeps GitHub Actions, release verification, PR checklist, and stability docs aligned on required quality gates.
 - Widget coverage checking now validates `docs/WIDGET_CATALOG.md` rows/file references and `docs/API.md` public widget helper references so public widget docs cannot point at missing snapshots, examples, or convenience APIs.
