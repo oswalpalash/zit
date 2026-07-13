@@ -109,25 +109,26 @@ fn run(app: *zit.event.Application, input_handler: *zit.input.InputHandler, dash
 ### Component-based widgets
 - Create reusable components that expose their root widget and manage their own init/deinit.
 - Wire focus and keyboard handlers in a small `handleEvent` method so the parent can delegate easily.
+<!-- docs-check: compile -->
 ```zig
-const SearchBox = struct {
+pub const SearchBox = struct {
     input: *zit.widget.InputField,
 
-    fn init(alloc: std.mem.Allocator) !SearchBox {
+    pub fn init(alloc: std.mem.Allocator) !SearchBox {
         const input = try zit.widget.InputField.init(alloc, 256);
         input.widget.setFocus(true);
         return .{ .input = input };
     }
 
-    fn deinit(self: *SearchBox) void {
+    pub fn deinit(self: *SearchBox) void {
         self.input.deinit();
     }
 
-    fn widget(self: *SearchBox) *zit.widget.Widget {
+    pub fn widget(self: *SearchBox) *zit.widget.Widget {
         return &self.input.widget;
     }
 
-    fn handleEvent(self: *SearchBox, event: zit.input.Event) !bool {
+    pub fn handleEvent(self: *SearchBox, event: zit.input.Event) !bool {
         return self.input.widget.handleEvent(event);
     }
 };

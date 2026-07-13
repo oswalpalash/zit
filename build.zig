@@ -344,6 +344,7 @@ pub fn build(b: *std.Build) void {
     docs_commands_step.dependOn(&docs_commands_cmd.step);
 
     const docs_zig_snippets_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_docs_zig_snippets.py" });
+    docs_zig_snippets_cmd.setEnvironmentVariable("ZIG", b.graph.zig_exe);
     const docs_zig_snippets_step = b.step("docs-zig-snippets", "Check public Markdown Zig snippet hygiene");
     docs_zig_snippets_step.dependOn(&docs_zig_snippets_cmd.step);
 

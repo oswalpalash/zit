@@ -10,6 +10,7 @@ This guide walks through a minimal, production-style Zit loop: set up terminal +
 5) Flush the renderer to the terminal.
 
 ## End-to-End Example
+<!-- docs-check: compile -->
 ```zig
 const std = @import("std");
 const zit = @import("zit");

@@ -155,6 +155,7 @@ From this repo you can also run `zig build hello-world` to launch the smallest i
 
 ## Quick Start (copy-pasteable)
 
+<!-- docs-check: compile -->
 ```zig
 const std = @import("std");
 const zit = @import("zit");
@@ -185,7 +186,9 @@ pub fn main() !void {
     var running = true;
     while (running) {
         if (try app.pollInputOnce()) |event| switch (event) {
-            .key => |key| if (key.key == 'q') running = false,
+            .key => |key| {
+                if (key.key == 'q') running = false;
+            },
             else => {},
         };
 

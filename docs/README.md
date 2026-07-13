@@ -66,7 +66,8 @@ primary docs experience.
   this repository.
 - `python3 scripts/check_docs_zig_snippets.py` validates public Markdown Zig
   snippets do not model empty catches, panic paths, unreachable paths, or
-  unchecked `DebugAllocator` cleanup.
+  unchecked `DebugAllocator` cleanup, and compiles explicitly marked complete
+  snippets against the current public module.
 - `python3 scripts/check_widget_coverage.py` validates widget docs against
   public widget exports, examples, snapshots, and helper APIs.
 - `zig build release-check` generates API docs under `zig-out/docs-release` and

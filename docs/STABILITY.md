@@ -64,7 +64,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_debug_allocator_cleanup.py`
 - `python3 scripts/check_docs_commands.py` to require public Markdown command references to point at existing scripts, build steps, and format paths.
 - `python3 scripts/check_docs_links.py` to require public Markdown relative links, heading anchors, and local image targets to resolve and every top-level docs guide to appear in `docs/README.md`.
-- `python3 scripts/check_docs_zig_snippets.py` derives public module symbols from `src/main.zig` and requires Markdown Zig snippets to reference exported APIs, use notifying widget lifecycle and ownership helpers, avoid panic/unreachable patterns, and check `DebugAllocator` cleanup.
+- `python3 scripts/check_docs_zig_snippets.py` derives public module symbols from `src/main.zig` and requires Markdown Zig snippets to reference exported APIs, use notifying widget lifecycle and ownership helpers, avoid panic/unreachable patterns, and check `DebugAllocator` cleanup. Complete snippets marked with `<!-- docs-check: compile -->` are also compiled against the current `zit` module with declaration analysis enabled.
 - `python3 scripts/check_draw_layout_boundary.py` to require widget draw callbacks to consume geometry prepared by layout instead of invoking child layout during rendering.
 - `zig build draw-layout-boundary`
 - `python3 scripts/check_ci_script_coverage.py`

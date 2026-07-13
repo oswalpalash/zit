@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +24,7 @@ PUBLIC_MARKDOWN_ROOTS = (
 )
 
 FENCE_START = re.compile(r"^```([A-Za-z0-9_-]*)\s*$")
+COMPILE_MARKER = "<!-- docs-check: compile -->"
 EMPTY_CATCH = re.compile(r"\bcatch\s*\{\s*\}")
 UNREACHABLE_CATCH = re.compile(r"\bcatch\s+unreachable\b")
 PANIC = re.compile(r"@panic\s*\(")
@@ -33,6 +39,9 @@ DIRECT_TREE_EXPANSION = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*\.nodes\.items\[[^\]\n]+\]\.expanded\s*=",
 )
 PUBLIC_DECL = re.compile(r"(?m)^pub\s+(?:const|fn|var)\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+PUBLIC_CONTAINER_DECL = re.compile(
+    r"(?m)^pub\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:struct|union|enum|opaque)\b",
+)
 ROOT_MODULE = re.compile(
     r'(?m)^pub\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*@import\("([^"]+)"\);',
 )
@@ -46,6 +55,7 @@ class Snippet:
     path: Path
     start_line: int
     text: str
+    compile: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,26 +80,35 @@ def markdown_files(root: Path) -> list[Path]:
 
 
 def zig_snippets(path: Path, root: Path) -> list[Snippet]:
+    return parse_zig_snippets(path.read_text(encoding="utf-8"), path.relative_to(root))
+
+
+def parse_zig_snippets(text: str, path: Path) -> list[Snippet]:
     snippets: list[Snippet] = []
     in_zig = False
     start_line = 0
     lines: list[str] = []
+    compile_snippet = False
+    previous_line = ""
 
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(text.splitlines(), start=1):
         fence = FENCE_START.match(line)
         if fence:
             if in_zig:
-                snippets.append(Snippet(path.relative_to(root), start_line, "\n".join(lines)))
+                snippets.append(Snippet(path, start_line, "\n".join(lines), compile_snippet))
                 in_zig = False
                 lines = []
             else:
                 in_zig = fence.group(1).lower() == "zig"
                 start_line = number + 1
                 lines = []
+                compile_snippet = in_zig and previous_line.strip() == COMPILE_MARKER
+            previous_line = line
             continue
 
         if in_zig:
             lines.append(line)
+        previous_line = line
 
     return snippets
 
@@ -114,6 +133,77 @@ def load_public_api(root: Path) -> PublicApi:
         )
 
     return PublicApi(root_exports, module_exports)
+
+
+def resolve_zig(configured: str | None) -> str:
+    requested = configured or os.environ.get("ZIG")
+    if requested:
+        resolved = shutil.which(requested)
+        candidate = resolved or requested
+    else:
+        candidate = shutil.which("zig")
+    if not candidate:
+        raise RuntimeError("zig executable not found; install Zig 0.16.0 or set ZIG=/absolute/path/to/zig")
+    return candidate
+
+
+def compile_source(snippet: Snippet) -> str:
+    imports: list[str] = []
+    if '@import("std")' not in snippet.text:
+        imports.append('const std = @import("std");')
+    if '@import("zit")' not in snippet.text:
+        imports.append('const zit = @import("zit");')
+
+    nested_declaration_checks = "\n".join(
+        f"    std.testing.refAllDecls({name});" for name in PUBLIC_CONTAINER_DECL.findall(snippet.text)
+    )
+    declaration_checks = "    std.testing.refAllDecls(@This());"
+    if nested_declaration_checks:
+        declaration_checks += "\n" + nested_declaration_checks
+
+    sections = imports + [snippet.text.rstrip(), f"""
+test "documentation snippet declarations compile" {{
+{declaration_checks}
+}}
+""".strip()]
+    return "\n\n".join(section for section in sections if section) + "\n"
+
+
+def compile_snippet(snippet: Snippet, root: Path, zig: str) -> str | None:
+    with tempfile.TemporaryDirectory(prefix="zit-doc-snippet-") as temp_dir:
+        source_path = Path(temp_dir) / "snippet.zig"
+        source_path.write_text(compile_source(snippet), encoding="utf-8")
+        command = (
+            zig,
+            "test",
+            "--dep",
+            "zit",
+            f"-Mroot={source_path}",
+            f"-Mzit={root / 'src/main.zig'}",
+            "-fno-emit-bin",
+        )
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+        except OSError as err:
+            raise RuntimeError(f"`{zig} test` could not start: {err}") from err
+        except subprocess.TimeoutExpired:
+            return f"{snippet.path}:{snippet.start_line}: marked snippet compilation timed out after 120 seconds"
+
+    if proc.returncode == 0:
+        return None
+    output = "\n".join(f"      {line}" for line in proc.stdout.rstrip().splitlines())
+    return (
+        f"{snippet.path}:{snippet.start_line}: marked snippet does not compile against src/main.zig"
+        + (f"\n{output}" if output else "")
+    )
 
 
 def validate_snippet(snippet: Snippet, public_api: PublicApi) -> list[str]:
@@ -192,8 +282,34 @@ def run_self_tests() -> None:
     if validate_snippet(valid, public_api):
         raise AssertionError("valid public API usage was rejected")
 
+    parsed = parse_zig_snippets(
+        f"{COMPILE_MARKER}\n```zig\nconst Value = u8;\n```\n\n```zig\nconst Other = u16;\n```\n",
+        Path("docs/example.md"),
+    )
+    if len(parsed) != 2 or not parsed[0].compile or parsed[1].compile:
+        raise AssertionError("compile marker was not scoped to the immediately following Zig fence")
+
+    compiled = compile_source(parsed[0])
+    if 'const std = @import("std");' not in compiled or 'const zit = @import("zit");' not in compiled:
+        raise AssertionError("compile source did not provide missing documentation imports")
+    if "std.testing.refAllDecls(@This())" not in compiled:
+        raise AssertionError("compile source does not force declaration analysis")
+
+    public_container = Snippet(
+        Path("docs/example.md"),
+        30,
+        "pub const Component = struct { pub fn check() void {} };",
+        True,
+    )
+    if "std.testing.refAllDecls(Component)" not in compile_source(public_container):
+        raise AssertionError("compile source does not analyze public component declarations")
+
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--zig", default=None, help="Zig executable to use; defaults to $ZIG or zig on PATH")
+    args = parser.parse_args()
+
     root = repo_root()
     run_self_tests()
     public_api = load_public_api(root)
@@ -205,8 +321,19 @@ def main() -> int:
     for snippet in snippets:
         failures.extend(validate_snippet(snippet, public_api))
 
+    compiled_snippets = [snippet for snippet in snippets if snippet.compile]
+    if compiled_snippets:
+        zig = resolve_zig(args.zig)
+        for snippet in compiled_snippets:
+            failure = compile_snippet(snippet, root, zig)
+            if failure:
+                failures.append(failure)
+
     if failures:
-        sys.stderr.write("public Markdown Zig snippets must model current, lifecycle-safe APIs:\n")
+        sys.stderr.write(
+            "public Markdown Zig snippets must model current, lifecycle-safe APIs, "
+            "and marked complete snippets must compile:\n"
+        )
         for failure in failures:
             sys.stderr.write(f"  - {failure}\n")
         return 1
@@ -214,10 +341,15 @@ def main() -> int:
     reference_count = sum(len(PUBLIC_API_REF.findall(snippet.text)) for snippet in snippets)
     print(
         f"checked {len(snippets)} public Markdown Zig snippet(s) and "
-        f"{reference_count} direct public API reference(s)"
+        f"{reference_count} direct public API reference(s); "
+        f"compiled {len(compiled_snippets)} marked snippet(s)"
     )
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeError as err:
+        sys.stderr.write(f"error: {err}\n")
+        raise SystemExit(1)
