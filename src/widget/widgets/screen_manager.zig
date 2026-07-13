@@ -5,6 +5,7 @@ const render = @import("../../render/render.zig");
 const input = @import("../../input/input.zig");
 const animation = @import("../animation.zig");
 const accessibility = @import("../accessibility.zig");
+const layout_transaction = @import("layout_transaction.zig");
 
 /// Lifecycle hooks fired as screens are shown/hidden.
 pub const ScreenLifecycle = struct {
@@ -64,29 +65,23 @@ const ActiveTransition = struct {
 };
 
 const CandidateState = struct {
-    rect: layout_module.Rect,
+    layout: layout_transaction.Snapshot,
     visible: bool,
-    dirty: bool,
-    dirty_rect: ?layout_module.Rect,
     visibility_transition: animation.VisibilityController,
 
-    fn capture(widget: *const base.Widget) CandidateState {
+    fn capture(widget: *base.Widget) CandidateState {
         return .{
-            .rect = widget.rect,
+            .layout = layout_transaction.Snapshot.capture(widget),
             .visible = widget.visible,
-            .dirty = widget.dirty,
-            .dirty_rect = widget.dirty_rect,
             .visibility_transition = widget.visibility_transition,
         };
     }
 
     fn restore(self: CandidateState, widget: *base.Widget, animator: *animation.Animator) void {
         widget.visibility_transition.cancel(animator);
-        widget.rect = self.rect;
         widget.setVisible(self.visible);
-        widget.dirty = self.dirty;
-        widget.dirty_rect = self.dirty_rect;
         widget.visibility_transition = self.visibility_transition;
+        self.layout.restore();
     }
 };
 
@@ -95,6 +90,7 @@ pub const ScreenManager = struct {
     widget: base.Widget,
     allocator: std.mem.Allocator,
     screens: std.ArrayList(ScreenEntry),
+    layout_snapshots: std.ArrayList(layout_transaction.Snapshot),
     animator: animation.Animator,
     transitions: ScreenTransitions = .{},
     active_transition: ?ActiveTransition = null,
@@ -114,6 +110,7 @@ pub const ScreenManager = struct {
             .widget = base.Widget.init(&vtable),
             .allocator = allocator,
             .screens = std.ArrayList(ScreenEntry).empty,
+            .layout_snapshots = std.ArrayList(layout_transaction.Snapshot).empty,
             .animator = animation.Animator.init(allocator),
         };
         self.widget.setAccessibility(@intFromEnum(accessibility.Role.container), "Screen manager", "");
@@ -125,6 +122,7 @@ pub const ScreenManager = struct {
             self.deinitEntry(entry);
         }
         self.screens.deinit(self.allocator);
+        self.layout_snapshots.deinit(self.allocator);
         self.animator.deinit();
         self.allocator.destroy(self);
     }
@@ -138,6 +136,7 @@ pub const ScreenManager = struct {
     pub fn push(self: *ScreenManager, screen: Screen) !void {
         try self.validateNewScreen(screen.widget);
         try self.screens.ensureUnusedCapacity(self.allocator, 1);
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.screens.items.len + 1);
         try self.reserveTransitionCapacity(true, self.screens.items.len > 0);
 
         var entry = try ScreenEntry.init(self.allocator, screen);
@@ -192,6 +191,7 @@ pub const ScreenManager = struct {
             return self.push(screen);
         }
         try self.screens.ensureUnusedCapacity(self.allocator, 1);
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.screens.items.len + 1);
         try self.reserveTransitionCapacity(true, true);
 
         var entry = try ScreenEntry.init(self.allocator, screen);
@@ -424,9 +424,22 @@ pub const ScreenManager = struct {
         const widget_ref: *base.Widget = @ptrCast(@alignCast(widget_ptr));
         const self: *ScreenManager = @fieldParentPtr("widget", widget_ref);
         self.widget.rect = rect;
+
+        try self.layout_snapshots.ensureTotalCapacity(self.allocator, self.screens.items.len);
+        self.layout_snapshots.clearRetainingCapacity();
+        defer self.layout_snapshots.clearRetainingCapacity();
+        for (self.screens.items) |entry| {
+            self.layout_snapshots.appendAssumeCapacity(layout_transaction.Snapshot.capture(entry.screen.widget));
+        }
+
+        const previous_last_rect = self.last_rect;
         self.last_rect = rect;
         for (self.screens.items) |entry| {
-            try entry.screen.widget.layout(rect);
+            entry.screen.widget.layout(rect) catch |err| {
+                self.last_rect = previous_last_rect;
+                layout_transaction.rollback(self.layout_snapshots.items);
+                return err;
+            };
         }
     }
 
@@ -501,15 +514,54 @@ const FailingLayoutWidget = struct {
     }
 };
 
+const SuccessfulLayoutWidget = struct {
+    widget: base.Widget = base.Widget.init(&vtable),
+
+    const vtable = base.Widget.VTable{
+        .draw = drawFn,
+        .handle_event = handleEventFn,
+        .layout = layoutFn,
+        .get_preferred_size = getPreferredSizeFn,
+        .can_focus = canFocusFn,
+    };
+
+    fn drawFn(_: *anyopaque, _: *render.Renderer) anyerror!void {}
+
+    fn handleEventFn(_: *anyopaque, _: input.Event) anyerror!bool {
+        return false;
+    }
+
+    fn layoutFn(_: *anyopaque, _: layout_module.Rect) anyerror!void {}
+
+    fn getPreferredSizeFn(_: *anyopaque) anyerror!layout_module.Size {
+        return layout_module.Size.init(1, 1);
+    }
+
+    fn canFocusFn(_: *anyopaque) bool {
+        return false;
+    }
+};
+
+const BoundsRecorder = struct {
+    calls: usize = 0,
+    last: layout_module.Rect = layout_module.Rect.init(0, 0, 0, 0),
+
+    fn update(ctx: ?*anyopaque, _: *base.Widget, rect: layout_module.Rect) void {
+        const self: *BoundsRecorder = @ptrCast(@alignCast(ctx.?));
+        self.calls += 1;
+        self.last = rect;
+    }
+};
+
 test "screen manager runs lifecycle hooks on push/pop" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     var order = std.ArrayList([]const u8).empty;
     defer order.deinit(alloc);
@@ -557,12 +609,12 @@ test "screen manager runs lifecycle hooks on push/pop" {
 test "screen manager replace updates active screen" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     try manager.push(.{ .widget = &block_a.widget, .label = "a" });
     try manager.replace(.{ .widget = &block_b.widget, .label = "b" });
@@ -763,26 +815,24 @@ test "screen manager rejects an independently animating candidate" {
 }
 
 fn screenManagerPushAllocationFailureHarness(allocator: std.mem.Allocator) !void {
-    var manager = try ScreenManager.init(allocator);
-    defer manager.deinit();
-
     var block_a = try @import("block.zig").Block.init(allocator);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(allocator);
     defer block_b.deinit();
+    var manager = try ScreenManager.init(allocator);
+    defer manager.deinit();
 
     try manager.push(.{ .widget = &block_a.widget, .label = "a" });
     try manager.push(.{ .widget = &block_b.widget, .label = "b" });
 }
 
 fn screenManagerReplaceAllocationFailureHarness(allocator: std.mem.Allocator) !void {
-    var manager = try ScreenManager.init(allocator);
-    defer manager.deinit();
-
     var block_a = try @import("block.zig").Block.init(allocator);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(allocator);
     defer block_b.deinit();
+    var manager = try ScreenManager.init(allocator);
+    defer manager.deinit();
 
     try manager.push(.{ .widget = &block_a.widget, .label = "a" });
     try manager.replace(.{ .widget = &block_b.widget, .label = "b" });
@@ -813,10 +863,10 @@ test "screen manager push propagates priming layout failure" {
 test "screen manager replace preserves active screen on priming layout failure" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block = try @import("block.zig").Block.init(alloc);
     defer block.deinit();
+    defer manager.deinit();
     try manager.push(.{ .widget = &block.widget, .label = "good" });
     try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
 
@@ -831,12 +881,12 @@ test "screen manager replace preserves active screen on priming layout failure" 
 test "screen manager rejected entering screen is detached" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     const FailingEnter = struct {
         fn enter(_: *ScreenContext) anyerror!void {
@@ -856,15 +906,51 @@ test "screen manager rejected entering screen is detached" {
     try std.testing.expect(block_b.widget.parent == null);
 }
 
-test "screen manager rejected push after pause failure is detached" {
+test "screen manager rejected candidate restores published accessibility bounds" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
     defer manager.deinit();
+
+    var current = SuccessfulLayoutWidget{};
+    try manager.push(.{ .widget = &current.widget, .label = "current" });
+    try manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6));
+
+    const original = layout_module.Rect.init(4, 5, 6, 2);
+    var candidate = SuccessfulLayoutWidget{};
+    candidate.widget.rect = original;
+    candidate.widget.clearDirty();
+    var bounds = BoundsRecorder{ .last = original };
+    candidate.widget.accessibility_ctx = &bounds;
+    candidate.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    const FailingEnter = struct {
+        fn enter(_: *ScreenContext) anyerror!void {
+            return error.EnterFailed;
+        }
+    };
+
+    try std.testing.expectError(error.EnterFailed, manager.replace(.{
+        .widget = &candidate.widget,
+        .label = "rejected",
+        .lifecycle = .{ .on_enter = FailingEnter.enter },
+    }));
+
+    try std.testing.expectEqual(original, candidate.widget.rect);
+    try std.testing.expect(!candidate.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(original, bounds.last);
+    try std.testing.expect(candidate.widget.parent == null);
+}
+
+test "screen manager rejected push after pause failure is detached" {
+    const alloc = std.testing.allocator;
+    var manager = try ScreenManager.init(alloc);
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     const FailingPause = struct {
         fn pause(_: *ScreenContext) anyerror!void {
@@ -895,12 +981,12 @@ test "screen manager rejected push after pause failure is detached" {
 test "screen manager rejected replace after pause failure is detached" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     const FailingPause = struct {
         fn pause(_: *ScreenContext) anyerror!void {
@@ -926,12 +1012,12 @@ test "screen manager rejected replace after pause failure is detached" {
 test "screen manager pop exit hook failure still completes cleanup" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     var resumed = false;
     const Hooks = struct {
@@ -975,12 +1061,12 @@ test "screen manager pop exit hook failure still completes cleanup" {
 test "screen manager replace exit hook failure keeps replacement active" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     const Hooks = struct {
         fn exit(_: *ScreenContext) anyerror!void {
@@ -1009,12 +1095,12 @@ test "screen manager replace exit hook failure keeps replacement active" {
 test "screen manager reset cancels active transition handles" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block_a = try @import("block.zig").Block.init(alloc);
     defer block_a.deinit();
     var block_b = try @import("block.zig").Block.init(alloc);
     defer block_b.deinit();
+    defer manager.deinit();
 
     try manager.push(.{ .widget = &block_a.widget, .label = "a" });
     try manager.tick(1000);
@@ -1037,10 +1123,10 @@ test "screen manager reset cancels active transition handles" {
 test "screen manager reset marks visible state dirty" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
-    defer manager.deinit();
 
     var block = try @import("block.zig").Block.init(alloc);
     defer block.deinit();
+    defer manager.deinit();
 
     try manager.push(.{ .widget = &block.widget, .label = "visible" });
     manager.widget.clearDirty();
@@ -1054,13 +1140,43 @@ test "screen manager reset marks visible state dirty" {
     try std.testing.expect(!manager.widget.dirty);
 }
 
-test "screen manager layout propagates child layout failure" {
+test "screen manager layout rolls back screens and last rect on child failure" {
     const alloc = std.testing.allocator;
     var manager = try ScreenManager.init(alloc);
     defer manager.deinit();
 
+    var first = SuccessfulLayoutWidget{};
     var failing = FailingLayoutWidget.init();
+    try manager.push(.{ .widget = &first.widget, .label = "first" });
     try manager.push(.{ .widget = &failing.widget, .label = "bad" });
 
+    const manager_original = layout_module.Rect.init(1, 2, 3, 4);
+    const first_original = layout_module.Rect.init(5, 6, 7, 8);
+    const failing_original = layout_module.Rect.init(9, 10, 11, 12);
+    manager.widget.rect = manager_original;
+    manager.widget.clearDirty();
+    manager.last_rect = manager_original;
+    first.widget.rect = first_original;
+    first.widget.clearDirty();
+    failing.widget.rect = failing_original;
+    failing.widget.clearDirty();
+    var bounds = BoundsRecorder{ .last = first_original };
+    first.widget.accessibility_ctx = &bounds;
+    first.widget.accessibility_update_bounds = BoundsRecorder.update;
+
+    var failing_allocator = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = manager.allocator;
+    manager.allocator = failing_allocator.allocator();
+    defer manager.allocator = original_allocator;
+
     try std.testing.expectError(error.LayoutFailed, manager.widget.layout(layout_module.Rect.init(0, 0, 20, 6)));
+    try std.testing.expectEqual(manager_original, manager.widget.rect);
+    try std.testing.expectEqual(manager_original, manager.last_rect.?);
+    try std.testing.expectEqual(first_original, first.widget.rect);
+    try std.testing.expectEqual(failing_original, failing.widget.rect);
+    try std.testing.expect(!first.widget.dirty);
+    try std.testing.expect(!failing.widget.dirty);
+    try std.testing.expectEqual(@as(usize, 2), bounds.calls);
+    try std.testing.expectEqual(first_original, bounds.last);
+    try std.testing.expectEqual(@as(usize, 0), manager.layout_snapshots.items.len);
 }

@@ -17,7 +17,7 @@ pub const Snapshot = struct {
         };
     }
 
-    fn restore(self: Snapshot) void {
+    pub fn restore(self: Snapshot) void {
         const bounds_changed = !std.meta.eql(self.widget.rect, self.rect);
         self.widget.rect = self.rect;
         self.widget.dirty = self.dirty;
