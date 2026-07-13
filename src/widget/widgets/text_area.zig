@@ -312,7 +312,7 @@ pub const TextArea = struct {
     }
 
     pub fn addCursor(self: *TextArea, position: usize) !void {
-        const clamped = @min(position, self.buffer.items.len);
+        const clamped = codepointBoundaryAtOrBefore(self.buffer.items, position);
         if (clamped == self.cursor) return;
         if (std.mem.indexOfScalar(usize, self.extra_cursors.items, clamped) != null) return;
         try self.extra_cursors.append(self.allocator, clamped);
@@ -332,12 +332,12 @@ pub const TextArea = struct {
             return;
         }
 
-        const next_primary = @min(positions[0], self.buffer.items.len);
+        const next_primary = codepointBoundaryAtOrBefore(self.buffer.items, positions[0]);
         var next_extra = std.ArrayList(usize).empty;
         errdefer next_extra.deinit(self.allocator);
 
         for (positions[1..]) |pos| {
-            const clamped = @min(pos, self.buffer.items.len);
+            const clamped = codepointBoundaryAtOrBefore(self.buffer.items, pos);
             if (clamped == next_primary) continue;
             if (std.mem.indexOfScalar(usize, next_extra.items, clamped) != null) continue;
             try next_extra.append(self.allocator, clamped);
@@ -504,6 +504,14 @@ pub const TextArea = struct {
         return idx;
     }
 
+    fn codepointBoundaryAtOrBefore(bytes: []const u8, pos: usize) usize {
+        var idx = @min(pos, bytes.len);
+        while (idx > 0 and idx < bytes.len and isUtf8Continuation(bytes[idx])) {
+            idx -= 1;
+        }
+        return idx;
+    }
+
     fn removeRange(self: *TextArea, start: usize, end: usize) void {
         if (start >= end or start >= self.buffer.items.len) return;
         const bounded_end = @min(end, self.buffer.items.len);
@@ -516,35 +524,46 @@ pub const TextArea = struct {
 
     const CursorMark = struct { pos: usize, primary: bool };
 
-    fn cursorLess(_: void, a: CursorMark, b: CursorMark) bool {
-        return a.pos < b.pos;
-    }
+    const CursorMarkIterator = struct {
+        extras: []const usize,
+        primary_pos: usize,
+        max_pos: usize,
+        extra_index: usize = 0,
+        primary_emitted: bool = false,
 
-    fn collectCursorMarks(self: *TextArea) !std.ArrayList(CursorMark) {
-        var marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, self.extra_cursors.items.len + 1);
-        errdefer marks.deinit(self.allocator);
-
-        try marks.append(self.allocator, .{ .pos = @min(self.cursor, self.buffer.items.len), .primary = true });
-        for (self.extra_cursors.items) |pos| {
-            try marks.append(self.allocator, .{ .pos = @min(pos, self.buffer.items.len), .primary = false });
+        fn init(extras: []const usize, primary_pos: usize, max_pos: usize) CursorMarkIterator {
+            return .{
+                .extras = extras,
+                .primary_pos = @min(primary_pos, max_pos),
+                .max_pos = max_pos,
+            };
         }
 
-        std.sort.pdq(CursorMark, marks.items, {}, cursorLess);
+        fn next(self: *CursorMarkIterator) ?CursorMark {
+            if (self.primary_emitted and self.extra_index >= self.extras.len) return null;
 
-        var write: usize = 0;
-        var idx: usize = 0;
-        while (idx < marks.items.len) {
-            var merged = marks.items[idx];
-            idx += 1;
-            while (idx < marks.items.len and marks.items[idx].pos == merged.pos) {
-                merged.primary = merged.primary or marks.items[idx].primary;
-                idx += 1;
+            const extra_pos = if (self.extra_index < self.extras.len)
+                @min(self.extras[self.extra_index], self.max_pos)
+            else
+                null;
+            const pos = if (self.primary_emitted)
+                extra_pos.?
+            else if (extra_pos) |extra|
+                @min(self.primary_pos, extra)
+            else
+                self.primary_pos;
+
+            const primary = !self.primary_emitted and self.primary_pos == pos;
+            if (primary) self.primary_emitted = true;
+            while (self.extra_index < self.extras.len and @min(self.extras[self.extra_index], self.max_pos) == pos) {
+                self.extra_index += 1;
             }
-            marks.items[write] = merged;
-            write += 1;
+            return .{ .pos = pos, .primary = primary };
         }
-        marks.shrinkRetainingCapacity(write);
-        return marks;
+    };
+
+    fn cursorMarks(self: *const TextArea) CursorMarkIterator {
+        return CursorMarkIterator.init(self.extra_cursors.items, self.cursor, self.buffer.items.len);
     }
 
     fn applyCursorMarks(self: *TextArea, marks: []const CursorMark) !void {
@@ -588,15 +607,14 @@ pub const TextArea = struct {
 
     fn insertSliceMulti(self: *TextArea, slice: []const u8) !bool {
         if (slice.len == 0) return false;
-        var marks = try self.collectCursorMarks();
-        defer marks.deinit(self.allocator);
+        var marks = self.cursorMarks();
 
-        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, self.extra_cursors.items.len + 1);
         defer new_marks.deinit(self.allocator);
 
         var shift: usize = 0;
         var inserted_any = false;
-        for (marks.items) |mark| {
+        while (marks.next()) |mark| {
             const available = if (self.buffer.items.len >= self.max_bytes) 0 else self.max_bytes - self.buffer.items.len;
             if (available == 0) {
                 try new_marks.append(self.allocator, .{ .pos = @min(mark.pos + shift, self.buffer.items.len), .primary = mark.primary });
@@ -648,27 +666,27 @@ pub const TextArea = struct {
     }
 
     fn deleteBackwardMulti(self: *TextArea) !bool {
-        var marks = try self.collectCursorMarks();
-        defer marks.deinit(self.allocator);
+        var marks = self.cursorMarks();
 
-        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, self.extra_cursors.items.len + 1);
         defer new_marks.deinit(self.allocator);
 
         var removed: usize = 0;
-        for (marks.items) |mark| {
+        while (marks.next()) |mark| {
             if (mark.pos <= removed or self.buffer.items.len == 0) {
                 try new_marks.append(self.allocator, .{ .pos = 0, .primary = mark.primary });
                 continue;
             }
 
-            const target = mark.pos - 1 - removed;
-            if (target >= self.buffer.items.len) {
+            const cursor_pos = mark.pos - removed;
+            if (cursor_pos > self.buffer.items.len) {
                 try new_marks.append(self.allocator, .{ .pos = self.buffer.items.len, .primary = mark.primary });
                 continue;
             }
 
-            _ = self.buffer.orderedRemove(target);
-            removed += 1;
+            const target = previousCodepointBoundary(self.buffer.items, cursor_pos);
+            self.removeRange(target, cursor_pos);
+            removed += cursor_pos - target;
             try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
         }
 
@@ -680,22 +698,22 @@ pub const TextArea = struct {
     }
 
     fn deleteForwardMulti(self: *TextArea) !bool {
-        var marks = try self.collectCursorMarks();
-        defer marks.deinit(self.allocator);
+        var marks = self.cursorMarks();
 
-        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, marks.items.len);
+        var new_marks = try std.ArrayList(CursorMark).initCapacity(self.allocator, self.extra_cursors.items.len + 1);
         defer new_marks.deinit(self.allocator);
 
         var removed: usize = 0;
-        for (marks.items) |mark| {
+        while (marks.next()) |mark| {
             const target = if (mark.pos > removed) mark.pos - removed else 0;
             if (target >= self.buffer.items.len) {
                 try new_marks.append(self.allocator, .{ .pos = self.buffer.items.len, .primary = mark.primary });
                 continue;
             }
 
-            _ = self.buffer.orderedRemove(target);
-            removed += 1;
+            const remove_end = nextCodepointBoundary(self.buffer.items, target);
+            self.removeRange(target, remove_end);
+            removed += remove_end - target;
             try new_marks.append(self.allocator, .{ .pos = target, .primary = mark.primary });
         }
 
@@ -723,10 +741,7 @@ pub const TextArea = struct {
     }
 
     fn clampCursor(self: *TextArea) void {
-        if (self.cursor > self.buffer.items.len) self.cursor = self.buffer.items.len;
-        while (self.cursor > 0 and self.cursor < self.buffer.items.len and isUtf8Continuation(self.buffer.items[self.cursor])) {
-            self.cursor -= 1;
-        }
+        self.cursor = codepointBoundaryAtOrBefore(self.buffer.items, self.cursor);
     }
 
     fn resetPreferredColumn(self: *TextArea) void {
@@ -1089,9 +1104,8 @@ pub const TextArea = struct {
         }
 
         if (self.widget.focused) {
-            var marks = try self.collectCursorMarks();
-            defer marks.deinit(self.allocator);
-            for (marks.items) |mark| {
+            var marks = self.cursorMarks();
+            while (marks.next()) |mark| {
                 const pos = self.positionForIndex(mark.pos);
                 if (pos.row >= self.scroll_row and pos.row < self.scroll_row + @as(usize, @intCast(viewport.height))) {
                     if (pos.col >= self.scroll_col and pos.col <= self.scroll_col + @as(usize, @intCast(viewport.width))) {
@@ -1305,6 +1319,69 @@ test "text area multi-cursor inserts at every caret" {
     try std.testing.expectEqualStrings("aqbcq", area.getText());
     try std.testing.expectEqual(@as(usize, 5), area.cursor);
     try std.testing.expectEqual(@as(usize, 1), area.extra_cursors.items.len);
+}
+
+test "text area cursor iterator merges clamped duplicate positions" {
+    const extras = [_]usize{ 1, 7, 9 };
+    var marks = TextArea.CursorMarkIterator.init(&extras, 9, 4);
+
+    try std.testing.expectEqual(TextArea.CursorMark{ .pos = 1, .primary = false }, marks.next().?);
+    try std.testing.expectEqual(TextArea.CursorMark{ .pos = 4, .primary = true }, marks.next().?);
+    try std.testing.expect(marks.next() == null);
+}
+
+test "text area focused multi-cursor draw remains allocation-free" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("abc");
+    try area.setCursors(&[_]usize{ 3, 1, 2 });
+    area.widget.focused = true;
+    try area.widget.layout(layout_module.Rect.init(0, 0, 8, 3));
+
+    var renderer = try render.Renderer.init(alloc, 8, 3);
+    defer renderer.deinit();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    const original_allocator = area.allocator;
+    const original_renderer_allocator = renderer.allocator;
+    area.allocator = failing.allocator();
+    renderer.allocator = failing.allocator();
+    defer {
+        area.allocator = original_allocator;
+        renderer.allocator = original_renderer_allocator;
+    }
+
+    try area.widget.draw(&renderer);
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(2, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(3, 1).codepoint());
+    try std.testing.expectEqual(@as(u21, '_'), renderer.back.getCell(4, 1).codepoint());
+}
+
+test "text area multi-cursor deletion preserves UTF-8" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("aéb");
+    try area.setCursors(&[_]usize{ 2, 3 });
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+    try std.testing.expectEqualSlices(usize, &[_]usize{3}, area.extra_cursors.items);
+
+    try area.setText("aéb界c");
+    try area.setCursors(&[_]usize{ 7, 3 });
+    try std.testing.expect(try area.deleteBackward());
+    try std.testing.expectEqualStrings("abc", area.getText());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(area.getText()));
+    try std.testing.expectEqual(@as(usize, 2), area.cursor);
+    try std.testing.expectEqualSlices(usize, &[_]usize{1}, area.extra_cursors.items);
+
+    try area.setText("aéb界c");
+    try area.setCursors(&[_]usize{ 4, 1 });
+    try std.testing.expect(try area.deleteForward());
+    try std.testing.expectEqualStrings("abc", area.getText());
+    try std.testing.expect(std.unicode.utf8ValidateSlice(area.getText()));
+    try std.testing.expectEqual(@as(usize, 2), area.cursor);
+    try std.testing.expectEqualSlices(usize, &[_]usize{1}, area.extra_cursors.items);
 }
 
 test "text area setCursors preserves cursors on allocation failure" {
