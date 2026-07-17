@@ -9,7 +9,7 @@ Zit adapts to terminal capabilities at runtime via `terminal.capabilities.detect
 - Minimal: linux console, `dumb` terminals (falls back to basic 16-color, limited Unicode).
 
 ## Feature Detection
-- **Program detection**: environment probes (`TERM`, `TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`, etc.) map to `TerminalProgram`.
+- **Program detection**: environment probes (`TERM`, `TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`, etc.) map to `TerminalProgram`. Zit reads Zig's startup environment directly, including in libc-free Linux executables.
 - **Color depth**: `ColorLevel` is inferred from `COLORTERM`/`TERM` suffixes and known programs (16, 256, or truecolor).
 - **Styling flags**: booleans for italic/underline/strikethrough/ligatures/emoji/double-width. Conservative defaults on linux console and dumb terminals.
 - **Input/graphics extras**: `kitty_keyboard`, `kitty_graphics`, `synchronized_output`, `bracketed_paste`, and `iterm2_integration` are enabled when the program is known to support them.

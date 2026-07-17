@@ -41,24 +41,14 @@ pub fn fileWriteAll(handle: std.Io.File.Handle, bytes: []const u8) !void {
 }
 
 pub fn getEnv(allocator: std.mem.Allocator, key: []const u8) !?[]u8 {
-    if (builtin.os.tag == .windows) {
-        return std.process.Environ.getAlloc(.{ .block = .global }, allocator, key) catch |err| switch (err) {
-            error.EnvironmentVariableMissing => null,
-            else => |e| return e,
-        };
-    }
-
-    if (!builtin.link_libc or !@hasDecl(std.c, "environ")) return null;
-
-    var index: usize = 0;
-    while (std.c.environ[index]) |entry_ptr| : (index += 1) {
-        const entry = std.mem.span(entry_ptr);
-        if (entry.len <= key.len or entry[key.len] != '=') continue;
-        if (std.mem.eql(u8, entry[0..key.len], key)) {
-            return try allocator.dupe(u8, entry[key.len + 1 ..]);
-        }
-    }
-    return null;
+    const environ = if (comptime builtin.is_test)
+        std.testing.environ
+    else
+        std.Io.Threaded.global_single_threaded.environ.process_environ;
+    return environ.getAlloc(allocator, key) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => null,
+        else => |e| return e,
+    };
 }
 
 pub fn sleepMillisChecked(ms: u64) !void {
@@ -72,4 +62,13 @@ pub fn sleepMillis(ms: u64) void {
 
 test "sleepMillisChecked accepts zero-duration sleep" {
     try sleepMillisChecked(0);
+}
+
+test "getEnv reads and owns startup environment values" {
+    const allocator = std.testing.allocator;
+    const path = try getEnv(allocator, "PATH") orelse return error.SkipZigTest;
+    defer allocator.free(path);
+
+    try std.testing.expect(path.len > 0);
+    try std.testing.expect(try getEnv(allocator, "ZIT_TEST_ENVIRONMENT_VALUE_THAT_MUST_NOT_EXIST") == null);
 }
