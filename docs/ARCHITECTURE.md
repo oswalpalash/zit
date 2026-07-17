@@ -22,7 +22,7 @@ This document explains how Zit fits together internally: the main modules, how d
   - Containers measure children via `Widget.getPreferredSize` (through the layout adapters) and assign `Rect`s.
   - Once rectangles are final, `Widget.draw` emits characters/colors into the render buffer; `Renderer.render()` diffs against the front buffer.
   - Text geometry uses Unicode grapheme boundaries and terminal-cell widths. `render.measureText` and allocation-free `render.clipTextToWidth` keep preferred size, clipping, cursor advance, and mouse hit regions on the same coordinate system.
-  - Fallible geometry preparation and retained-cache growth happen at layout or mutation boundaries. Production draw callbacks consume that state without child layout or heap growth, and clip arbitrary text by terminal cells instead of UTF-8 bytes; `scripts/check_draw_layout_boundary.py` enforces these boundaries recursively for local helpers.
+  - Fallible geometry preparation and retained-cache growth happen at layout or mutation boundaries. Production draw callbacks consume that state without child layout or heap growth, and measure, clip, advance, and draw arbitrary text by terminal cells instead of UTF-8 bytes; `scripts/check_draw_layout_boundary.py` enforces these boundaries recursively for local helpers.
   - Application-bound resize prepares replacement renderer buffers first, lays out the widget tree, then commits the buffers. A failed layout discards the prepared buffers so render dimensions and widget geometry remain aligned.
   - Renderer output accepts short writes and bounded transient zero-byte writes. A sustained zero-progress writer returns `error.WriteNoProgress` before buffer swap, leaving the frame dirty and retryable.
 - **Timers/Animations → Event loop**

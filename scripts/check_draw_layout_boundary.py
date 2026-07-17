@@ -30,6 +30,17 @@ BYTE_CLIP_BOUND = re.compile(
     r"\b(?:const|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
     r"[^;]*?@min\s*\([^;]*?\.len\b[^;]*?;",
 )
+BYTE_INDEX_LOOP = re.compile(
+    r"\bfor\s*\(\s*([^,\n]+?)\s*,\s*0\s*\.\.\s*\)\s*\|",
+)
+ARBITRARY_TEXT_MEMBER = re.compile(
+    r"\.\s*(?:title|text|header|label|message|body|option|step)\b",
+)
+ASSIGNMENT = re.compile(
+    r"\b(?:(?:const|var)\s+)?([A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*(?::[^=;\n]+)?=\s*([^;\n]+);",
+)
+IDENTIFIER = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 SELF_CALL = re.compile(r"\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 TEST_DECLARATION = re.compile(r"(?m)^test\b")
 
@@ -110,6 +121,31 @@ def in_ranges(index: int, ranges: list[tuple[int, int]]) -> bool:
     return any(start <= index < end for start, end in ranges)
 
 
+def indexed_text_iteration(masked: str, start: int, end: int) -> int | None:
+    """Find indexed byte iteration over arbitrary text fields or their aliases."""
+    body = masked[start:end]
+    tainted: set[str] = set()
+    assignments = list(ASSIGNMENT.finditer(body))
+
+    changed = True
+    while changed:
+        changed = False
+        for assignment in assignments:
+            name, expression = assignment.groups()
+            identifiers = set(IDENTIFIER.findall(expression))
+            if ARBITRARY_TEXT_MEMBER.search(expression) or identifiers & tainted:
+                if name not in tainted:
+                    tainted.add(name)
+                    changed = True
+
+    for loop in BYTE_INDEX_LOOP.finditer(body):
+        expression = loop.group(1)
+        identifiers = set(IDENTIFIER.findall(expression))
+        if ARBITRARY_TEXT_MEMBER.search(expression) or identifiers & tainted:
+            return start + loop.start()
+    return None
+
+
 def violations_in(source: str) -> list[tuple[int, str, str]]:
     masked = mask_non_code(source)
     tests = test_ranges(masked)
@@ -156,6 +192,12 @@ def violations_in(source: str) -> list[tuple[int, str, str]]:
                         prefix_slice.start(),
                         "must clip arbitrary text by terminal cells; use render.clipTextToWidth instead of byte-prefix slicing",
                     )
+            byte_iteration = indexed_text_iteration(masked, start, end)
+            if byte_iteration is not None:
+                return (
+                    byte_iteration,
+                    "must not iterate arbitrary UTF-8 as indexed bytes; clip and draw by terminal cells",
+                )
             for helper_call in SELF_CALL.finditer(masked, start, end):
                 indirect = find_forbidden_call(helper_call.group(1), seen)
                 if indirect is not None:
@@ -209,6 +251,20 @@ fn drawFn(_: *anyopaque) !void {
     renderer.drawStr(x, y, self.label[0..label_len]);
 }
 """
+    byte_iteration_violation = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void {
+    for (self.item.title, 0..) |byte, index| renderer.drawChar(x + index, y, byte);
+}
+"""
+    aliased_byte_iteration = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void {
+    var visible = self.label;
+    if (selected) visible = self.item.text;
+    for (visible, 0..) |byte, index| renderer.drawChar(x + index, y, byte);
+}
+"""
     test_only = """
 test "fixture" {
     const vtable = VTable{ .draw = drawFn, };
@@ -231,6 +287,14 @@ fn drawFn(_: *anyopaque) !void {
     const fixed = buffer[0..len];
 }
 """
+    generated_ascii_iteration = """
+const vtable = VTable{ .draw = drawFn, };
+fn drawFn(_: *anyopaque) !void {
+    var buffer: [5]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&buffer, "{d}%", .{progress}) catch "";
+    for (text, 0..) |byte, index| renderer.drawChar(x + index, y, byte);
+}
+"""
     if not violations_in(violation):
         raise AssertionError("draw-time layout was not detected")
     if not violations_in(indirect_violation):
@@ -243,7 +307,18 @@ fn drawFn(_: *anyopaque) !void {
         raise AssertionError("draw-time byte clipping was not detected")
     if not violations_in(indirect_byte_clip):
         raise AssertionError("indirect draw-time byte clipping was not detected")
-    for source in (clean, test_only, literal_only, retained_storage, cell_clipping):
+    if not violations_in(byte_iteration_violation):
+        raise AssertionError("draw-time indexed text iteration was not detected")
+    if not violations_in(aliased_byte_iteration):
+        raise AssertionError("aliased draw-time indexed text iteration was not detected")
+    for source in (
+        clean,
+        test_only,
+        literal_only,
+        retained_storage,
+        cell_clipping,
+        generated_ascii_iteration,
+    ):
         if violations_in(source):
             raise AssertionError("clean or test-only draw code was rejected")
 

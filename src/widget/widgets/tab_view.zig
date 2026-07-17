@@ -165,11 +165,12 @@ pub const TabBar = struct {
 
             const padding = nonNegativeCells(self.tab_padding);
             const cursor = x + padding;
-            for (tab.title, 0..) |char, j| {
-                if (cursor >= right or j >= right - cursor) break;
-                const title_x = cursor + @as(u32, @intCast(j));
-                const title_draw_x = u16Coord(title_x) orelse break;
-                renderer.drawChar(title_draw_x, rect.y, char, tab_fg, tab_bg, style);
+            if (cursor < right) {
+                const available: u16 = @intCast(@min(right - cursor, @as(u32, std.math.maxInt(u16))));
+                const clipped = render.clipTextToWidth(tab.title, available);
+                if (u16Coord(cursor)) |title_x| {
+                    renderer.drawStr(title_x, rect.y, clipped.text, tab_fg, tab_bg, style);
+                }
             }
 
             if (tab.closable or self.allow_close) {
@@ -321,9 +322,7 @@ pub const TabBar = struct {
         const close_extra: u32 = if (tab.closable or self.allow_close) 2 else 0;
         const padding = nonNegativeCells(self.tab_padding);
         const reserved = padding *| 2 +| close_extra;
-        const max_title = std.math.maxInt(u32) - reserved;
-        const title_len: u32 = @intCast(@min(tab.title.len, @as(usize, max_title)));
-        return title_len + reserved;
+        return saturatingAddU32(render.measureText(tab.title).width, reserved);
     }
 };
 
@@ -1618,6 +1617,51 @@ test "tab bar mouse selects rendered tab row" {
 
     try std.testing.expect(try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 9, 5, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 1), tab_bar.active_tab);
+}
+
+test "tab bar uses terminal cells for unicode draw and mouse geometry" {
+    const alloc = std.testing.allocator;
+    var tab_bar = try TabBar.init(alloc);
+    defer tab_bar.deinit();
+
+    const tabs = [_]TabItem{
+        .{ .title = "界e\u{301}👩‍💻" },
+        .{ .title = "B" },
+    };
+    tab_bar.setTabs(&tabs);
+    try tab_bar.widget.layout(layout_module.Rect.init(0, 0, 12, 1));
+
+    var renderer = try render.Renderer.init(alloc, 12, 1);
+    defer renderer.deinit();
+    try tab_bar.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 0).glyph.slice());
+    try std.testing.expectEqualStrings("👩‍💻", renderer.back.getCell(4, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(5, 0).continuation);
+    try std.testing.expectEqual(@as(u21, 'B'), renderer.back.getCell(9, 0).codepoint());
+
+    try std.testing.expect(try tab_bar.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 8, 0, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 1), tab_bar.active_tab);
+}
+
+test "tab bar clips unicode titles at complete graphemes" {
+    const alloc = std.testing.allocator;
+    var tab_bar = try TabBar.init(alloc);
+    defer tab_bar.deinit();
+
+    const tabs = [_]TabItem{.{ .title = "界e\u{301}👩‍💻" }};
+    tab_bar.setTabs(&tabs);
+    try tab_bar.widget.layout(layout_module.Rect.init(0, 0, 4, 1));
+
+    var renderer = try render.Renderer.init(alloc, 4, 1);
+    defer renderer.deinit();
+    try tab_bar.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 0).glyph.slice());
 }
 
 test "tab bar clips edge coordinates before u16 overflow" {

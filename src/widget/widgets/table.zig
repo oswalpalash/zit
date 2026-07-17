@@ -964,6 +964,20 @@ pub const Table = struct {
         renderer.drawChar(draw_x, draw_y, char, fg, bg, style);
     }
 
+    fn drawTableText(
+        renderer: *render.Renderer,
+        x: u32,
+        y: u32,
+        text: []const u8,
+        fg: render.Color,
+        bg: render.Color,
+        style: render.Style,
+    ) void {
+        const draw_x = u16Coord(x) orelse return;
+        const draw_y = u16Coord(y) orelse return;
+        renderer.drawStr(draw_x, draw_y, text, fg, bg, style);
+    }
+
     fn columnIndexAtX(self: *Table, x: u16) ?usize {
         const content_rect = self.contentRect();
         if (!content_rect.contains(x, content_rect.y)) return null;
@@ -1152,15 +1166,9 @@ pub const Table = struct {
 
                 // Draw header text
                 var cursor = x + 1;
-                for (column.header, 0..) |char, i| {
-                    if (i >= @as(usize, @intCast(column_width - 1))) {
-                        break;
-                    }
-
-                    drawTableChar(renderer, cursor, y, char, self.header_fg, self.header_bg, render.Style{});
-                    cursor += 1;
-                    if (cursor >= x + column_width) break;
-                }
+                const clipped_header = render.clipTextToWidth(column.header, column_width - 1);
+                drawTableText(renderer, cursor, y, clipped_header.text, self.header_fg, self.header_bg, render.Style{});
+                cursor += clipped_header.width;
 
                 if (indicator != null and cursor < x + column_width) {
                     drawTableChar(renderer, cursor, y, indicator.?, self.header_fg, self.header_bg, render.Style{ .bold = true });
@@ -1267,13 +1275,8 @@ pub const Table = struct {
                     fillTableSpan(renderer, x, y, column_width, ' ', cell_fg, cell_bg, render.Style{});
 
                     // Draw cell text
-                    for (text_slice, 0..) |char, i| {
-                        if (i >= @as(usize, @intCast(column_width - 1))) {
-                            break;
-                        }
-
-                        drawTableChar(renderer, x + 1 + @as(u32, @intCast(i)), y, char, cell_fg, cell_bg, cell_style);
-                    }
+                    const clipped_text = render.clipTextToWidth(text_slice, column_width - 1);
+                    drawTableText(renderer, x + 1, y, clipped_text.text, cell_fg, cell_bg, cell_style);
 
                     // Draw grid if enabled
                     if (self.show_grid and x > content_x) {
@@ -1954,6 +1957,48 @@ test "table draws clipped oversized columns" {
     try std.testing.expectEqual(@as(u21, 'N'), renderer.back.getCell(1, 0).codepoint());
     try std.testing.expectEqual(@as(u21, 'a'), renderer.back.getCell(1, 2).codepoint());
     try std.testing.expectEqual(@as(u21, 'd'), renderer.back.getCell(4, 2).codepoint());
+}
+
+test "table renders unicode headers and cells by terminal width" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("界e\u{301}👩‍💻Z", 7, true);
+    try table.addRow(&.{"界e\u{301}👩‍💻Z"});
+    try table.widget.layout(layout_module.Rect.init(0, 0, 7, 3));
+
+    var renderer = try render.Renderer.init(alloc, 7, 3);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    for ([_]u16{ 0, 2 }) |y| {
+        try std.testing.expectEqualStrings("界", renderer.back.getCell(1, y).glyph.slice());
+        try std.testing.expect(renderer.back.getCell(2, y).continuation);
+        try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, y).glyph.slice());
+        try std.testing.expectEqualStrings("👩‍💻", renderer.back.getCell(4, y).glyph.slice());
+        try std.testing.expect(renderer.back.getCell(5, y).continuation);
+        try std.testing.expectEqual(@as(u21, 'Z'), renderer.back.getCell(6, y).codepoint());
+    }
+}
+
+test "table places sort indicator after unicode header cells" {
+    const alloc = std.testing.allocator;
+    var table = try Table.init(alloc);
+    defer table.deinit();
+
+    try table.addColumn("界e\u{301}", 5, true);
+    table.sort_column = 0;
+    try table.widget.layout(layout_module.Rect.init(0, 0, 5, 2));
+
+    var renderer = try render.Renderer.init(alloc, 5, 2);
+    defer renderer.deinit();
+    try table.widget.draw(&renderer);
+
+    try std.testing.expectEqualStrings("界", renderer.back.getCell(1, 0).glyph.slice());
+    try std.testing.expect(renderer.back.getCell(2, 0).continuation);
+    try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, 0).glyph.slice());
+    try std.testing.expectEqual(@as(u21, '▲'), renderer.back.getCell(4, 0).codepoint());
 }
 
 test "table clips edge coordinates before u16 overflow" {

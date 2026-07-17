@@ -322,18 +322,11 @@ pub const DropdownMenu = struct {
         }
 
         // Draw text
-        const header_text_capacity: u16 = if (rect.width > 2) rect.width - 2 else 0;
+        const header_text_capacity: u16 = if (rect.width > 3) rect.width - 3 else 0;
         if (header_text_capacity > 0) {
-            const right = rectRight(rect);
-            var x: u32 = @as(u32, rect.x) + 1;
-            for (display_text, 0..) |char, i| {
-                if (i >= header_text_capacity or x >= right) {
-                    break;
-                }
-
-                const draw_x = u16Coord(x) orelse break;
-                renderer.drawChar(draw_x, rect.y, char, fg, bg, style);
-                x += 1;
+            const clipped = render.clipTextToWidth(display_text, header_text_capacity);
+            if (u16Coord(@as(u32, rect.x) + 1)) |draw_x| {
+                renderer.drawStr(draw_x, rect.y, clipped.text, fg, bg, style);
             }
         }
 
@@ -383,16 +376,9 @@ pub const DropdownMenu = struct {
 
                 // Draw item text
                 if (item_text_capacity > 0) {
-                    const right = rectRight(rect);
-                    var x: u32 = @as(u32, rect.x) + 1;
-                    for (item.text, 0..) |char, text_idx| {
-                        if (text_idx >= item_text_capacity or x >= right) {
-                            break;
-                        }
-
-                        const draw_x = u16Coord(x) orelse break;
-                        renderer.drawChar(draw_x, item_y, char, item_fg, item_bg, style);
-                        x += 1;
+                    const clipped = render.clipTextToWidth(item.text, item_text_capacity);
+                    if (u16Coord(@as(u32, rect.x) + 1)) |draw_x| {
+                        renderer.drawStr(draw_x, item_y, clipped.text, item_fg, item_bg, style);
                     }
                 }
             }
@@ -546,12 +532,12 @@ pub const DropdownMenu = struct {
 
         // Check label length
         if (self.label.len > 0) {
-            max_width = @max(max_width, preferredWidthForText(self.label.len)); // Add space for arrow and padding
+            max_width = @max(max_width, preferredWidthForText(render.measureText(self.label).width)); // Add space for arrow and padding
         }
 
         // Check item lengths
         for (self.items.items) |item| {
-            max_width = @max(max_width, preferredWidthForText(item.text.len)); // Add space for arrow and padding
+            max_width = @max(max_width, preferredWidthForText(render.measureText(item.text).width)); // Add space for arrow and padding
         }
 
         // Height is always 1 when closed
@@ -578,10 +564,10 @@ pub const DropdownMenu = struct {
         return @min(count, 10);
     }
 
-    fn preferredWidthForText(len: usize) u16 {
+    fn preferredWidthForText(width: u16) u16 {
         const max = std.math.maxInt(u16);
-        if (len >= max - 4) return max;
-        return @intCast(len + 4);
+        if (width >= max - 4) return max;
+        return width + 4;
     }
 };
 
@@ -810,6 +796,39 @@ test "dropdown menu tolerates tiny render widths" {
     defer one.deinit();
     menu.widget.rect = layout_module.Rect.init(0, 0, 1, 1);
     try menu.widget.draw(&one);
+}
+
+test "dropdown menu clips unicode text by terminal cells" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("界e\u{301}👩‍💻Z", true, null);
+    menu.open();
+
+    try menu.widget.layout(layout_module.Rect.init(0, 0, 8, 1));
+    var renderer = try render.Renderer.init(alloc, 8, 2);
+    defer renderer.deinit();
+    try menu.widget.draw(&renderer);
+
+    for ([_]u16{ 0, 1 }) |y| {
+        try std.testing.expectEqualStrings("界", renderer.back.getCell(1, y).glyph.slice());
+        try std.testing.expect(renderer.back.getCell(2, y).continuation);
+        try std.testing.expectEqualStrings("e\u{301}", renderer.back.getCell(3, y).glyph.slice());
+        try std.testing.expectEqualStrings("👩‍💻", renderer.back.getCell(4, y).glyph.slice());
+        try std.testing.expect(renderer.back.getCell(5, y).continuation);
+    }
+    try std.testing.expectEqual(@as(u21, '▼'), renderer.back.getCell(6, 0).codepoint());
+    try std.testing.expectEqual(@as(u21, 'Z'), renderer.back.getCell(6, 1).codepoint());
+}
+
+test "dropdown menu preferred width measures unicode cells" {
+    const alloc = std.testing.allocator;
+    var menu = try DropdownMenu.init(alloc);
+    defer menu.deinit();
+    try menu.addItem("界界界界", true, null);
+
+    const size = try menu.widget.getPreferredSize();
+    try std.testing.expectEqual(@as(u16, 12), size.width);
 }
 
 test "dropdown menu clips edge coordinates before u16 overflow" {
