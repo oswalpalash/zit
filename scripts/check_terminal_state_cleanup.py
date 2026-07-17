@@ -160,6 +160,16 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
                 "src/terminal/terminal.zig: enableRawMode must record raw-input cleanup before Windows output setup"
             )
 
+        for marker in ("O.NONBLOCK", "F.SETFL", "setNonBlocking("):
+            if marker in raw_mode_body:
+                failures.append(
+                    "src/terminal/terminal.zig: Unix raw mode must use termios VMIN/VTIME and polling without changing shared file status flags"
+                )
+                break
+        for marker in ("std.posix.V.TIME", "std.posix.V.MIN"):
+            if marker not in raw_mode_body:
+                failures.append(f"src/terminal/terminal.zig: Unix raw mode missing termios marker {marker}")
+
         rollback_index = raw_mode_body.find(
             "windows_console.SetConsoleMode(self.stdin_fd, info.in_mode).toBool()",
             output_setup_index,
@@ -305,7 +315,7 @@ def main() -> int:
     print(
         f"checked {checked} interactive example(s) for terminal-state cleanup symmetry, "
         "driver ownership, Windows VT negotiation, fragmented input, input transport errors, "
-        "and silent cleanup catches"
+        "blocking output preservation, and silent cleanup catches"
     )
     return 0
 

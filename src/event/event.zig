@@ -3667,7 +3667,6 @@ test "application input binding stores non-blocking poll configuration" {
         .stdin_fd = std.Io.File.stdin().handle,
         .stdout_fd = std.Io.File.stdout().handle,
         .original_termios = .none,
-        .original_stdin_flags = null,
         .width = 80,
         .height = 24,
         .is_raw_mode = false,

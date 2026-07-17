@@ -125,63 +125,6 @@ fn sigwinchInstallCountForTest() usize {
     return sigwinch_state.install_count;
 }
 
-fn managesNonBlockingFileStatusFlags() bool {
-    return comptime blk: {
-        if (builtin.os.tag == .windows or builtin.os.tag == .macos) break :blk false;
-        break :blk @hasField(std.posix.O, "NONBLOCK");
-    };
-}
-
-fn nonBlockingFileStatusFlag() usize {
-    return comptime blk: {
-        if (!managesNonBlockingFileStatusFlags()) break :blk 0;
-        break :blk @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
-    };
-}
-
-fn fileStatusFlagsWithNonBlocking(flags: usize) usize {
-    return flags | nonBlockingFileStatusFlag();
-}
-
-fn getFileStatusFlags(fd: std.posix.fd_t) !usize {
-    while (true) {
-        const rc = std.posix.system.fcntl(fd, std.posix.F.GETFL, @as(usize, 0));
-        switch (std.posix.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-            else => return error.FcntlFailure,
-        }
-    }
-}
-
-fn setFileStatusFlags(fd: std.posix.fd_t, flags: usize) !void {
-    while (true) {
-        const rc = std.posix.system.fcntl(fd, std.posix.F.SETFL, flags);
-        switch (std.posix.errno(rc)) {
-            .SUCCESS => return,
-            .INTR => continue,
-            else => return error.FcntlFailure,
-        }
-    }
-}
-
-fn setNonBlocking(fd: std.posix.fd_t) !usize {
-    const original_flags = try getFileStatusFlags(fd);
-    try setFileStatusFlags(fd, fileStatusFlagsWithNonBlocking(original_flags));
-    return original_flags;
-}
-
-fn restoreFileStatusFlagsIfNeeded(fd: std.posix.fd_t, original_flags: *?usize, first_error: *?anyerror) void {
-    if (comptime managesNonBlockingFileStatusFlags()) {
-        if (original_flags.*) |flags| {
-            setFileStatusFlags(fd, flags) catch |err| rememberFirstError(first_error, err);
-            if (first_error.* == null) {
-                original_flags.* = null;
-            }
-        }
-    }
-}
-
 pub const Size = struct {
     width: u16,
     height: u16,
@@ -242,8 +185,6 @@ pub const Terminal = struct {
     stdout_fd: std.posix.fd_t,
     /// Original terminal attributes (for restoring on exit)
     original_termios: OriginalTermAttrs,
-    /// Original stdin file status flags before non-blocking raw-mode setup.
-    original_stdin_flags: ?usize,
     /// Current terminal width in columns
     width: u16,
     /// Current terminal height in rows
@@ -337,7 +278,6 @@ pub const Terminal = struct {
             .stdin_fd = stdin_fd,
             .stdout_fd = stdout_fd,
             .original_termios = original_termios,
-            .original_stdin_flags = null,
             .width = 80, // Default values
             .height = 24,
             .is_raw_mode = false,
@@ -445,9 +385,7 @@ pub const Terminal = struct {
     fn rollbackUnixRawModeSetup(self: *Terminal, original: std.posix.termios) void {
         if (builtin.os.tag == .windows) return;
 
-        var ignored_error: ?anyerror = null;
-        std.posix.tcsetattr(self.stdin_fd, .NOW, original) catch |err| rememberFirstError(&ignored_error, err);
-        restoreFileStatusFlagsIfNeeded(self.stdin_fd, &self.original_stdin_flags, &ignored_error);
+        std.posix.tcsetattr(self.stdin_fd, .NOW, original) catch |err| reportCleanupError("raw mode rollback", err);
     }
 
     fn restoreWindowsOutputModeIfNeeded(self: *Terminal, first_error: *?anyerror) void {
@@ -540,7 +478,9 @@ pub const Terminal = struct {
                     raw.oflag.OPOST = false;
                     raw.cflag.CSIZE = .CS8;
 
-                    // Set read timeout and minimum input to 0 for non-blocking reads
+                    // Reads return immediately; InputHandler.pollEvent controls waiting.
+                    // Do not set O_NONBLOCK here: PTY stdin/stdout commonly share an
+                    // open file description, so changing stdin flags can affect output.
                     const v_time: usize = @intFromEnum(std.posix.V.TIME);
                     const v_min: usize = @intFromEnum(std.posix.V.MIN);
 
@@ -550,10 +490,6 @@ pub const Terminal = struct {
                     // Apply settings
                     try std.posix.tcsetattr(self.stdin_fd, .FLUSH, raw);
                     raw_applied = true;
-
-                    if (comptime managesNonBlockingFileStatusFlags()) {
-                        self.original_stdin_flags = try setNonBlocking(self.stdin_fd);
-                    }
                 },
                 else => {}, // Do nothing for .none
             }
@@ -612,8 +548,6 @@ pub const Terminal = struct {
                 else => {}, // Do nothing for .none
             }
         }
-
-        restoreFileStatusFlagsIfNeeded(self.stdin_fd, &self.original_stdin_flags, &first_error);
 
         // Explicitly reset formatting to ensure terminal is in a clean state
         self.resetFormatting() catch |err| rememberFirstError(&first_error, err);
@@ -995,62 +929,6 @@ test "Windows VT input protocols require input and output modes" {
     try std.testing.expect(!windowsVtOutputModeEnabled(windows_console.ENABLE_PROCESSED_OUTPUT));
 }
 
-test "non-blocking file status flag preserves existing bits" {
-    if (comptime !managesNonBlockingFileStatusFlags()) return error.SkipZigTest;
-
-    const existing: usize = 0x20;
-    const flag = nonBlockingFileStatusFlag();
-    const updated = fileStatusFlagsWithNonBlocking(existing);
-
-    try std.testing.expect((updated & existing) == existing);
-    try std.testing.expect((updated & flag) == flag);
-}
-
-test "file status flags restore non-blocking changes" {
-    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
-        return error.SkipZigTest;
-    }
-    if (comptime !managesNonBlockingFileStatusFlags()) return error.SkipZigTest;
-
-    var fds: [2]std.posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
-
-    const original = try getFileStatusFlags(fds[0]);
-    const flag = nonBlockingFileStatusFlag();
-
-    try setFileStatusFlags(fds[0], fileStatusFlagsWithNonBlocking(original));
-    const non_blocking = try getFileStatusFlags(fds[0]);
-    try std.testing.expect((non_blocking & flag) == flag);
-
-    try setFileStatusFlags(fds[0], original);
-    const restored = try getFileStatusFlags(fds[0]);
-    try std.testing.expectEqual(original, restored);
-}
-
-test "restoreFileStatusFlagsIfNeeded restores and clears saved flags" {
-    if (comptime (!managesNonBlockingFileStatusFlags() or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
-        return error.SkipZigTest;
-    }
-
-    var fds: [2]std.posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
-
-    var saved_flags: ?usize = try setNonBlocking(fds[0]);
-    const flag = nonBlockingFileStatusFlag();
-    try std.testing.expect(((try getFileStatusFlags(fds[0])) & flag) == flag);
-
-    var first_error: ?anyerror = null;
-    restoreFileStatusFlagsIfNeeded(fds[0], &saved_flags, &first_error);
-
-    try std.testing.expect(first_error == null);
-    try std.testing.expect(saved_flags == null);
-    try std.testing.expect(((try getFileStatusFlags(fds[0])) & flag) == 0);
-}
-
 test "SIGWINCH handler installation is reference counted" {
     if (!supportsSigwinch()) return error.SkipZigTest;
 
@@ -1087,7 +965,6 @@ test "terminal releases SIGWINCH reference without terminal output" {
         .stdin_fd = std.Io.File.stdin().handle,
         .stdout_fd = std.Io.File.stdout().handle,
         .original_termios = .none,
-        .original_stdin_flags = null,
         .width = 80,
         .height = 24,
         .is_raw_mode = false,
@@ -1119,7 +996,6 @@ test "terminal optional feature failures are observable and resettable" {
         .stdin_fd = std.Io.File.stdin().handle,
         .stdout_fd = std.Io.File.stdout().handle,
         .original_termios = .none,
-        .original_stdin_flags = null,
         .width = 80,
         .height = 24,
         .is_raw_mode = false,
@@ -1168,7 +1044,6 @@ test "failed mouse setup retains cleanup obligation on terminal output handle" {
         .stdin_fd = std.Io.File.stdin().handle,
         .stdout_fd = -1,
         .original_termios = .none,
-        .original_stdin_flags = null,
         .width = 80,
         .height = 24,
         .is_raw_mode = false,
