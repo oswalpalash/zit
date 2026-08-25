@@ -5,6 +5,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ## Unreleased
 
 ### Added
+- TextArea drag selection now maps pointers above/below/left/right of the viewport to the nearest logical text position and scrolls the caret back into view during edge drags.
 - Text areas now recognize double- and triple-clicks to select whitespace-delimited words and complete logical lines, using the same grapheme-safe scrolled geometry as drag selection.
 - Text areas now support left-drag and Shift-click selection using the same scrolled terminal-cell geometry and grapheme boundaries as click-to-position caret movement.
 - Opt-in terminal focus reporting with terminal-owned DECSET/DECRST 1004 lifecycle, decoded `CSI I` / `CSI O` input events, distinct application `.terminal_focus` events, benchmark coverage, and an end-to-end PTY release probe.

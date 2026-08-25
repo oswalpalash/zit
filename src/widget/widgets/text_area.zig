@@ -872,16 +872,50 @@ pub const TextArea = struct {
     fn indexAtMouse(self: *const TextArea, mouse_x: u16, mouse_y: u16) ?usize {
         const content = self.contentRect();
         if (!content.contains(mouse_x, mouse_y)) return null;
+        return self.indexAtMouseCoordinates(mouse_x, mouse_y);
+    }
 
-        const clicked_row = self.scroll_row + @as(usize, @intCast(mouse_y - content.y));
-        const clicked_col = self.scroll_col + @as(usize, @intCast(mouse_x - content.x));
+    /// Map drag coordinates even when the pointer leaves the viewport. The
+    /// resulting logical row/column may lie beyond the visible edge so
+    /// `ensureVisible` can advance scrolling while the selection is active.
+    fn selectionIndexAtMouse(self: *const TextArea, mouse_x: u16, mouse_y: u16) ?usize {
+        return self.indexAtMouseCoordinates(mouse_x, mouse_y);
+    }
+
+    fn indexAtMouseCoordinates(self: *const TextArea, mouse_x: u16, mouse_y: u16) ?usize {
+        const content = self.contentRect();
+        const offset_x = @as(i64, mouse_x) - @as(i64, content.x);
+        const offset_y = @as(i64, mouse_y) - @as(i64, content.y);
+
+        // Preserve negative offsets during drag selection so moving above/left
+        // of the viewport can scroll toward the beginning. Overflow checks
+        // keep extreme pointer coordinates from trapping on wide terminals.
+        const clicked_row_i64 = @as(i64, @intCast(self.scroll_row)) + offset_y;
+        if (clicked_row_i64 < 0 or clicked_row_i64 > std.math.maxInt(usize)) {
+            return if (clicked_row_i64 < 0) 0 else self.buffer.items.len;
+        }
+        const clicked_row: usize = @intCast(clicked_row_i64);
+
+        const clicked_col_i64 = @as(i64, @intCast(self.scroll_col)) + offset_x;
+        if (clicked_col_i64 < 0) {
+            const range = self.lineRange(clicked_row) orelse return self.buffer.items.len;
+            return range.start;
+        }
+
+        if (clicked_col_i64 > std.math.maxInt(usize)) {
+            const range = self.lineRange(clicked_row) orelse return self.buffer.items.len;
+            const line = self.buffer.items[range.start..range.end];
+            return range.start + text_metrics.byteOffsetForCellColumn(line, std.math.maxInt(usize));
+        }
+
+        const clicked_col: usize = @intCast(clicked_col_i64);
         const range = self.lineRange(clicked_row) orelse return self.buffer.items.len;
         const line = self.buffer.items[range.start..range.end];
         return range.start + text_metrics.byteOffsetForCellColumn(line, clicked_col);
     }
 
     fn moveCaretToMouse(self: *TextArea, mouse_x: u16, mouse_y: u16, extend_selection: bool) bool {
-        const index = self.indexAtMouse(mouse_x, mouse_y) orelse return false;
+        const index = self.selectionIndexAtMouse(mouse_x, mouse_y) orelse return false;
         self.clearExtraCursors();
 
         if (extend_selection) {
@@ -2264,6 +2298,37 @@ test "text area drag selection respects wide graphemes" {
     try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 3, 1, 1, 0) }));
     try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 3 }, area.selectionRange().?);
     try std.testing.expectEqual(@as(usize, 3), area.cursor);
+}
+
+test "text area drag below the viewport auto-scrolls selection" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("one\ntwo\nthree\nfour\nfive");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 12, 5));
+
+    // Content starts at (3,4) and shows three rows. Press the first byte,
+    // then drag one row below the bottom edge to reach logical row three.
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 4, 7, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 15 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 15), area.cursor);
+    try std.testing.expectEqual(@as(usize, 1), area.scroll_row);
+}
+
+test "text area drag right of the viewport auto-scrolls selection" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("abcdefghijklmnopqrstuvwxyz");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 12, 3));
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 100, 4, 1, 0) }));
+
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 26 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 26), area.cursor);
+    try std.testing.expect(area.scroll_col > 0);
 }
 
 test "text area multi-click selects words and lines" {
