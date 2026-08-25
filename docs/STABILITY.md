@@ -36,7 +36,7 @@ Before a feature is promoted as stable, it needs:
 - Keyboard accessibility, and mouse support where the widget exposes pointer behavior.
 - Terminal mouse protocol coordinates must be normalized at the input boundary so widget hit tests use the same zero-based coordinate system as rendering and layout.
 - Any terminal input protocol enabled by `Terminal` must have matching decoder coverage, idempotent per-instance ownership, symmetric cleanup, and an end-to-end PTY release check for negotiation, input, and restoration.
-- Windows input protocols must require independently negotiated VT input and output modes; console-mode changes made during initialization or partial raw-mode setup remain explicit cleanup obligations.
+- Windows input protocols must require independently negotiated VT input and output modes; console-mode changes made during initialization or partial raw-mode setup remain explicit cleanup obligations, including rollback when the constructor fails before returning an instance.
 - Input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait. The PTY gate injects protocol bytes individually, and the native Windows matrix exercises wait timeout/readiness behavior.
 - Terminal capability detection must read Zig's captured startup environment on every supported target, including libc-free Linux builds; it must not silently downgrade because a C `environ` symbol is unavailable. The interactive PTY gate requires Kitty keyboard setup and cleanup bytes from a Linux executable launched with `TERM=xterm-kitty`.
 - Input polling must distinguish ordinary timeouts from transport failure. Hangup, invalid-descriptor, poll, and read errors must propagate instead of becoming no-event, Escape, or unknown-key results.
@@ -44,6 +44,7 @@ Before a feature is promoted as stable, it needs:
 - POSIX raw mode must use termios `VMIN`/`VTIME` plus input polling without changing `O_NONBLOCK` or other open-file-description flags. PTY stdin and stdout may share those flags, so input setup must preserve blocking renderer output.
 - Bound resize handling must publish renderer dimensions and widget geometry as one transaction; allocation or layout failure preserves the previously committed size on both sides.
 - SIGWINCH acknowledgement must follow a successful cached-geometry refresh; failed refreshes preserve the pending signal for retry. Terminal cursor sequences widen one-based u16 coordinates before arithmetic so valid maximum geometry cannot overflow.
+- Runtime terminal geometry refreshes are live-query-only and transactional: an unavailable probe returns an error while preserving cached dimensions. Environment size hints participate only in initialization fallback, are validated as positive in-range values, and cannot partially replace cached geometry when allocation fails.
 - Renderer output must tolerate short and transient zero-byte writes without losing bytes, bound sustained zero-progress retries, and preserve dirty state when a frame cannot be flushed so callers can retry it. Terminal rendering uses retained output scratch across frames; a steady-state equal-sized frame makes no allocator calls, keeping publication cost independent of allocator traffic.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 

@@ -300,7 +300,19 @@ pub const Terminal = struct {
             self.capabilities = downgradeWindowsCapabilities(self.capabilities);
         }
 
-        try self.updateSize();
+        if (is_windows) {
+            // Initialization enabled VT output before geometry was known. A
+            // failed fallback must not leak that console-mode change behind an
+            // constructor error, because callers have no Terminal to deinit.
+            self.initializeSize() catch |err| {
+                var cleanup_error: ?anyerror = null;
+                self.restoreWindowsOutputModeIfNeeded(&cleanup_error);
+                if (cleanup_error) |cleanup| reportCleanupError("windows output mode rollback", cleanup);
+                return err;
+            };
+        } else {
+            try self.initializeSize();
+        }
 
         self.sigwinch_registered = installSigwinchHandler();
 
@@ -557,77 +569,100 @@ pub const Terminal = struct {
         self.is_raw_mode = false;
     }
 
-    /// Update terminal size information
-    pub fn updateSize(self: *Terminal) !void {
+    fn probeSize(self: *Terminal) !?Size {
         const is_windows = @import("builtin").os.tag == .windows;
 
         if (is_windows) {
-            // Windows implementation
             var console_screen_buffer_info: windows_console.ScreenBufferInfo = undefined;
-
-            if (windows_console.GetConsoleScreenBufferInfo(self.stdout_fd, &console_screen_buffer_info).toBool()) {
-                self.width = @intCast(console_screen_buffer_info.srWindow.Right - console_screen_buffer_info.srWindow.Left + 1);
-                self.height = @intCast(console_screen_buffer_info.srWindow.Bottom - console_screen_buffer_info.srWindow.Top + 1);
-                return;
+            if (!windows_console.GetConsoleScreenBufferInfo(self.stdout_fd, &console_screen_buffer_info).toBool()) {
+                return null;
             }
-        } else {
-            // Unix implementation
-            const winsize = struct {
-                ws_row: u16,
-                ws_col: u16,
-                ws_xpixel: u16,
-                ws_ypixel: u16,
+
+            return Size{
+                .width = @intCast(console_screen_buffer_info.srWindow.Right - console_screen_buffer_info.srWindow.Left + 1),
+                .height = @intCast(console_screen_buffer_info.srWindow.Bottom - console_screen_buffer_info.srWindow.Top + 1),
             };
-
-            var ws = winsize{ .ws_row = 0, .ws_col = 0, .ws_xpixel = 0, .ws_ypixel = 0 };
-
-            // TIOCGWINSZ value can vary by OS
-            const TIOCGWINSZ = switch (@import("builtin").os.tag) {
-                .linux => 0x5413,
-                .macos, .ios, .watchos, .tvos => 0x40087468,
-                .freebsd, .netbsd, .dragonfly => 0x40087468,
-                .openbsd => 0x40087468,
-                else => 0x5413, // Default to Linux value
-            };
-
-            // Use ioctl safely based on the OS
-            var result: c_int = -1;
-
-            if (@import("builtin").os.tag == .macos) {
-                // Use direct syscall for macOS
-                const darwin = struct {
-                    extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
-                };
-                result = darwin.ioctl(@intCast(self.stdout_fd), TIOCGWINSZ, &ws);
-            } else {
-                // Use Linux ioctl for other platforms
-                result = @intCast(std.os.linux.ioctl(self.stdout_fd, TIOCGWINSZ, @intFromPtr(&ws)));
-            }
-
-            if (result == 0 and ws.ws_col > 0 and ws.ws_row > 0) {
-                self.width = ws.ws_col;
-                self.height = ws.ws_row;
-                return;
-            }
         }
 
-        // Fallback: try to get size from environment variables
+        const winsize = struct {
+            ws_row: u16,
+            ws_col: u16,
+            ws_xpixel: u16,
+            ws_ypixel: u16,
+        };
+
+        const darwin = struct {
+            extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
+        };
+
+        var ws = winsize{ .ws_row = 0, .ws_col = 0, .ws_xpixel = 0, .ws_ypixel = 0 };
+        const TIOCGWINSZ: c_ulong = switch (@import("builtin").os.tag) {
+            .linux => 0x5413,
+            .macos, .ios, .tvos, .watchos, .visionos => 0x40087468,
+            .freebsd, .netbsd, .dragonfly => 0x40087468,
+            .openbsd => 0x40087468,
+            else => 0x5413,
+        };
+
+        const result: c_int = if (@import("builtin").os.tag == .macos) darwin.ioctl(
+            @intCast(self.stdout_fd),
+            TIOCGWINSZ,
+            &ws,
+        ) else @intCast(std.os.linux.ioctl(
+            self.stdout_fd,
+            TIOCGWINSZ,
+            @intFromPtr(&ws),
+        ));
+
+        if (result != 0 or ws.ws_col == 0 or ws.ws_row == 0) return null;
+        return Size{ .width = ws.ws_col, .height = ws.ws_row };
+    }
+
+    fn parseEnvironmentDimension(value: []const u8) ?u16 {
+        const parsed = std.fmt.parseInt(u16, value, 10) catch return null;
+        return if (parsed == 0) null else parsed;
+    }
+
+    fn environmentFallbackSize(self: *Terminal) !Size {
+        var size = Size{ .width = self.width, .height = self.height };
+
         const cols_owned = try compat.getEnv(self.allocator, "COLUMNS");
         defer if (cols_owned) |cols| self.allocator.free(cols);
         const lines_owned = try compat.getEnv(self.allocator, "LINES");
         defer if (lines_owned) |lines| self.allocator.free(lines);
 
         if (cols_owned) |cols| {
-            self.width = std.fmt.parseInt(u16, cols, 10) catch 80;
+            if (parseEnvironmentDimension(cols)) |width| size.width = width;
         }
-
         if (lines_owned) |lines| {
-            self.height = std.fmt.parseInt(u16, lines, 10) catch 24;
+            if (parseEnvironmentDimension(lines)) |height| size.height = height;
         }
 
-        // If all else fails, use default values
-        if (self.width == 0) self.width = 80;
-        if (self.height == 0) self.height = 24;
+        // Startup still needs usable geometry when neither the terminal probe
+        // nor a complete environment hint is available.
+        if (size.width == 0) size.width = 80;
+        if (size.height == 0) size.height = 24;
+        return size;
+    }
+
+    /// Read geometry once during initialization, allowing environment hints.
+    fn initializeSize(self: *Terminal) !void {
+        if (try self.probeSize()) |size| {
+            self.width = size.width;
+            self.height = size.height;
+            return;
+        }
+
+        const size = try self.environmentFallbackSize();
+        self.width = size.width;
+        self.height = size.height;
+    }
+
+    /// Refresh cached geometry from the live terminal without environment fallbacks.
+    pub fn updateSize(self: *Terminal) !void {
+        const size = (try self.probeSize()) orelse return error.TerminalGeometryUnavailable;
+        self.width = size.width;
+        self.height = size.height;
     }
 
     /// Enable mouse event reporting
@@ -977,6 +1012,73 @@ fn successfulResizePoll(term: *Terminal) anyerror!?Size {
     term.width = 91;
     term.height = 31;
     return Size{ .width = term.width, .height = term.height };
+}
+
+test "runtime geometry refresh is transactional" {
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        // Invalid on POSIX and Windows alike, so the live-terminal probe fails.
+        .stdout_fd = -1,
+        .original_termios = .none,
+        .width = 101,
+        .height = 37,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+
+    try std.testing.expectError(error.TerminalGeometryUnavailable, term.updateSize());
+    try std.testing.expectEqual(@as(u16, 101), term.width);
+    try std.testing.expectEqual(@as(u16, 37), term.height);
+
+    try std.testing.expectError(error.TerminalGeometryUnavailable, term.pollResize());
+    try std.testing.expectEqual(@as(u16, 101), term.width);
+    try std.testing.expectEqual(@as(u16, 37), term.height);
+}
+
+test "initialization geometry fallback is transactional under allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = -1,
+        .original_termios = .none,
+        .width = 91,
+        .height = 37,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = failing.allocator(),
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.OutOfMemory, term.initializeSize());
+    try std.testing.expectEqual(@as(u16, 91), term.width);
+    try std.testing.expectEqual(@as(u16, 37), term.height);
+}
+
+test "environment geometry hints require positive in-range values" {
+    try std.testing.expectEqual(@as(?u16, 1), Terminal.parseEnvironmentDimension("1"));
+    try std.testing.expectEqual(@as(?u16, 65535), Terminal.parseEnvironmentDimension("65535"));
+    try std.testing.expect(Terminal.parseEnvironmentDimension("0") == null);
+    try std.testing.expect(Terminal.parseEnvironmentDimension("65536") == null);
+    try std.testing.expect(Terminal.parseEnvironmentDimension("") == null);
 }
 
 test "changedSize reports only actual terminal geometry changes" {
