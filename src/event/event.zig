@@ -156,21 +156,21 @@ pub fn fromInputEvent(ie: input.Event, target: ?*widget.Widget) Event {
                 .y = mouse_event.y,
                 .button = mouse_event.button,
                 .clicks = 1,
-                .modifiers = .{},
+                .modifiers = mouse_event.modifiers,
             } }),
             .release => Event.init(.mouse_release, target, .{ .mouse_release = .{
                 .x = mouse_event.x,
                 .y = mouse_event.y,
                 .button = mouse_event.button,
                 .clicks = 1,
-                .modifiers = .{},
+                .modifiers = mouse_event.modifiers,
             } }),
             .move => Event.init(.mouse_move, target, .{ .mouse_move = .{
                 .x = mouse_event.x,
                 .y = mouse_event.y,
                 .button = mouse_event.button,
                 .clicks = 0,
-                .modifiers = .{},
+                .modifiers = mouse_event.modifiers,
             } }),
             .scroll_up, .scroll_down => {
                 const clamped = std.math.clamp(mouse_event.scroll_delta, @as(i16, -127), @as(i16, 127));
@@ -180,7 +180,7 @@ pub fn fromInputEvent(ie: input.Event, target: ?*widget.Widget) Event {
                     .y = mouse_event.y,
                     .dx = 0,
                     .dy = dy,
-                    .modifiers = .{},
+                    .modifiers = mouse_event.modifiers,
                 } });
             },
         },
@@ -3525,6 +3525,22 @@ test "fromInputEvent converts mouse wheel scroll events" {
     try std.testing.expectEqual(@as(i8, 0), down_event.data.mouse_wheel.dx);
     try std.testing.expectEqual(@as(i8, 127), down_event.data.mouse_wheel.dy);
     try std.testing.expectEqual(input.KeyModifiers{}, down_event.data.mouse_wheel.modifiers);
+}
+
+test "fromInputEvent preserves mouse modifiers" {
+    const mods = input.KeyModifiers.init(true, true, true);
+    const input_event = input.Event{ .mouse = input.MouseEvent.initWithModifiers(
+        .press,
+        10,
+        20,
+        1,
+        0,
+        mods,
+    ) };
+    const event = fromInputEvent(input_event, null);
+
+    try std.testing.expectEqual(EventType.mouse_press, event.type);
+    try std.testing.expectEqual(mods, event.data.mouse_press.modifiers);
 }
 
 test "fromInputEvent converts resize events" {

@@ -99,6 +99,15 @@ fn appendDecimalParamDigit(current: u16, digit: u8) ?u16 {
     return @intCast(next);
 }
 
+fn mouseModifiersFromButtonParam(param: u16) KeyModifiers {
+    // xterm mouse Cb uses direct bits: 4 shift, 8 alt/meta, 16 ctrl.
+    return .{
+        .shift = (param & 0x4) != 0,
+        .alt = (param & 0x8) != 0,
+        .ctrl = (param & 0x10) != 0,
+    };
+}
+
 fn shouldPollResize(last_poll_ms: i64, now_ms: i64, interval_ms: u64) bool {
     if (interval_ms == 0 or last_poll_ms == 0) return true;
     if (now_ms < last_poll_ms) return true;
@@ -382,6 +391,8 @@ pub const MouseEvent = struct {
     button: u8,
     /// Scroll delta (positive for down/right, negative for up/left)
     scroll_delta: i16 = 0,
+    /// Keyboard modifiers held while the mouse event arrived.
+    modifiers: KeyModifiers = .{},
 
     /// Create a new mouse event in Zit's zero-based screen coordinate space.
     ///
@@ -389,12 +400,24 @@ pub const MouseEvent = struct {
     /// `layout.Rect`. Terminal protocol mouse coordinates are one-based; use
     /// `fromTerminalCoordinates` for raw SGR/X10 coordinates.
     pub fn init(action: MouseAction, x: u16, y: u16, button: u8, scroll_delta: i16) MouseEvent {
+        return initWithModifiers(action, x, y, button, scroll_delta, .{});
+    }
+
+    pub fn initWithModifiers(
+        action: MouseAction,
+        x: u16,
+        y: u16,
+        button: u8,
+        scroll_delta: i16,
+        modifiers: KeyModifiers,
+    ) MouseEvent {
         return MouseEvent{
             .action = action,
             .x = x,
             .y = y,
             .button = button,
             .scroll_delta = scroll_delta,
+            .modifiers = modifiers,
         };
     }
 
@@ -404,12 +427,24 @@ pub const MouseEvent = struct {
     /// Widgets must never receive those raw values because they would place hit
     /// tests one row/column away from the rendered cells.
     pub fn fromTerminalCoordinates(action: MouseAction, terminal_x: u16, terminal_y: u16, button: u8, scroll_delta: i16) MouseEvent {
-        return init(
+        return fromTerminalCoordinatesWithModifiers(action, terminal_x, terminal_y, button, scroll_delta, .{});
+    }
+
+    pub fn fromTerminalCoordinatesWithModifiers(
+        action: MouseAction,
+        terminal_x: u16,
+        terminal_y: u16,
+        button: u8,
+        scroll_delta: i16,
+        modifiers: KeyModifiers,
+    ) MouseEvent {
+        return initWithModifiers(
             action,
             terminalMouseCoordToScreenCoord(terminal_x),
             terminalMouseCoordToScreenCoord(terminal_y),
             button,
             scroll_delta,
+            modifiers,
         );
     }
 };
@@ -1450,7 +1485,15 @@ fn windowsMouseButton(button_state: std.os.windows.DWORD) ?u8 {
     return null;
 }
 
-fn windowsMouseEvent(record: windows_console_input.InputRecord) ?Event {
+const NativeWindowsMouse = struct {
+    event: Event,
+    tracked_button: ?u8,
+};
+
+fn windowsMouseEvent(
+    record: windows_console_input.InputRecord,
+    previous_button: ?u8,
+) ?NativeWindowsMouse {
     const mouse = record.event.mouse;
     const flags = mouse.event_flags;
 
@@ -1459,19 +1502,26 @@ fn windowsMouseEvent(record: windows_console_input.InputRecord) ?Event {
     if (flags & windows_console_input.MOUSE_HWHEELED != 0) return null;
     if (mouse.mouse_position.X < 0 or mouse.mouse_position.Y < 0) return null;
 
+    const modifiers = KeyModifiers{
+        .ctrl = (mouse.control_key_state & 0x000c) != 0, // left/right ctrl
+        .alt = (mouse.control_key_state & 0x0003) != 0, // left/right alt
+        .shift = (mouse.control_key_state & 0x0010) != 0,
+    };
+
     if (flags & windows_console_input.MOUSE_WHEELED != 0) {
         const encoded: u16 = @truncate(mouse.button_state >> 16);
         const native_delta: i16 = @bitCast(encoded);
         const delta32: i32 = -@as(i32, native_delta);
         const action: MouseAction = if (native_delta > 0) .scroll_up else .scroll_down;
-        return Event{ .mouse = MouseEvent.init(
+        return .{ .event = Event{ .mouse = MouseEvent.initWithModifiers(
             action,
             @intCast(mouse.mouse_position.X),
             @intCast(mouse.mouse_position.Y),
             0,
             std.math.cast(i16, delta32) orelse
                 (if (delta32 < 0) std.math.minInt(i16) else std.math.maxInt(i16)),
-        ) };
+            modifiers,
+        ) }, .tracked_button = previous_button };
     }
 
     const action: MouseAction = if (flags & windows_console_input.MOUSE_MOVED != 0)
@@ -1483,17 +1533,28 @@ fn windowsMouseEvent(record: windows_console_input.InputRecord) ?Event {
     else
         .release;
 
-    const button: u8 = if (action == .move or action == .release)
-        0
-    else
-        (windowsMouseButton(mouse.button_state) orelse return null);
-    return Event{ .mouse = MouseEvent.init(
+    var tracked_button = previous_button;
+    const button: u8 = switch (action) {
+        .press => windowsMouseButton(mouse.button_state) orelse return null,
+        // Motion records carry the held button mask when dragging.
+        .move => windowsMouseButton(mouse.button_state) orelse (previous_button orelse 0),
+        .release => previous_button orelse 0,
+        else => 0,
+    };
+    switch (action) {
+        .press => tracked_button = button,
+        .release => tracked_button = null,
+        else => {},
+    }
+
+    return .{ .event = Event{ .mouse = MouseEvent.initWithModifiers(
         action,
         @intCast(mouse.mouse_position.X),
         @intCast(mouse.mouse_position.Y),
         button,
         0,
-    ) };
+        modifiers,
+    ) }, .tracked_button = tracked_button };
 }
 
 const PreparedWindowsInput = union(enum) {
@@ -1537,6 +1598,8 @@ pub const InputHandler = struct {
     last_resize_poll_ms: i64,
     /// Maximum wait for each byte continuing an input sequence.
     sequence_timeout_ms: u16,
+    /// Last pressed button for Win32 release records, which omit it.
+    windows_mouse_button: ?u8 = null,
 
     /// Initialize a new input handler
     pub fn init(allocator: std.mem.Allocator, term: *terminal.Terminal) InputHandler {
@@ -1860,8 +1923,9 @@ pub const InputHandler = struct {
                 .key_bytes => return .readable,
                 .mouse => {
                     try consumeWindowsRecord(self.term.stdin_fd, record);
-                    if (windowsMouseEvent(record)) |event| {
-                        return .{ .event = event };
+                    if (windowsMouseEvent(record, self.windows_mouse_button)) |native| {
+                        self.windows_mouse_button = native.tracked_button;
+                        return .{ .event = native.event };
                     }
                 },
                 .focus => {
@@ -2204,7 +2268,14 @@ fn parseMouseEventLegacy(reader: anytype, sink: anytype) !Event {
         MouseAction.press;
 
     return Event{
-        .mouse = MouseEvent.fromTerminalCoordinates(action, terminal_x, terminal_y, button, scroll_delta),
+        .mouse = MouseEvent.fromTerminalCoordinatesWithModifiers(
+            action,
+            terminal_x,
+            terminal_y,
+            button,
+            scroll_delta,
+            mouseModifiersFromButtonParam(button_param),
+        ),
     };
 }
 
@@ -2294,7 +2365,14 @@ fn parseMouseEventSgr(reader: anytype, sink: anytype) !Event {
         button_code + 1;
 
     return Event{
-        .mouse = MouseEvent.fromTerminalCoordinates(action, params[1], params[2], button, scroll_delta),
+        .mouse = MouseEvent.fromTerminalCoordinatesWithModifiers(
+            action,
+            params[1],
+            params[2],
+            button,
+            scroll_delta,
+            mouseModifiersFromButtonParam(button_param),
+        ),
     };
 }
 
@@ -2649,11 +2727,11 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = 0,
         } },
-    }).?;
-    try std.testing.expectEqual(MouseAction.press, press.mouse.action);
-    try std.testing.expectEqual(@as(u16, 4), press.mouse.x);
-    try std.testing.expectEqual(@as(u16, 7), press.mouse.y);
-    try std.testing.expectEqual(@as(u8, 1), press.mouse.button);
+    }, null).?;
+    try std.testing.expectEqual(MouseAction.press, press.event.mouse.action);
+    try std.testing.expectEqual(@as(u16, 4), press.event.mouse.x);
+    try std.testing.expectEqual(@as(u16, 7), press.event.mouse.y);
+    try std.testing.expectEqual(@as(u8, 1), press.event.mouse.button);
 
     const move = windowsMouseEvent(.{
         .event_type = wc.MOUSE_EVENT,
@@ -2663,9 +2741,9 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = wc.MOUSE_MOVED,
         } },
-    }).?;
-    try std.testing.expectEqual(MouseAction.move, move.mouse.action);
-    try std.testing.expectEqual(@as(u8, 0), move.mouse.button);
+    }, null).?;
+    try std.testing.expectEqual(MouseAction.move, move.event.mouse.action);
+    try std.testing.expectEqual(@as(u8, 1), move.event.mouse.button);
 
     const wheel_up = windowsMouseEvent(.{
         .event_type = wc.MOUSE_EVENT,
@@ -2675,9 +2753,9 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = wc.MOUSE_WHEELED,
         } },
-    }).?;
-    try std.testing.expectEqual(MouseAction.scroll_up, wheel_up.mouse.action);
-    try std.testing.expectEqual(@as(i16, -1), wheel_up.mouse.scroll_delta);
+    }, null).?;
+    try std.testing.expectEqual(MouseAction.scroll_up, wheel_up.event.mouse.action);
+    try std.testing.expectEqual(@as(i16, -1), wheel_up.event.mouse.scroll_delta);
 
     const wheel_down = windowsMouseEvent(.{
         .event_type = wc.MOUSE_EVENT,
@@ -2687,9 +2765,9 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = wc.MOUSE_WHEELED,
         } },
-    }).?;
-    try std.testing.expectEqual(MouseAction.scroll_down, wheel_down.mouse.action);
-    try std.testing.expectEqual(@as(i16, 1), wheel_down.mouse.scroll_delta);
+    }, null).?;
+    try std.testing.expectEqual(MouseAction.scroll_down, wheel_down.event.mouse.action);
+    try std.testing.expectEqual(@as(i16, 1), wheel_down.event.mouse.scroll_delta);
 
     const release = windowsMouseEvent(.{
         .event_type = wc.MOUSE_EVENT,
@@ -2699,8 +2777,8 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = 0,
         } },
-    }).?;
-    try std.testing.expectEqual(MouseAction.release, release.mouse.action);
+    }, null).?;
+    try std.testing.expectEqual(MouseAction.release, release.event.mouse.action);
 
     // Win32 reports the right button in a different numeric slot than SGR;
     // normalize it to SGR's button numbering so widget behavior is consistent.
@@ -2712,8 +2790,8 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = 0,
         } },
-    }).?;
-    try std.testing.expectEqual(@as(u8, 3), right.mouse.button);
+    }, null).?;
+    try std.testing.expectEqual(@as(u8, 3), right.event.mouse.button);
 
     // Horizontal wheels have no Zit action yet, but must never become a
     // blocking byte read or a fabricated vertical scroll.
@@ -2725,8 +2803,39 @@ test "native Windows mouse records map to zero-based widget events" {
             .control_key_state = 0,
             .event_flags = wc.MOUSE_HWHEELED,
         } },
-    });
+    }, null);
     try std.testing.expect(horizontal == null);
+}
+
+test "SGR mouse decoding preserves keyboard modifiers" {
+    const event = (try decodeEventFromBytes("\x1b[<28;11;6M")).?;
+    try std.testing.expectEqual(MouseAction.press, event.mouse.action);
+    try std.testing.expectEqual(@as(u16, 10), event.mouse.x);
+    try std.testing.expectEqual(@as(u16, 5), event.mouse.y);
+    try std.testing.expect(event.mouse.modifiers.shift);
+    try std.testing.expect(event.mouse.modifiers.alt);
+    try std.testing.expect(event.mouse.modifiers.ctrl);
+}
+
+test "native Windows mouse release preserves tracked button" {
+    const wc = windows_console_input;
+    const native = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{
+            .mouse = .{
+                .mouse_position = .{ .X = 4, .Y = 7 },
+                .button_state = 0,
+                .control_key_state = 0x000b, // left/right alt + left ctrl
+                .event_flags = 0,
+            },
+        },
+    }, 1).?;
+
+    try std.testing.expectEqual(MouseAction.release, native.event.mouse.action);
+    try std.testing.expectEqual(@as(u8, 1), native.event.mouse.button);
+    try std.testing.expect(native.tracked_button == null);
+    try std.testing.expect(native.event.mouse.modifiers.ctrl);
+    try std.testing.expect(native.event.mouse.modifiers.alt);
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {

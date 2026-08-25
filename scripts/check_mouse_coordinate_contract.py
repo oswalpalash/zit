@@ -59,8 +59,14 @@ def validate_input_contract(source: str) -> list[str]:
             errors.append(str(err))
             continue
 
-        if "MouseEvent.fromTerminalCoordinates(" not in body:
-            errors.append(f"{name}: must construct decoded events through MouseEvent.fromTerminalCoordinates")
+        uses_coordinate_constructor = (
+            "MouseEvent.fromTerminalCoordinates(" in body
+            or "MouseEvent.fromTerminalCoordinatesWithModifiers(" in body
+        )
+        if not uses_coordinate_constructor:
+            errors.append(f"{name}: must construct decoded events through MouseEvent.fromTerminalCoordinates*")
+        if "mouseModifiersFromButtonParam(button_param)" not in body:
+            errors.append(f"{name}: must preserve terminal mouse modifiers through the shared decoder helper")
         if "MouseEvent{" in body:
             errors.append(f"{name}: must not directly construct MouseEvent with parser-local coordinates")
         if "terminalMouseCoordToScreenCoord(" in body:
