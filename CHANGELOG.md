@@ -54,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Windows console polling now classifies focus, menu, private, and resize records before byte reads; focus is preserved as a terminal event and non-byte-producing wake-ups can no longer block the input loop.
 - Windows input polling now recognizes ConPTY `WINDOW_BUFFER_SIZE_EVENT` records and refreshes geometry before attempting a blocking byte read, preventing resize-only wake-ups from stalling.
 - Replaced the shared boolean SIGWINCH flag with monotonic generations so signals arriving during geometry refreshes stay pending instead of being lost with stale geometry.
 - Terminal initialization now rolls back Windows VT output-mode changes when startup geometry fallback fails, preventing a constructor error from leaking console mode restoration.
