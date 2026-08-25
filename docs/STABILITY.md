@@ -43,7 +43,7 @@ Before a feature is promoted as stable, it needs:
 - Application-owned run loops must expose joinable thread handles, propagate their first tick failure on join, and never detach workers that can outlive `Application` teardown. Timer deadlines and repeat intervals use saturating u64 arithmetic, while exhausted timer IDs fail explicitly rather than wrapping to duplicate handles.
 - POSIX raw mode must use termios `VMIN`/`VTIME` plus input polling without changing `O_NONBLOCK` or other open-file-description flags. PTY stdin and stdout may share those flags, so input setup must preserve blocking renderer output.
 - Bound resize handling must publish renderer dimensions and widget geometry as one transaction; allocation or layout failure preserves the previously committed size on both sides.
-- Renderer output must tolerate short and transient zero-byte writes without losing bytes, bound sustained zero-progress retries, and preserve dirty state when a frame cannot be flushed so callers can retry it.
+- Renderer output must tolerate short and transient zero-byte writes without losing bytes, bound sustained zero-progress retries, and preserve dirty state when a frame cannot be flushed so callers can retry it. Terminal rendering uses retained output scratch across frames; a steady-state equal-sized frame makes no allocator calls, keeping publication cost independent of allocator traffic.
 - No unexpected panics for user input, terminal size changes, or normal rendering paths.
 
 ## Release Checklist

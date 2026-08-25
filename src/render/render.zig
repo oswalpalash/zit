@@ -1215,6 +1215,7 @@ pub const Renderer = struct {
     }
 
     const max_consecutive_zero_writes = 8;
+    const max_buffered_output_bytes = 64 * 1024;
 
     fn writeAllGeneric(writer: anytype, data: []const u8) !void {
         var remaining = data;
@@ -1660,10 +1661,8 @@ pub const Renderer = struct {
     pub fn render(self: *Renderer) !void {
         if (!self.has_dirty and !self.cursor_dirty) return;
 
-        var output = std.Io.Writer.Allocating.init(self.allocator);
-        defer output.deinit();
-        try self.renderToWriter(&output.writer);
-        try compat.stdoutWriteAll(output.written());
+        var stdout = StdoutWriter{};
+        try self.renderToWriter(&stdout);
     }
 
     /// Render the back buffer to a provided writer (useful for tests)
@@ -1764,7 +1763,7 @@ pub const Renderer = struct {
                             }
                         }
 
-                        if (self.output_batch.items.len > 4096) {
+                        if (self.output_batch.items.len > max_buffered_output_bytes) {
                             try self.flushOutput(writer);
                         }
 
@@ -1794,6 +1793,13 @@ pub const Renderer = struct {
     }
 };
 
+const StdoutWriter = struct {
+    fn write(_: *StdoutWriter, data: []const u8) !usize {
+        try compat.stdoutWriteAll(data);
+        return data.len;
+    }
+};
+
 const ChunkedTestWriter = struct {
     bytes: [64]u8 = undefined,
     len: usize = 0,
@@ -1810,6 +1816,15 @@ const ChunkedTestWriter = struct {
         @memcpy(self.bytes[self.len..][0..written], data[0..written]);
         self.len += written;
         return written;
+    }
+};
+
+const CountingOutputWriter = struct {
+    writes: usize = 0,
+
+    fn write(self: *CountingOutputWriter, data: []const u8) !usize {
+        self.writes += 1;
+        return data.len;
     }
 };
 
@@ -1851,6 +1866,25 @@ test "renderer output stall is bounded and frame remains retryable" {
 
     try std.testing.expect(std.mem.indexOf(u8, output.written(), "zit") != null);
     try std.testing.expect(!renderer.has_dirty);
+}
+
+test "renderer output reaches steady-state without allocator calls" {
+    var counting = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    const alloc = counting.allocator();
+    var renderer = try Renderer.init(alloc, 8, 1);
+    defer renderer.deinit();
+
+    var sink = CountingOutputWriter{};
+    renderer.drawStr(0, 0, "zit", Color.named(.white), Color.named(.black), .{});
+    try renderer.renderToWriter(&sink);
+
+    // Prepare an equally sized replacement frame. Its cursor/style/glyph bytes
+    // fit in the scratch capacity warmed by the first frame.
+    renderer.drawStr(0, 0, "zit", Color.named(.white), Color.named(.black), .{});
+    counting.fail_index = counting.alloc_index;
+    const allocations_before = counting.alloc_index;
+    try renderer.renderToWriter(&sink);
+    try std.testing.expectEqual(allocations_before, counting.alloc_index);
 }
 
 test "renderer draws box outlines" {
