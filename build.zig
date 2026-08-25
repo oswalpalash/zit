@@ -388,6 +388,10 @@ pub fn build(b: *std.Build) void {
     const io_event_ownership_docs_step = b.step("io-event-ownership-docs", "Check I/O event ownership docs avoid stale manager-owned cleanup");
     io_event_ownership_docs_step.dependOn(&io_event_ownership_docs_cmd.step);
 
+    const thread_ownership_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_thread_ownership.py" });
+    const thread_ownership_step = b.step("thread-ownership", "Check spawned threads remain explicitly owned");
+    thread_ownership_step.dependOn(&thread_ownership_cmd.step);
+
     const unreachable_catches_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_unreachable_catches.py" });
     const unreachable_catches_step = b.step("unreachable-catches", "Check recoverable errors are not converted to panics");
     unreachable_catches_step.dependOn(&unreachable_catches_cmd.step);
@@ -448,6 +452,7 @@ pub fn build(b: *std.Build) void {
     quality_step.dependOn(widget_parent_attachment_step);
     quality_step.dependOn(owned_alloc_patterns_step);
     quality_step.dependOn(io_event_ownership_docs_step);
+    quality_step.dependOn(thread_ownership_step);
     quality_step.dependOn(unreachable_catches_step);
     quality_step.dependOn(example_coverage_step);
     quality_step.dependOn(interactive_alt_screen_step);

@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 REQUIRED_WORKFLOW_GATES = (
+    "python3 scripts/check_thread_ownership.py",
     "os: [ubuntu-latest, macos-latest, windows-latest]",
     "zig build quality",
     "python3 scripts/check_build_steps.py --skip quality --skip release-check --skip-interactive",
@@ -90,6 +91,7 @@ REQUIRED_RELEASE_VERIFY_GATES = (
     '"mouse hit coverage", ("python3", "scripts/check_mouse_hit_coverage.py")',
     '"owned allocation patterns", ("python3", "scripts/check_owned_allocation_patterns.py")',
     '"terminal state cleanup", ("python3", "scripts/check_terminal_state_cleanup.py")',
+    '"thread ownership", ("python3", "scripts/check_thread_ownership.py")',
     '"unreachable catch patterns", ("python3", "scripts/check_unreachable_catches.py")',
     '"mouse alignment PTY smoke", ("python3", "scripts/mouse_alignment_smoke.py", "--no-build")',
     '"widget owner casts", ("python3", "scripts/check_widget_owner_casts.py")',
@@ -98,6 +100,9 @@ REQUIRED_RELEASE_VERIFY_GATES = (
 )
 
 REQUIRED_BUILD_GATES = (
+    'const thread_ownership_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_thread_ownership.py" });',
+    'const thread_ownership_step = b.step("thread-ownership", "Check spawned threads remain explicitly owned");',
+    "quality_step.dependOn(thread_ownership_step);",
     'const ci_script_coverage_cmd = b.addSystemCommand(&.{ "python3", "scripts/check_ci_script_coverage.py" });',
     'const ci_script_coverage_step = b.step("ci-script-coverage", "Check CI compiles release verification scripts");',
     "quality_step.dependOn(ci_script_coverage_step);",

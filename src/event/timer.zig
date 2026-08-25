@@ -32,11 +32,16 @@ pub const TimerManager = struct {
     }
 
     pub fn schedule(self: *TimerManager, now_ms: u64, delay_ms: u64, interval_ms: ?u64, callback: TimerCallback, ctx: ?*anyopaque) !TimerHandle {
-        const handle = TimerHandle{ .id = self.next_id };
+        if (self.next_id == std.math.maxInt(u32)) {
+            return error.TimerIdExhausted;
+        }
 
+        const handle = TimerHandle{ .id = self.next_id };
         const entry = TimerEntry{
             .id = handle.id,
-            .due_ms = now_ms + delay_ms,
+            // A saturated deadline is effectively unreachable on the monotonic
+            // clock and keeps caller-provided u64 delays from trapping.
+            .due_ms = now_ms +| delay_ms,
             .interval_ms = interval_ms,
             .callback = callback,
             .ctx = ctx,
@@ -66,7 +71,7 @@ pub const TimerManager = struct {
 
                 if (timer.interval_ms) |interval| {
                     var current = self.timers.items[idx];
-                    current.due_ms = now_ms + interval;
+                    current.due_ms = now_ms +| interval;
                     self.timers.items[idx] = current;
                     i = idx + 1;
                 } else {
@@ -206,4 +211,40 @@ test "repeating timer self cancel is not rearmed" {
     manager.tick(10);
     try std.testing.expectEqual(@as(usize, 1), ctx.fired);
     try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
+}
+
+test "timer schedule rejects exhausted ids" {
+    const alloc = std.testing.allocator;
+    var manager = TimerManager.init(alloc);
+    defer manager.deinit();
+
+    const callback = struct {
+        fn cb(_: ?*anyopaque) void {}
+    }.cb;
+
+    manager.next_id = std.math.maxInt(u32);
+    try std.testing.expectError(error.TimerIdExhausted, manager.schedule(0, 1, null, callback, null));
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), manager.next_id);
+    try std.testing.expectEqual(@as(usize, 0), manager.timers.items.len);
+}
+
+test "timer deadlines saturate instead of trapping" {
+    const alloc = std.testing.allocator;
+    var manager = TimerManager.init(alloc);
+    defer manager.deinit();
+
+    var fired: usize = 0;
+    const Count = struct {
+        fn cb(ctx: ?*anyopaque) void {
+            const counter = @as(*usize, @ptrCast(@alignCast(ctx.?)));
+            counter.* += 1;
+        }
+    }.cb;
+
+    _ = try manager.schedule(std.math.maxInt(u64) - 10, 20, null, Count, @ptrCast(&fired));
+    manager.tick(std.math.maxInt(u64) - 1);
+    try std.testing.expectEqual(@as(usize, 0), fired);
+
+    manager.tick(std.math.maxInt(u64));
+    try std.testing.expectEqual(@as(usize, 1), fired);
 }

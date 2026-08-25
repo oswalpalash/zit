@@ -140,4 +140,5 @@ pub const SearchBox = struct {
 If you already have a network or game loop, integrate Zit without blocking:
 - Drive input with `app.bindInput(&input)`, `app.setInputPollTimeout(timeout_ms)`, and `app.pollInputOnce()` when the loop needs to inspect events before dispatch.
 - Use `Application.tickOnce()` inside your main loop to process timers/animations while you run other work between ticks.
+- If Zit owns the loop thread, use the handle returned by `app.spawnRunLoop()`; call `app.stop()` and then `handle.join()` so shutdown is ordered and tick failures are observable.
 - On shutdown, call `renderer.render()` once after clearing the back buffer to leave the terminal clean.

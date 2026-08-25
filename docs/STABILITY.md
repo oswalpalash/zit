@@ -40,6 +40,7 @@ Before a feature is promoted as stable, it needs:
 - Input sequences must tolerate continuation bytes split across terminal reads with a bounded, configurable wait. The PTY gate injects protocol bytes individually, and the native Windows matrix exercises wait timeout/readiness behavior.
 - Terminal capability detection must read Zig's captured startup environment on every supported target, including libc-free Linux builds; it must not silently downgrade because a C `environ` symbol is unavailable. The interactive PTY gate requires Kitty keyboard setup and cleanup bytes from a Linux executable launched with `TERM=xterm-kitty`.
 - Input polling must distinguish ordinary timeouts from transport failure. Hangup, invalid-descriptor, poll, and read errors must propagate instead of becoming no-event, Escape, or unknown-key results.
+- Application-owned run loops must expose joinable thread handles, propagate their first tick failure on join, and never detach workers that can outlive `Application` teardown. Timer deadlines and repeat intervals use saturating u64 arithmetic, while exhausted timer IDs fail explicitly rather than wrapping to duplicate handles.
 - POSIX raw mode must use termios `VMIN`/`VTIME` plus input polling without changing `O_NONBLOCK` or other open-file-description flags. PTY stdin and stdout may share those flags, so input setup must preserve blocking renderer output.
 - Bound resize handling must publish renderer dimensions and widget geometry as one transaction; allocation or layout failure preserves the previously committed size on both sides.
 - Renderer output must tolerate short and transient zero-byte writes without losing bytes, bound sustained zero-progress retries, and preserve dirty state when a frame cannot be flushed so callers can retry it.
@@ -82,6 +83,7 @@ Before a feature is promoted as stable, it needs:
 - `python3 scripts/check_mouse_coordinate_contract.py` to require terminal mouse protocol decoders to route raw one-based positions through `MouseEvent.fromTerminalCoordinates` instead of open-coding normalization.
 - `python3 scripts/check_owned_allocation_patterns.py`
 - `python3 scripts/check_terminal_state_cleanup.py`
+- `python3 scripts/check_thread_ownership.py` to reject detached worker loops and require joined handles.
 - `python3 scripts/check_unreachable_catches.py`
 - `python3 scripts/check_widget_coverage.py` to require every public widget export to have a catalog row, coverage reference, valid documented file paths, and every public widget factory/helper to appear in `docs/API.md`.
 - `python3 scripts/check_widget_owner_casts.py`

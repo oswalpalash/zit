@@ -2799,6 +2799,8 @@ pub const Application = struct {
     input_binding: InputBinding = .{},
     /// Whether user code already polled bound input before the next tick.
     input_polled_before_tick: bool = false,
+    /// First failure observed by `spawnRunLoop`; read only after joining its handle.
+    run_loop_failure: ?anyerror = null,
     /// Background tasks owned by the application until released or shutdown.
     background_tasks: std.ArrayList(*BackgroundTask),
 
@@ -2812,6 +2814,19 @@ pub const Application = struct {
     pub const InputBinding = struct {
         handler: ?*input.InputHandler = null,
         poll_timeout_ms: u64 = 0,
+    };
+
+    /// Owned handle for a background application loop. Joining propagates the
+    /// first tick error observed by that loop and establishes happens-before
+    /// ordering for all Application state touched by it.
+    pub const RunLoopHandle = struct {
+        thread: std.Thread,
+        application: *Application,
+
+        pub fn join(self: RunLoopHandle) !void {
+            self.thread.join();
+            if (self.application.run_loop_failure) |err| return err;
+        }
     };
 
     /// Initialize a new application
@@ -3127,30 +3142,35 @@ pub const Application = struct {
         }
     }
 
-    /// Start the application event loop asynchronously
-    pub fn runAsync(self: *Application, callback: ?*const fn () void) !void {
+    /// Spawn the blocking `run` loop on an explicitly owned helper thread.
+    ///
+    /// The caller must call `join` on the returned handle after `stop`.
+    pub fn spawnRunLoop(self: *Application) !RunLoopHandle {
         if (self.root == null) {
             return error.NoRootWidget;
         }
 
+        self.run_loop_failure = null;
         self.running = true;
         self.last_frame_ms = @as(u64, @intCast(compat.nowMillis()));
 
-        // Start processing in a separate thread
-        var thread = try std.Thread.spawn(.{}, struct {
-            fn threadFn(app: *Application, cb: ?*const fn () void) !void {
-                while (app.running) {
-                    try app.tickOnce();
-                    compat.sleepMillis(event_loop_sleep_ms);
-                }
+        const thread = std.Thread.spawn(.{}, runLoop, .{self}) catch |err| {
+            self.running = false;
+            return err;
+        };
 
-                if (cb != null) {
-                    cb.?();
-                }
+        return .{ .thread = thread, .application = self };
+    }
+
+    fn runLoop(self: *Application) void {
+        while (self.running) {
+            if (self.tickOnce()) |_| {
+                compat.sleepMillis(event_loop_sleep_ms);
+            } else |err| {
+                self.run_loop_failure = err;
+                self.running = false;
             }
-        }.threadFn, .{ self, callback });
-
-        thread.detach();
+        }
     }
 
     /// Stop the application event loop
@@ -3772,6 +3792,37 @@ test "application disconnectFromServer unregisters manager-owned connection" {
     try std.testing.expect(app.disconnectFromServer(connection));
     try std.testing.expectEqual(@as(usize, 0), app.io_manager.?.network_connections.items.len);
     try std.testing.expect(!app.disconnectFromServer(connection));
+}
+
+test "spawnRunLoop joins an owned worker thread" {
+    const alloc = std.testing.allocator;
+    var app = Application.init(alloc);
+    defer app.deinit();
+
+    var root = try widget.Container.init(alloc);
+    defer root.deinit();
+    app.setRoot(root);
+
+    var ticks = std.atomic.Value(usize).init(0);
+    const Tick = struct {
+        fn cb(ctx: ?*anyopaque) void {
+            const counter = @as(*std.atomic.Value(usize), @ptrCast(@alignCast(ctx.?)));
+            _ = counter.fetchAdd(1, .monotonic);
+        }
+    }.cb;
+
+    _ = try app.scheduleTimer(0, null, Tick, @ptrCast(&ticks));
+    const handle = try app.spawnRunLoop();
+
+    var attempts: usize = 0;
+    while (attempts < 1000 and ticks.load(.acquire) == 0) : (attempts += 1) {
+        compat.sleepMillis(1);
+    }
+    try std.testing.expect(ticks.load(.acquire) > 0);
+
+    app.stop();
+    try handle.join();
+    try std.testing.expect(app.run_loop_failure == null);
 }
 
 test "background task result frees message when result allocation fails" {

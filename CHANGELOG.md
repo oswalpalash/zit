@@ -48,9 +48,13 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Resize PTY smoke checker (`scripts/resize_smoke.py`, `zig build resize-smoke`) changes a live pseudo-terminal size, requires `input_test` to report new geometry, drives every public interactive example through rapid tiny-size stress down to 1x1, and requires each example to recover by redrawing a visible `resize: WxH` marker with the final dimensions.
 - CI script coverage checker (`scripts/check_ci_script_coverage.py`) keeps GitHub Actions script compilation aligned with release verification script coverage.
 - Widget lifecycle mutation checker (`scripts/check_widget_lifecycle_mutation.py`, `zig build widget-lifecycle-mutation`) prevents widgets and examples from bypassing state-change hooks with direct focus, enabled, or visibility assignments, including through generic `*Widget` pointers.
+- Explicitly owned `Application.spawnRunLoop` handles with joined shutdown and first-tick-error propagation, plus a permanent detached-thread ownership gate.
+- Overflow-safe timer deadlines/repeat intervals and explicit `TimerIdExhausted` handling so extreme caller values cannot trap or reuse timer IDs.
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Replaced detached `Application.runAsync` worker threads with owned run-loop handles, preventing threads from racing application teardown and preventing lost event-loop failures.
+- Timer scheduling no longer traps on `u64` deadline/repeat overflow or wraps timer IDs after exhaustion.
 - POSIX raw mode no longer sets `O_NONBLOCK` on stdin. Input remains bounded through termios `VMIN`/`VTIME` and `poll`, while PTY renderer output stays blocking even when stdin and stdout share one open file description; the terminal-state gate now enforces this contract.
 - Terminal capability detection now reads Zig's captured startup environment instead of depending on libc's `environ`, so default libc-free Linux builds honor `TERM`, `COLORTERM`, and related hints and correctly enable Kitty keyboard protocol setup and cleanup.
 - Production widget draw paths now use terminal-cell geometry for arbitrary labels across popup, block, menu bar, tabs, dropdowns, status, table, chart, gauge, toast, log, indicator, and advanced controls, preserving CJK, combining, and joined emoji graphemes. Tab sizing and mouse regions, dropdown preferred widths, and table sort-indicator placement use the same geometry. The recursive draw-boundary quality gate rejects byte-prefix clipping and indexed byte iteration over arbitrary text in addition to draw-time layout and allocation.
@@ -204,5 +208,6 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).
 
 ### Breaking Changes
+- Removed `Application.runAsync(callback)`. Spawn an explicitly owned loop with `Application.spawnRunLoop()`, call `stop()`, then join the returned `RunLoopHandle`; its `join` propagates the loop’s first tick error. The unused callback argument was removed because completion belongs in events/timers or the caller after join.
 - `input.Event` adds `.focus`, and `event.EventType` / `Event.EventData` add `.terminal_focus`. Update exhaustive switches with the new cases (or an `else`) while keeping terminal focus distinct from widget `.focus_change`.
 - `InputHandler.mouse_enabled` was removed so mouse mode has one owner. Replace direct field reads with `input_handler.isMouseEnabled()`; `enableMouse` and `disableMouse` keep their existing signatures and now delegate to `Terminal`.
