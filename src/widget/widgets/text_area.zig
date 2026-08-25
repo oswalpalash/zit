@@ -7,10 +7,24 @@ const input = @import("../../input/input.zig");
 const form = @import("../form.zig");
 const theme = @import("../theme.zig");
 const accessibility = @import("../accessibility.zig");
+const compat = @import("../../compat.zig");
 
 fn addOffsetClamped(origin: u16, offset: u16) u16 {
     const value = @as(u32, origin) + @as(u32, offset);
     return @intCast(@min(value, @as(u32, std.math.maxInt(u16))));
+}
+
+const mouse_multi_click_ms: i64 = 500;
+const max_mouse_click_count: u8 = 3;
+
+fn isSeparatorGrapheme(grapheme: text_metrics.Grapheme) bool {
+    const codepoint = grapheme.firstCodepoint();
+    if (codepoint <= 0xFF) return std.ascii.isWhitespace(@intCast(codepoint));
+    return switch (codepoint) {
+        0x85, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000, 0xFEFF => true,
+        0x2000...0x200A => true,
+        else => false,
+    };
 }
 
 /// Multi-line text editor with scrolling, undo/redo, and clipboard support.
@@ -54,6 +68,10 @@ pub const TextArea = struct {
     bracketed_paste_active: bool = false,
     /// Anchor used by Shift-click and left-button drag selection.
     mouse_selection_anchor: ?usize = null,
+    last_left_press_ms: ?i64 = null,
+    last_left_press_index: ?usize = null,
+    left_click_count: u8 = 0,
+    mouse_left_pressed: bool = false,
     allocator: std.mem.Allocator,
 
     pub const vtable = base.Widget.VTable{
@@ -881,9 +899,99 @@ pub const TextArea = struct {
         return true;
     }
 
+    fn registerLeftPress(self: *TextArea, index: usize) u8 {
+        const now = compat.nowMillis();
+        const repeated = if (self.last_left_press_ms) |last_ms|
+            now >= last_ms and now - last_ms <= mouse_multi_click_ms and
+                self.last_left_press_index != null and
+                self.last_left_press_index.? == index
+        else
+            false;
+
+        self.left_click_count = if (repeated)
+            @min(self.left_click_count + 1, max_mouse_click_count)
+        else
+            1;
+        self.last_left_press_ms = now;
+        self.last_left_press_index = index;
+        self.mouse_left_pressed = true;
+        return self.left_click_count;
+    }
+
+    fn wordRangeAtIndex(self: *TextArea, index: usize) TextArea.Selection {
+        const bytes = self.buffer.items;
+        const bounds = self.lineRange(self.positionForIndex(index).row) orelse
+            return .{ .start = index, .end = index };
+        const line = bytes[bounds.start..bounds.end];
+        const local = text_metrics.graphemeBoundaryAtOrBefore(line, index - bounds.start);
+
+        var token_start: usize = local;
+        var token_end: usize = local;
+        var token_byte_start: usize = 0;
+        var byte_start: usize = 0;
+        var separator: bool = false;
+        var found = false;
+
+        var it = text_metrics.GraphemeIterator.init(line);
+        while (it.next()) |grapheme| {
+            const end = it.it.i;
+            if (end >= local and local != line.len) {
+                token_byte_start = byte_start;
+                token_end = end;
+                separator = isSeparatorGrapheme(grapheme);
+                found = true;
+                break;
+            }
+            byte_start = end;
+        }
+
+        if (!found and line.len > 0) {
+            token_start = text_metrics.previousGraphemeBoundary(line, line.len);
+            token_end = line.len;
+            var previous_it = text_metrics.GraphemeIterator.init(line[token_start..token_end]);
+            const previous = previous_it.next().?;
+            separator = isSeparatorGrapheme(previous);
+        } else {
+            token_start = token_byte_start;
+        }
+
+        while (token_start > 0) {
+            const previous_end = text_metrics.previousGraphemeBoundary(line, token_start);
+            const previous_start = text_metrics.graphemeBoundaryAtOrBefore(line, previous_end);
+            var grapheme_it = text_metrics.GraphemeIterator.init(line[previous_start..previous_end]);
+            const grapheme = grapheme_it.next() orelse break;
+            if (isSeparatorGrapheme(grapheme) != separator) break;
+            token_start = previous_start;
+        }
+
+        while (token_end < line.len) {
+            var next_it = text_metrics.GraphemeIterator.init(line[token_end..]);
+            const next = next_it.next() orelse break;
+            const next_end = token_end + next.slice().len;
+            if (isSeparatorGrapheme(next) != separator) break;
+            token_end = next_end;
+        }
+
+        return .{
+            .start = bounds.start + token_start,
+            .end = bounds.start + token_end,
+        };
+    }
+
+    fn selectLineAtMouse(self: *TextArea, index: usize) void {
+        const row = self.positionForIndex(index).row;
+        if (self.lineRange(row)) |range| {
+            self.selectRange(range.start, range.end);
+            self.cursor = range.end;
+        } else {
+            self.selectRange(index, index);
+        }
+    }
+
     fn finishMouseSelection(self: *TextArea, button: u8) bool {
-        if (button != 1 or self.mouse_selection_anchor == null) return false;
+        if (button != 1 or !self.mouse_left_pressed) return false;
         self.mouse_selection_anchor = null;
+        self.mouse_left_pressed = false;
         return true;
     }
 
@@ -1277,23 +1385,41 @@ pub const TextArea = struct {
                 switch (mouse_event.action) {
                     .press => {
                         if (mouse_event.button != 1) return false;
+                        const index = self.indexAtMouse(mouse_event.x, mouse_event.y) orelse return false;
+
+                        if (mouse_event.modifiers.shift) {
+                            self.mouse_left_pressed = true;
+                            return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true);
+                        }
+
+                        switch (self.registerLeftPress(index)) {
+                            2 => {
+                                const word = self.wordRangeAtIndex(index);
+                                self.selectRange(word.start, word.end);
+                                self.cursor = word.end;
+                                self.resetPreferredColumn();
+                                self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+                                return true;
+                            },
+                            3 => {
+                                self.selectLineAtMouse(index);
+                                self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+                                return true;
+                            },
+                            else => {},
+                        }
+
                         return self.moveCaretToMouse(
                             mouse_event.x,
                             mouse_event.y,
-                            mouse_event.modifiers.shift,
+                            false,
                         );
                     },
                     .move => {
                         if (mouse_event.button != 1 or self.mouse_selection_anchor == null) return false;
                         return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true);
                     },
-                    .release => {
-                        if (mouse_event.button == 1 and self.mouse_selection_anchor != null) {
-                            self.mouse_selection_anchor = null;
-                            return true;
-                        }
-                        return false;
-                    },
+                    .release => return self.finishMouseSelection(mouse_event.button),
                     else => {},
                 }
             },
@@ -1330,6 +1456,10 @@ pub const TextArea = struct {
         const self: *TextArea = @fieldParentPtr("widget", widget_ref);
         if (!self.widget.focused or !self.widget.visible or !self.widget.enabled) {
             self.cancelBracketedPaste();
+            self.mouse_left_pressed = false;
+            self.last_left_press_ms = null;
+            self.last_left_press_index = null;
+            self.left_click_count = 0;
         }
     }
 };
@@ -2134,4 +2264,45 @@ test "text area drag selection respects wide graphemes" {
     try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 3, 1, 1, 0) }));
     try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 3 }, area.selectionRange().?);
     try std.testing.expectEqual(@as(usize, 3), area.cursor);
+}
+
+test "text area multi-click selects words and lines" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("alpha beta\ngamma");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    // Content starts at (3,4). This is the second character of "alpha".
+    const click = input.Event{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) };
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(@as(usize, 1), area.cursor);
+    try std.testing.expect(area.selectionRange() == null);
+
+    // A second prompt press expands to the whitespace-delimited word.
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 5 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 5), area.cursor);
+
+    // A third press expands to the complete logical line, excluding newline.
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 10 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 10), area.cursor);
+}
+
+test "text area mouse clicks reset after the multi-click window" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("alpha beta");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    const click = input.Event{ .mouse = input.MouseEvent.init(.press, 9, 4, 1, 0) };
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(@as(u8, 1), area.left_click_count);
+
+    area.last_left_press_ms = compat.nowMillis() - mouse_multi_click_ms - 1;
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(@as(u8, 1), area.left_click_count);
+    try std.testing.expectEqual(@as(usize, 6), area.cursor);
 }
