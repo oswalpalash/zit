@@ -23,6 +23,7 @@ const windows_console = struct {
     const ENABLE_LINE_INPUT: u32 = 0x0002;
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
     const ENABLE_WINDOW_INPUT: u32 = 0x0008;
+    const ENABLE_MOUSE_INPUT: u32 = 0x0010;
     const ENABLE_INSERT_MODE: u32 = 0x0020;
     const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
     const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
@@ -180,6 +181,10 @@ fn windowsWindowInputModeEnabled(mode: u32) bool {
     return (mode & windows_console.ENABLE_WINDOW_INPUT) != 0;
 }
 
+fn windowsMouseInputModeEnabled(mode: u32) bool {
+    return (mode & windows_console.ENABLE_MOUSE_INPUT) != 0;
+}
+
 fn rememberFirstError(first_error: *?anyerror, err: anyerror) void {
     if (first_error.* == null) {
         first_error.* = err;
@@ -240,6 +245,8 @@ pub const Terminal = struct {
     windows_vt_enabled: bool,
     /// Whether Windows virtual terminal input is active on the input handle.
     windows_vt_input_enabled: bool,
+    /// Whether mouse delivery is using Win32 records instead of VT bytes.
+    windows_native_mouse_enabled: bool = false,
     /// Whether init/raw setup changed Windows output mode and must restore it.
     windows_output_mode_restore_pending: bool,
     /// Whether this terminal instance owns one reference to the SIGWINCH handler.
@@ -455,7 +462,8 @@ pub const Terminal = struct {
                     // Strip line editing/echo while keeping extended flags so the console API is responsive.
                     const raw_in_mode: u32 = (info.in_mode |
                         windows_console.ENABLE_EXTENDED_FLAGS |
-                        windows_console.ENABLE_WINDOW_INPUT) &
+                        windows_console.ENABLE_WINDOW_INPUT |
+                        windows_console.ENABLE_MOUSE_INPUT) &
                         ~(windows_console.ENABLE_ECHO_INPUT |
                             windows_console.ENABLE_LINE_INPUT |
                             windows_console.ENABLE_PROCESSED_INPUT |
@@ -697,7 +705,16 @@ pub const Terminal = struct {
     /// Enable mouse event reporting
     pub fn enableMouseEvents(self: *Terminal) !void {
         if (self.is_mouse_enabled) return;
-        if (!self.supportsVtInputProtocols()) return;
+
+        // Legacy Windows consoles can deliver Win32 mouse records without VT
+        // output. Raw mode owns the console-mode change, and original modes are
+        // restored by disableRawMode/deinit.
+        if (builtin.os.tag == .windows and !self.supportsVtInputProtocols()) {
+            if (!self.is_raw_mode) return error.RawModeRequired;
+            self.windows_native_mouse_enabled = true;
+            self.is_mouse_enabled = true;
+            return;
+        }
 
         // Enable normal tracking, motion tracking, and SGR encoding
         self.is_mouse_enabled = true;
@@ -712,6 +729,12 @@ pub const Terminal = struct {
     /// Disable mouse event reporting
     pub fn disableMouseEvents(self: *Terminal) !void {
         if (!self.is_mouse_enabled) return;
+        if (self.windows_native_mouse_enabled) {
+            self.windows_native_mouse_enabled = false;
+            self.is_mouse_enabled = false;
+            return;
+        }
+
         if (builtin.os.tag == .windows and !self.windows_vt_enabled) {
             return error.VirtualTerminalUnavailable;
         }
@@ -1211,6 +1234,8 @@ test "Windows VT input protocols require input and output modes" {
 }
 
 test "Windows window-input mode detection covers ConPTY resize records" {
+    try std.testing.expect(windowsMouseInputModeEnabled(windows_console.ENABLE_MOUSE_INPUT));
+    try std.testing.expect(!windowsMouseInputModeEnabled(windows_console.ENABLE_WINDOW_INPUT));
     try std.testing.expect(
         windowsWindowInputModeEnabled(windows_console.ENABLE_WINDOW_INPUT),
     );

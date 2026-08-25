@@ -19,6 +19,11 @@ const windows_console_input = struct {
     const MENU_EVENT: std.os.windows.WORD = 0x0008;
     const FOCUS_EVENT: std.os.windows.WORD = 0x0010;
 
+    const MOUSE_MOVED: std.os.windows.DWORD = 0x0001;
+    const DOUBLE_CLICK: std.os.windows.DWORD = 0x0002;
+    const MOUSE_WHEELED: std.os.windows.DWORD = 0x0004;
+    const MOUSE_HWHEELED: std.os.windows.DWORD = 0x0008;
+
     const KeyEventRecord = extern struct {
         key_down: c_int,
         repeat_count: std.os.windows.WORD,
@@ -62,11 +67,12 @@ const windows_console_input = struct {
     extern "kernel32" fn PeekConsoleInputW(hConsoleInput: std.os.windows.HANDLE, lpBuffer: *InputRecord, nLength: std.os.windows.DWORD, lpNumberOfEventsRead: *std.os.windows.DWORD) std.os.windows.BOOL;
     extern "kernel32" fn ReadConsoleInputW(hConsoleInput: std.os.windows.HANDLE, lpBuffer: *InputRecord, nLength: std.os.windows.DWORD, lpNumberOfEventsRead: *std.os.windows.DWORD) std.os.windows.BOOL;
 
-    const RecordKind = enum { readable, resize, focus, ignore };
+    const RecordKind = enum { key_bytes, mouse, resize, focus, ignore };
 
     fn recordKind(record: InputRecord) RecordKind {
         return switch (record.event_type) {
-            KEY_EVENT, MOUSE_EVENT => .readable,
+            KEY_EVENT => .key_bytes,
+            MOUSE_EVENT => .mouse,
             WINDOW_BUFFER_SIZE_EVENT => .resize,
             FOCUS_EVENT => .focus,
             else => .ignore,
@@ -1432,6 +1438,64 @@ fn peekWindowsInputKind(handle: std.os.windows.HANDLE) !windows_console_input.In
     return record;
 }
 
+fn windowsMouseButton(button_state: std.os.windows.DWORD) ?u8 {
+    if (button_state & 0x0001 != 0) return 1; // left
+    if (button_state & 0x0002 != 0) return 3; // right, matching SGR numbering
+    if (button_state & 0x0004 != 0) return 2; // middle
+    if (button_state & 0x0008 != 0) return 4;
+    if (button_state & 0x0010 != 0) return 5;
+    if (button_state & 0x0020 != 0) return 6;
+    if (button_state & 0x0040 != 0) return 7;
+    if (button_state & 0x0080 != 0) return 8;
+    return null;
+}
+
+fn windowsMouseEvent(record: windows_console_input.InputRecord) ?Event {
+    const mouse = record.event.mouse;
+    const flags = mouse.event_flags;
+
+    // Zit has no horizontal-wheel action; consume the record without inventing
+    // a vertical scroll or button event.
+    if (flags & windows_console_input.MOUSE_HWHEELED != 0) return null;
+    if (mouse.mouse_position.X < 0 or mouse.mouse_position.Y < 0) return null;
+
+    if (flags & windows_console_input.MOUSE_WHEELED != 0) {
+        const encoded: u16 = @truncate(mouse.button_state >> 16);
+        const native_delta: i16 = @bitCast(encoded);
+        const delta32: i32 = -@as(i32, native_delta);
+        const action: MouseAction = if (native_delta > 0) .scroll_up else .scroll_down;
+        return Event{ .mouse = MouseEvent.init(
+            action,
+            @intCast(mouse.mouse_position.X),
+            @intCast(mouse.mouse_position.Y),
+            0,
+            std.math.cast(i16, delta32) orelse
+                (if (delta32 < 0) std.math.minInt(i16) else std.math.maxInt(i16)),
+        ) };
+    }
+
+    const action: MouseAction = if (flags & windows_console_input.MOUSE_MOVED != 0)
+        .move
+    else if (flags & windows_console_input.DOUBLE_CLICK != 0)
+        .press
+    else if (mouse.button_state != 0)
+        .press
+    else
+        .release;
+
+    const button: u8 = if (action == .move or action == .release)
+        0
+    else
+        (windowsMouseButton(mouse.button_state) orelse return null);
+    return Event{ .mouse = MouseEvent.init(
+        action,
+        @intCast(mouse.mouse_position.X),
+        @intCast(mouse.mouse_position.Y),
+        button,
+        0,
+    ) };
+}
+
 const PreparedWindowsInput = union(enum) {
     event: Event,
     readable,
@@ -1786,14 +1850,20 @@ pub const InputHandler = struct {
 
     /// Classify the ready Windows queue before any blocking byte read.
     ///
-    /// Resize, focus, and menu records signal the console handle but do not
-    /// necessarily produce bytes for `ReadFile`. Consume synthetic records in
-    /// queue order; keyboard/mouse records remain for normal VT-byte decoding.
+    /// Mouse, focus, resize, and menu records signal the console handle but do not
+    /// all produce bytes for `ReadFile`. Consume synthetic records in queue
+    /// order; only keyboard records remain for normal VT-byte decoding.
     fn prepareWindowsReadyInput(self: *InputHandler) !PreparedWindowsInput {
         while (true) {
             const record = try peekWindowsInputKind(self.term.stdin_fd);
             switch (windows_console_input.recordKind(record)) {
-                .readable => return .readable,
+                .key_bytes => return .readable,
+                .mouse => {
+                    try consumeWindowsRecord(self.term.stdin_fd, record);
+                    if (windowsMouseEvent(record)) |event| {
+                        return .{ .event = event };
+                    }
+                },
                 .focus => {
                     try consumeWindowsRecord(self.term.stdin_fd, record);
                     return .{ .event = Event{ .focus = FocusEvent.init(record.event.focus.set_focus != 0) } };
@@ -2546,11 +2616,11 @@ test "Windows input record geometry and classes match Win32 queue ABI" {
         }
     }.call;
 
-    try std.testing.expectEqual(wc.RecordKind.readable, kindOf(.{
+    try std.testing.expectEqual(wc.RecordKind.key_bytes, kindOf(.{
         .event_type = wc.KEY_EVENT,
         .event = undefined,
     }));
-    try std.testing.expectEqual(wc.RecordKind.readable, kindOf(.{
+    try std.testing.expectEqual(wc.RecordKind.mouse, kindOf(.{
         .event_type = wc.MOUSE_EVENT,
         .event = undefined,
     }));
@@ -2566,6 +2636,97 @@ test "Windows input record geometry and classes match Win32 queue ABI" {
         .event_type = wc.MENU_EVENT,
         .event = undefined,
     }));
+}
+
+test "native Windows mouse records map to zero-based widget events" {
+    const wc = windows_console_input;
+
+    const press = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 4, .Y = 7 },
+            .button_state = 0x0001,
+            .control_key_state = 0,
+            .event_flags = 0,
+        } },
+    }).?;
+    try std.testing.expectEqual(MouseAction.press, press.mouse.action);
+    try std.testing.expectEqual(@as(u16, 4), press.mouse.x);
+    try std.testing.expectEqual(@as(u16, 7), press.mouse.y);
+    try std.testing.expectEqual(@as(u8, 1), press.mouse.button);
+
+    const move = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 5, .Y = 8 },
+            .button_state = 0x0001,
+            .control_key_state = 0,
+            .event_flags = wc.MOUSE_MOVED,
+        } },
+    }).?;
+    try std.testing.expectEqual(MouseAction.move, move.mouse.action);
+    try std.testing.expectEqual(@as(u8, 0), move.mouse.button);
+
+    const wheel_up = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 2, .Y = 3 },
+            .button_state = 0x0001_0000,
+            .control_key_state = 0,
+            .event_flags = wc.MOUSE_WHEELED,
+        } },
+    }).?;
+    try std.testing.expectEqual(MouseAction.scroll_up, wheel_up.mouse.action);
+    try std.testing.expectEqual(@as(i16, -1), wheel_up.mouse.scroll_delta);
+
+    const wheel_down = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 2, .Y = 3 },
+            .button_state = 0xFFFF_0000,
+            .control_key_state = 0,
+            .event_flags = wc.MOUSE_WHEELED,
+        } },
+    }).?;
+    try std.testing.expectEqual(MouseAction.scroll_down, wheel_down.mouse.action);
+    try std.testing.expectEqual(@as(i16, 1), wheel_down.mouse.scroll_delta);
+
+    const release = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 4, .Y = 7 },
+            .button_state = 0,
+            .control_key_state = 0,
+            .event_flags = 0,
+        } },
+    }).?;
+    try std.testing.expectEqual(MouseAction.release, release.mouse.action);
+
+    // Win32 reports the right button in a different numeric slot than SGR;
+    // normalize it to SGR's button numbering so widget behavior is consistent.
+    const right = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 1, .Y = 2 },
+            .button_state = 0x0002,
+            .control_key_state = 0,
+            .event_flags = 0,
+        } },
+    }).?;
+    try std.testing.expectEqual(@as(u8, 3), right.mouse.button);
+
+    // Horizontal wheels have no Zit action yet, but must never become a
+    // blocking byte read or a fabricated vertical scroll.
+    const horizontal = windowsMouseEvent(.{
+        .event_type = wc.MOUSE_EVENT,
+        .event = .{ .mouse = .{
+            .mouse_position = .{ .X = 1, .Y = 2 },
+            .button_state = 0x0001_0000,
+            .control_key_state = 0,
+            .event_flags = wc.MOUSE_HWHEELED,
+        } },
+    });
+    try std.testing.expect(horizontal == null);
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {

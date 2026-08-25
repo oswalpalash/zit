@@ -157,6 +157,19 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
                 "src/terminal/terminal.zig: enableRawMode must request ENABLE_WINDOW_INPUT for ConPTY resize/focus records"
             )
 
+        if "windows_console.ENABLE_MOUSE_INPUT" not in raw_mode_body:
+            failures.append(
+                "src/terminal/terminal.zig: enableRawMode must request ENABLE_MOUSE_INPUT for legacy Windows mouse records"
+            )
+        for marker in (
+            "self.windows_native_mouse_enabled = true",
+            "self.windows_native_mouse_enabled = false",
+        ):
+            function_name = "enableMouseEvents" if marker.endswith("true") else "disableMouseEvents"
+            body = function_body(terminal_text, function_name)
+            if body is None or marker not in body:
+                failures.append(f"src/terminal/terminal.zig: {function_name} missing native Windows mouse lifecycle marker {marker}")
+
         input_setup_index = raw_mode_body.find("const raw_in_mode")
         raw_obligation_index = raw_mode_body.find("self.is_raw_mode = true;", input_setup_index)
         output_setup_index = raw_mode_body.find("const base_out_mode")

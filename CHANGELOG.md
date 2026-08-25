@@ -54,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Added legacy Windows mouse support: raw mode requests Win32 mouse records, queue decoding maps them to zero-based Zit events without blocking byte reads, and fallback cleanup no longer requires unavailable VT output.
 - Windows console polling now classifies focus, menu, private, and resize records before byte reads; focus is preserved as a terminal event and non-byte-producing wake-ups can no longer block the input loop.
 - Windows raw mode now requests `ENABLE_WINDOW_INPUT` explicitly so ConPTY resize/focus records arrive even when the inherited console mode omits them.
 - Windows input polling now recognizes ConPTY `WINDOW_BUFFER_SIZE_EVENT` records and refreshes geometry before attempting a blocking byte read, preventing resize-only wake-ups from stalling.
@@ -216,6 +217,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Integration guide covering package manager setup, vendoring, and MVC/component-oriented patterns (`docs/INTEGRATION.md`).
 
 ### Breaking Changes
+- On Windows without negotiated VT protocols, `enableMouseEvents` now uses native console records only after raw mode is active and returns `error.RawModeRequired` if called earlier; previously this combination silently did nothing.
 - Removed `Application.runAsync(callback)`. Spawn an explicitly owned loop with `Application.spawnRunLoop()`, call `stop()`, then join the returned `RunLoopHandle`; its `join` propagates the loop’s first tick error. The unused callback argument was removed because completion belongs in events/timers or the caller after join.
 - `input.Event` adds `.focus`, and `event.EventType` / `Event.EventData` add `.terminal_focus`. Update exhaustive switches with the new cases (or an `else`) while keeping terminal focus distinct from widget `.focus_change`.
 - `InputHandler.mouse_enabled` was removed so mouse mode has one owner. Replace direct field reads with `input_handler.isMouseEnabled()`; `enableMouse` and `disableMouse` keep their existing signatures and now delegate to `Terminal`.
