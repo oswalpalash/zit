@@ -51,10 +51,32 @@ const windows_cursor = struct {
     extern "kernel32" fn SetConsoleCursorInfo(hConsoleOutput: std.os.windows.HANDLE, lpConsoleCursorInfo: *const Info) std.os.windows.BOOL;
 };
 
-var winch_signal_flag = std.atomic.Value(u8).init(0);
+// SIGWINCH is a process-directed signal, so its pending state is necessarily
+// shared by every Terminal in the process. Generations let a refresh know
+// whether another signal arrived while geometry was being queried.
+var winch_signal_generation = std.atomic.Value(u64).init(0);
+var winch_consumed_generation = std.atomic.Value(u64).init(0);
 
 fn handleSigwinch(_: std.posix.SIG) callconv(.c) void {
-    winch_signal_flag.store(1, .monotonic);
+    _ = winch_signal_generation.fetchAdd(1, .monotonic);
+}
+
+fn resetWinchGenerations() void {
+    winch_signal_generation.store(0, .release);
+    winch_consumed_generation.store(0, .release);
+}
+
+fn acknowledgeWinchGeneration(target: u64) void {
+    while (true) {
+        const consumed = winch_consumed_generation.load(.acquire);
+        if (consumed >= target) return;
+        if (winch_consumed_generation.cmpxchgWeak(
+            consumed,
+            target,
+            .release,
+            .acquire,
+        ) == null) return;
+    }
 }
 
 const SigwinchState = struct {
@@ -94,7 +116,7 @@ fn installSigwinchHandler() bool {
             .flags = std.posix.SA.RESTART,
         }, &previous_action);
         sigwinch_state.previous_action = previous_action;
-        winch_signal_flag.store(0, .release);
+        resetWinchGenerations();
     }
 
     sigwinch_state.install_count += 1;
@@ -115,7 +137,7 @@ fn uninstallSigwinchHandler() void {
             std.posix.sigaction(std.posix.SIG.WINCH, &previous_action, null);
         }
         sigwinch_state.previous_action = null;
-        winch_signal_flag.store(0, .release);
+        resetWinchGenerations();
     }
 }
 
@@ -937,9 +959,9 @@ pub const Terminal = struct {
 
     /// Consume a pending SIGWINCH after refreshing cached size.
     ///
-    /// The signal is acknowledged only after a successful refresh. If geometry
-    /// polling fails, retain the pending flag so the caller can retry instead of
-    /// silently waiting for another resize that may never arrive.
+    /// A generation is acknowledged only after an uninterrupted successful
+    /// refresh. Failures leave it pending for retry, and a newer SIGWINCH stays
+    /// pending even when the older query completes successfully.
     pub fn takeResize(self: *Terminal) !?Size {
         return self.takeResizeWithPoller(pollResize);
     }
@@ -948,16 +970,16 @@ pub const Terminal = struct {
         self: *Terminal,
         poll_fn: *const fn (*Terminal) anyerror!?Size,
     ) !?Size {
-        if (winch_signal_flag.load(.acquire) == 0) return null;
+        const before = winch_signal_generation.load(.acquire);
+        if (before == winch_consumed_generation.load(.acquire)) return null;
 
-        const result = poll_fn(self);
-        if (result) |size| {
-            _ = winch_signal_flag.swap(0, .acq_rel);
-            return size;
-        } else |err| {
-            _ = winch_signal_flag.swap(1, .release);
-            return err;
-        }
+        // Never acknowledge an unstable snapshot. If a newer SIGWINCH arrived
+        // during the probe, leave it pending so the next call observes that
+        // geometry too instead of silently coalescing it into the old query.
+        const result = poll_fn(self) catch |err| return err;
+        const after = winch_signal_generation.load(.acquire);
+        if (after == before) acknowledgeWinchGeneration(before);
+        return result;
     }
 };
 
@@ -1002,6 +1024,43 @@ test "moveCursor formats the complete u16 coordinate range" {
     }
 
     try std.testing.expectEqualStrings("\x1b[65536;65536H", output[0..output_len]);
+}
+
+fn simulateWinchSignal() void {
+    _ = winch_signal_generation.fetchAdd(1, .monotonic);
+}
+
+fn testTerminalForResize() Terminal {
+    return Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = -1,
+        .original_termios = .none,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+}
+
+fn signalDuringResizePoll(term: *Terminal) anyerror!?Size {
+    simulateWinchSignal();
+    term.width = 91;
+    term.height = 31;
+    return Size{ .width = term.width, .height = term.height };
+}
+
+fn stableNullResizePoll(_: *Terminal) anyerror!?Size {
+    return null;
 }
 
 fn failedResizePoll(_: *Terminal) anyerror!?Size {
@@ -1096,36 +1155,39 @@ test "changedSize reports only actual terminal geometry changes" {
 test "SIGWINCH acknowledgement follows resize refresh result" {
     if (!supportsSigwinch()) return error.SkipZigTest;
 
-    var term = Terminal{
-        .stdin_fd = std.Io.File.stdin().handle,
-        .stdout_fd = -1,
-        .original_termios = .none,
-        .width = 80,
-        .height = 24,
-        .is_raw_mode = false,
-        .is_cursor_visible = true,
-        .is_mouse_enabled = false,
-        .allocator = std.testing.allocator,
-        .capabilities = capabilities.CapabilityFlags{},
-        .is_sync_output = false,
-        .is_alt_screen = false,
-        .is_bracketed_paste = false,
-        .windows_vt_enabled = true,
-        .windows_vt_input_enabled = true,
-        .windows_output_mode_restore_pending = false,
-        .sigwinch_registered = false,
-    };
+    var term = testTerminalForResize();
+    resetWinchGenerations();
 
-    winch_signal_flag.store(1, .release);
+    simulateWinchSignal();
     try std.testing.expectError(error.ResizeProbeFailed, term.takeResizeWithPoller(failedResizePoll));
-    try std.testing.expectEqual(@as(u8, 1), winch_signal_flag.load(.acquire));
+    try std.testing.expectEqual(@as(u64, 1), winch_signal_generation.load(.acquire));
+    try std.testing.expectEqual(@as(u64, 0), winch_consumed_generation.load(.acquire));
 
     const size = try term.takeResizeWithPoller(successfulResizePoll);
     try std.testing.expectEqual(@as(u16, 91), size.?.width);
     try std.testing.expectEqual(@as(u16, 31), size.?.height);
-    try std.testing.expectEqual(@as(u8, 0), winch_signal_flag.load(.acquire));
+    try std.testing.expectEqual(@as(u64, 1), winch_consumed_generation.load(.acquire));
 
     try std.testing.expect(try term.takeResizeWithPoller(successfulResizePoll) == null);
+    try std.testing.expectEqual(@as(u64, 1), winch_consumed_generation.load(.acquire));
+}
+
+test "SIGWINCH during refresh remains pending after old geometry is reported" {
+    if (!supportsSigwinch()) return error.SkipZigTest;
+
+    var term = testTerminalForResize();
+    resetWinchGenerations();
+
+    simulateWinchSignal();
+    const first_size = try term.takeResizeWithPoller(signalDuringResizePoll);
+    try std.testing.expectEqual(@as(u16, 91), first_size.?.width);
+    try std.testing.expectEqual(@as(u16, 31), first_size.?.height);
+    try std.testing.expectEqual(@as(u64, 2), winch_signal_generation.load(.acquire));
+    try std.testing.expectEqual(@as(u64, 0), winch_consumed_generation.load(.acquire));
+
+    try std.testing.expect(try term.takeResizeWithPoller(stableNullResizePoll) == null);
+    try std.testing.expectEqual(@as(u64, 2), winch_consumed_generation.load(.acquire));
+    try std.testing.expect(try term.takeResizeWithPoller(stableNullResizePoll) == null);
 }
 
 test "Windows VT input protocols require input and output modes" {

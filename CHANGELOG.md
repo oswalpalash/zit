@@ -54,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Replaced the shared boolean SIGWINCH flag with monotonic generations so signals arriving during geometry refreshes stay pending instead of being lost with stale geometry.
 - Terminal initialization now rolls back Windows VT output-mode changes when startup geometry fallback fails, preventing a constructor error from leaking console mode restoration.
 - Runtime terminal resize probes now fail transactionally instead of replacing valid cached geometry with stale environment values; `COLUMNS`/`LINES` remain validated startup-only fallbacks.
 - Failed SIGWINCH geometry refreshes now retain the pending resize notification, and terminal cursor formatting accepts the full u16 coordinate range without overflow traps.
