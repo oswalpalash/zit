@@ -10,7 +10,7 @@ A quick index of the public Zit widget API with roles, related examples, and enf
 | Checkbox | Toggleable boolean control with label text. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/checkbox_checked.snap` |
 | InputField | Single-line editable input with placeholder and grapheme-safe cursor/click positioning. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 | AutocompleteInput | Editable input with filtered suggestions. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
-| TextArea | Multi-line editor with grapheme-safe click/drag selection, edge auto-scroll, double-word and triple-line selection. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| TextArea | Multi-line editor with grapheme-safe click/drag selection, edge auto-scroll, and double-word/triple-line drag extension. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 | ToggleSwitch | Compact on/off switch control. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
 | RadioGroup | Mutually exclusive option selector. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
 | Slider | Numeric range selector with a visual track. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |

@@ -17,6 +17,8 @@ fn addOffsetClamped(origin: u16, offset: u16) u16 {
 const mouse_multi_click_ms: i64 = 500;
 const max_mouse_click_count: u8 = 3;
 
+const MouseSelectionMode = enum { character, word, line };
+
 fn isSeparatorGrapheme(grapheme: text_metrics.Grapheme) bool {
     const codepoint = grapheme.firstCodepoint();
     if (codepoint <= 0xFF) return std.ascii.isWhitespace(@intCast(codepoint));
@@ -68,6 +70,10 @@ pub const TextArea = struct {
     bracketed_paste_active: bool = false,
     /// Anchor used by Shift-click and left-button drag selection.
     mouse_selection_anchor: ?usize = null,
+    /// Selection unit established by the most recent multi-click gesture.
+    mouse_drag_mode: MouseSelectionMode = .character,
+    /// Base token/line range used while extending a multi-click drag.
+    mouse_selection_origin: ?TextArea.Selection = null,
     last_left_press_ms: ?i64 = null,
     last_left_press_index: ?usize = null,
     left_click_count: u8 = 0,
@@ -914,18 +920,52 @@ pub const TextArea = struct {
         return range.start + text_metrics.byteOffsetForCellColumn(line, clicked_col);
     }
 
-    fn moveCaretToMouse(self: *TextArea, mouse_x: u16, mouse_y: u16, extend_selection: bool) bool {
+    fn selectionAtMouse(self: *TextArea, index: usize, mode: MouseSelectionMode) TextArea.Selection {
+        return switch (mode) {
+            .character => .{ .start = index, .end = index },
+            .word => self.wordRangeAtIndex(index),
+            .line => blk: {
+                const row = self.positionForIndex(index).row;
+                if (self.lineRange(row)) |range|
+                    break :blk TextArea.Selection{ .start = range.start, .end = range.end };
+                break :blk .{ .start = index, .end = index };
+            },
+        };
+    }
+
+    fn unionSelection(first: TextArea.Selection, second: TextArea.Selection) TextArea.Selection {
+        return .{
+            .start = @min(first.start, second.start),
+            .end = @max(first.end, second.end),
+        };
+    }
+
+    fn moveCaretToMouse(
+        self: *TextArea,
+        mouse_x: u16,
+        mouse_y: u16,
+        extend_selection: bool,
+        mode: MouseSelectionMode,
+    ) bool {
         const index = self.selectionIndexAtMouse(mouse_x, mouse_y) orelse return false;
         self.clearExtraCursors();
 
         if (extend_selection) {
             const anchor = self.mouse_selection_anchor orelse self.cursor;
-            self.selectRange(anchor, index);
+            const target = self.selectionAtMouse(index, mode);
+            const base_range = if (mode == .character)
+                TextArea.Selection{ .start = anchor, .end = index }
+            else
+                (self.mouse_selection_origin orelse target);
+            const selection = unionSelection(base_range, target);
+            self.selectRange(selection.start, selection.end);
             self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
         } else {
             self.mouse_selection_anchor = index;
-            self.clearSelection();
-            self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
+            const target = self.selectionAtMouse(index, mode);
+            self.mouse_selection_origin = target;
+            self.selectRange(target.start, target.end);
+            self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, target.end);
         }
 
         self.resetPreferredColumn();
@@ -1025,6 +1065,8 @@ pub const TextArea = struct {
     fn finishMouseSelection(self: *TextArea, button: u8) bool {
         if (button != 1 or !self.mouse_left_pressed) return false;
         self.mouse_selection_anchor = null;
+        self.mouse_selection_origin = null;
+        self.mouse_drag_mode = .character;
         self.mouse_left_pressed = false;
         return true;
     }
@@ -1423,22 +1465,18 @@ pub const TextArea = struct {
 
                         if (mouse_event.modifiers.shift) {
                             self.mouse_left_pressed = true;
-                            return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true);
+                            self.mouse_drag_mode = .character;
+                            return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true, .character);
                         }
 
                         switch (self.registerLeftPress(index)) {
                             2 => {
-                                const word = self.wordRangeAtIndex(index);
-                                self.selectRange(word.start, word.end);
-                                self.cursor = word.end;
-                                self.resetPreferredColumn();
-                                self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
-                                return true;
+                                self.mouse_drag_mode = .word;
+                                return self.moveCaretToMouse(mouse_event.x, mouse_event.y, false, .word);
                             },
                             3 => {
-                                self.selectLineAtMouse(index);
-                                self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
-                                return true;
+                                self.mouse_drag_mode = .line;
+                                return self.moveCaretToMouse(mouse_event.x, mouse_event.y, false, .line);
                             },
                             else => {},
                         }
@@ -1447,11 +1485,12 @@ pub const TextArea = struct {
                             mouse_event.x,
                             mouse_event.y,
                             false,
+                            .character,
                         );
                     },
                     .move => {
                         if (mouse_event.button != 1 or self.mouse_selection_anchor == null) return false;
-                        return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true);
+                        return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true, self.mouse_drag_mode);
                     },
                     .release => return self.finishMouseSelection(mouse_event.button),
                     else => {},
@@ -1491,6 +1530,8 @@ pub const TextArea = struct {
         if (!self.widget.focused or !self.widget.visible or !self.widget.enabled) {
             self.cancelBracketedPaste();
             self.mouse_left_pressed = false;
+            self.mouse_drag_mode = .character;
+            self.mouse_selection_origin = null;
             self.last_left_press_ms = null;
             self.last_left_press_index = null;
             self.left_click_count = 0;
@@ -2370,4 +2411,41 @@ test "text area mouse clicks reset after the multi-click window" {
     try std.testing.expect(try area.widget.handleEvent(click));
     try std.testing.expectEqual(@as(u8, 1), area.left_click_count);
     try std.testing.expectEqual(@as(usize, 6), area.cursor);
+}
+
+test "text area double-click drag selects whole words" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("alpha beta gamma");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 30, 5));
+
+    const click = input.Event{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) };
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 5 }, area.selectionRange().?);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 13, 4, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 10 }, area.selectionRange().?);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 16, 4, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 16 }, area.selectionRange().?);
+}
+
+test "text area triple-click drag selects whole lines" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+    try area.setText("one\ntwo\nthree");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    const click = input.Event{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) };
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expect(try area.widget.handleEvent(click));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 3 }, area.selectionRange().?);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 5, 6, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 13 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 10), area.cursor);
 }
