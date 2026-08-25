@@ -528,6 +528,30 @@ pub const InputField = struct {
         self.on_submit = callback;
     }
 
+    fn cursorOffsetForCellColumn(text: []const u8, target_col: usize) usize {
+        var cells: usize = 0;
+        var offset: usize = 0;
+        var it = text_metrics.GraphemeIterator.init(text);
+        while (it.next()) |grapheme| {
+            // Clicking either cell of a wide grapheme selects its start.
+            if (target_col < cells + grapheme.width) return offset;
+            cells += grapheme.width;
+            offset = it.it.i;
+        }
+        return offset;
+    }
+
+    fn placeCursorAtMouse(self: *InputField, mouse_x: u16) void {
+        const content = self.contentRect();
+        const click_offset: u32 = @as(u32, mouse_x) - @as(u32, content.x);
+        const target_col = self.scroll_col + @as(usize, @intCast(click_offset));
+        const previous_cursor = self.cursor;
+        self.cursor = cursorOffsetForCellColumn(self.currentText(), target_col);
+        self.clampCursor();
+        self.ensureCursorVisible(content.width);
+        if (self.cursor != previous_cursor) self.widget.markDirty();
+    }
+
     fn contentRect(self: *const InputField) layout_module.Rect {
         const border_adjust: u16 = if (self.show_border) 1 else 0;
         return self.widget.rect.shrink(layout_module.EdgeInsets.all(border_adjust));
@@ -845,9 +869,11 @@ pub const InputField = struct {
         else if (event == .mouse) {
             const mouse_event = event.mouse;
 
-            // Handle clicks to set focus
+            // Left clicks move the caret to the clicked grapheme boundary.
             if (mouse_event.action == .press and mouse_event.button == 1) {
-                return self.contentRect().contains(mouse_event.x, mouse_event.y);
+                if (!self.contentRect().contains(mouse_event.x, mouse_event.y)) return false;
+                self.placeCursorAtMouse(mouse_event.x);
+                return true;
             }
         }
 
@@ -1497,6 +1523,42 @@ test "input field capacity does not split UTF-8 sequences" {
     try std.testing.expectEqualStrings("é", field.getText());
     try std.testing.expect(!try field.widget.handleEvent(.{ .key = input.KeyEvent.init(0x1F642, .{}) }));
     try std.testing.expectEqualStrings("é", field.getText());
+}
+
+test "input field left click positions caret by terminal cells" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    try field.setText("hello");
+    try field.widget.layout(layout_module.Rect.init(2, 3, 12, 3));
+    field.widget.setFocus(true);
+
+    // Border-adjusted content begins at x=3; clicking the fourth text column
+    // lands on the grapheme boundary after "hell".
+    try std.testing.expect(try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 7, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 4), field.cursor);
+
+    const original_cursor = field.cursor;
+    field.widget.clearDirty();
+    try std.testing.expect(try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 7, 4, 1, 0) }));
+    try std.testing.expectEqual(original_cursor, field.cursor);
+}
+
+test "input field caret clicks respect wide characters and scrolling" {
+    const alloc = std.testing.allocator;
+    const field = try InputField.init(alloc, 32);
+    defer field.deinit();
+    try field.setText("界x界");
+    try field.widget.layout(layout_module.Rect.init(0, 0, 12, 3));
+
+    // The second cell of a wide grapheme selects that grapheme's start.
+    try std.testing.expect(try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 0), field.cursor);
+
+    // Scrolled clicks are translated from visible cells to absolute offsets.
+    field.scroll_col = 2;
+    try std.testing.expect(try field.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 3), field.cursor);
 }
 
 test "input field mouse focus ignores border rows" {

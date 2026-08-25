@@ -30,6 +30,7 @@ Use `Widget.init(&my_vtable)` in your struct and forward calls to your concrete 
 - Prefer propagation-friendly handlers: let parents intercept in capturing (e.g., for focus management) and bubble up unhandled events.
 - Call `Renderer.render()` once per frame; draw functions should only consume layout state and touch the back buffer. Clip arbitrary text with `render.clipTextToWidth`, which preserves grapheme boundaries and reports the occupied terminal cells. `python3 scripts/check_draw_layout_boundary.py` recursively rejects child layout, allocator-backed growth, byte-prefix clipping, and indexed byte iteration over arbitrary text from library and public-example widget draw callbacks.
 - Surface IDs/classes via `setId`/`setClass` to integrate with theme helpers and logging.
+- Map mouse clicks through rendered terminal-cell geometry and grapheme boundaries. `InputField` demonstrates translating border-adjusted, scrolled click columns into caret byte offsets without splitting clusters or wide glyphs.
 
 ## Animations and Transitions
 - Use `widget.Animator` plus `animation.ValueDriver` to tween scalars like progress, slider positions, or opacity. Drivers call back on every frame so widgets can repaint without blocking.

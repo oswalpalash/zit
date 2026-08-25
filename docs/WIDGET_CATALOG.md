@@ -8,7 +8,7 @@ A quick index of the public Zit widget API with roles, related examples, and enf
 | Label | Read-only text with alignment and style helpers. | `examples/hello_world.zig` | `src/testing/golden/label_basic.snap` |
 | Button | Focusable action control with border and pressed state styling. | `examples/widget_examples/button_example.zig` | `src/testing/golden/button_basic.snap` |
 | Checkbox | Toggleable boolean control with label text. | `examples/realworld/widget_gallery.zig` | `src/testing/golden/checkbox_checked.snap` |
-| InputField | Single-line editable input with placeholder and cursor handling. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
+| InputField | Single-line editable input with placeholder and grapheme-safe cursor/click positioning. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 | AutocompleteInput | Editable input with filtered suggestions. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 | TextArea | Multi-line editor with cursor and viewport state. | `examples/realworld/widget_gallery_extended.zig` | `examples/realworld/widget_gallery_extended.zig` |
 | ToggleSwitch | Compact on/off switch control. | `examples/realworld/widget_gallery.zig` | `examples/realworld/widget_gallery.zig` |
