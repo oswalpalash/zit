@@ -52,6 +52,8 @@ pub const TextArea = struct {
     clipboard: *input.Clipboard,
     owns_clipboard: bool = true,
     bracketed_paste_active: bool = false,
+    /// Anchor used by Shift-click and left-button drag selection.
+    mouse_selection_anchor: ?usize = null,
     allocator: std.mem.Allocator,
 
     pub const vtable = base.Widget.VTable{
@@ -860,13 +862,28 @@ pub const TextArea = struct {
         return range.start + text_metrics.byteOffsetForCellColumn(line, clicked_col);
     }
 
-    fn moveCaretToMouse(self: *TextArea, mouse_x: u16, mouse_y: u16) bool {
+    fn moveCaretToMouse(self: *TextArea, mouse_x: u16, mouse_y: u16, extend_selection: bool) bool {
         const index = self.indexAtMouse(mouse_x, mouse_y) orelse return false;
-        self.clearSelection();
         self.clearExtraCursors();
-        self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
+
+        if (extend_selection) {
+            const anchor = self.mouse_selection_anchor orelse self.cursor;
+            self.selectRange(anchor, index);
+            self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
+        } else {
+            self.mouse_selection_anchor = index;
+            self.clearSelection();
+            self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
+        }
+
         self.resetPreferredColumn();
         self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+        return true;
+    }
+
+    fn finishMouseSelection(self: *TextArea, button: u8) bool {
+        if (button != 1 or self.mouse_selection_anchor == null) return false;
+        self.mouse_selection_anchor = null;
         return true;
     }
 
@@ -1257,8 +1274,27 @@ pub const TextArea = struct {
                 }
             },
             .mouse => |mouse_event| {
-                if (mouse_event.action == .press and mouse_event.button == 1) {
-                    return self.moveCaretToMouse(mouse_event.x, mouse_event.y);
+                switch (mouse_event.action) {
+                    .press => {
+                        if (mouse_event.button != 1) return false;
+                        return self.moveCaretToMouse(
+                            mouse_event.x,
+                            mouse_event.y,
+                            mouse_event.modifiers.shift,
+                        );
+                    },
+                    .move => {
+                        if (mouse_event.button != 1 or self.mouse_selection_anchor == null) return false;
+                        return self.moveCaretToMouse(mouse_event.x, mouse_event.y, true);
+                    },
+                    .release => {
+                        if (mouse_event.button == 1 and self.mouse_selection_anchor != null) {
+                            self.mouse_selection_anchor = null;
+                            return true;
+                        }
+                        return false;
+                    },
+                    else => {},
                 }
             },
             else => {},
@@ -2013,4 +2049,89 @@ test "text area caret clicks respect wide characters and scrolling" {
     try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 2, 1, 1, 0) }));
     try std.testing.expectEqual(@as(usize, 4), area.cursor);
     try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 3 }, area.cursorPosition());
+}
+
+test "text area mouse drag selects across lines" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("alpha\nbeta");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 5, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 2), area.cursor);
+    try std.testing.expect(area.selectionRange() == null);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.initWithModifiers(
+        .move,
+        7,
+        4,
+        1,
+        0,
+        .{},
+    ) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 2, .end = 4 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.initWithModifiers(
+        .move,
+        5,
+        5,
+        1,
+        0,
+        .{},
+    ) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 2, .end = 8 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 8), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.release, 5, 5, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 2, .end = 8 }, area.selectionRange().?);
+    try std.testing.expect(!try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 6, 5, 0, 0) }));
+}
+
+test "text area shift click extends the anchored selection" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("alpha\nbeta");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 3, 4, 1, 0) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.initWithModifiers(
+        .press,
+        6,
+        5,
+        1,
+        0,
+        .{ .shift = true },
+    ) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 9 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 9), area.cursor);
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.initWithModifiers(
+        .press,
+        5,
+        4,
+        1,
+        0,
+        .{ .shift = true },
+    ) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 2 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 2), area.cursor);
+}
+
+test "text area drag selection respects wide graphemes" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("界x");
+    try area.widget.layout(layout_module.Rect.init(0, 0, 10, 3));
+
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 1, 1, 1, 0) }));
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.move, 3, 1, 1, 0) }));
+    try std.testing.expectEqual(TextArea.Selection{ .start = 0, .end = 3 }, area.selectionRange().?);
+    try std.testing.expectEqual(@as(usize, 3), area.cursor);
 }

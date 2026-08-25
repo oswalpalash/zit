@@ -5,6 +5,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 ## Unreleased
 
 ### Added
+- Text areas now support left-drag and Shift-click selection using the same scrolled terminal-cell geometry and grapheme boundaries as click-to-position caret movement.
 - Opt-in terminal focus reporting with terminal-owned DECSET/DECRST 1004 lifecycle, decoded `CSI I` / `CSI O` input events, distinct application `.terminal_focus` events, benchmark coverage, and an end-to-end PTY release probe.
 - Rich widget catalog (tables with typeahead, context menus, tree and file browser, gauges/charts, dialogs, popups, drag targets, text inputs with bracketed paste, focus rings).
 - Theming system with light/dark/high-contrast palettes and per-widget `setTheme`/role-driven colors.
