@@ -54,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Text areas now position the caret from left clicks using scrolled terminal-cell geometry and complete grapheme boundaries across multiline content; clicks also collapse selections and extra cursors.
 - Input fields now place the caret on left clicks using scrolled terminal-cell geometry and complete grapheme boundaries, including wide and combining clusters.
 - Mouse decoding now preserves Shift/Alt/Ctrl modifiers across SGR, legacy, and native Windows records, propagates them through application events, and preserves the pressed button on native Win32 releases.
 - Added legacy Windows mouse support: raw mode requests Win32 mouse records, queue decoding maps them to zero-based Zit events without blocking byte reads, and fallback cleanup no longer requires unavailable VT output.

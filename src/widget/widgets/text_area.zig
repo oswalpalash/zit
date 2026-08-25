@@ -849,6 +849,27 @@ pub const TextArea = struct {
         return .{ .width = width, .height = height };
     }
 
+    fn indexAtMouse(self: *const TextArea, mouse_x: u16, mouse_y: u16) ?usize {
+        const content = self.contentRect();
+        if (!content.contains(mouse_x, mouse_y)) return null;
+
+        const clicked_row = self.scroll_row + @as(usize, @intCast(mouse_y - content.y));
+        const clicked_col = self.scroll_col + @as(usize, @intCast(mouse_x - content.x));
+        const range = self.lineRange(clicked_row) orelse return self.buffer.items.len;
+        const line = self.buffer.items[range.start..range.end];
+        return range.start + text_metrics.byteOffsetForCellColumn(line, clicked_col);
+    }
+
+    fn moveCaretToMouse(self: *TextArea, mouse_x: u16, mouse_y: u16) bool {
+        const index = self.indexAtMouse(mouse_x, mouse_y) orelse return false;
+        self.clearSelection();
+        self.clearExtraCursors();
+        self.cursor = graphemeBoundaryAtOrBefore(self.buffer.items, index);
+        self.resetPreferredColumn();
+        self.ensureVisible(self.viewportSize().width, self.viewportSize().height);
+        return true;
+    }
+
     fn applyEditorAction(self: *TextArea, action: input.EditorAction) anyerror!bool {
         const viewport = self.viewportSize();
         switch (action) {
@@ -1237,7 +1258,7 @@ pub const TextArea = struct {
             },
             .mouse => |mouse_event| {
                 if (mouse_event.action == .press and mouse_event.button == 1) {
-                    return self.contentRect().contains(mouse_event.x, mouse_event.y);
+                    return self.moveCaretToMouse(mouse_event.x, mouse_event.y);
                 }
             },
             else => {},
@@ -1954,4 +1975,42 @@ test "text area mouse focus ignores border rows" {
     try std.testing.expect(!try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 3, 1, 0) }));
     try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 4, 1, 0) }));
     try std.testing.expect(!try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 4, 7, 1, 0) }));
+}
+
+test "text area left clicks position the caret across lines" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("alpha\nbeta");
+    try area.widget.layout(layout_module.Rect.init(2, 3, 20, 5));
+    area.selectRange(0, 4);
+    try area.addCursor(8);
+
+    // Border-adjusted content begins at x=3,y=4. This targets row zero,
+    // visible column two ("p"), and collapses transient multi-cursor state.
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 5, 4, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 2), area.cursor);
+    try std.testing.expect(area.selectionRange() == null);
+    try std.testing.expectEqual(@as(usize, 0), area.extra_cursors.items.len);
+
+    // Row one, column three is the end of "beta": six bytes for "alpha\n".
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 6, 5, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 9), area.cursor);
+}
+
+test "text area caret clicks respect wide characters and scrolling" {
+    const alloc = std.testing.allocator;
+    const area = try TextArea.init(alloc, 64);
+    defer area.deinit();
+
+    try area.setText("界x界\n後");
+    try area.widget.layout(layout_module.Rect.init(0, 0, 12, 5));
+    area.scroll_col = 2;
+
+    // Visible column two is absolute column four. It lies inside the final
+    // wide grapheme, so the caret selects that grapheme's starting boundary.
+    try std.testing.expect(try area.widget.handleEvent(.{ .mouse = input.MouseEvent.init(.press, 2, 1, 1, 0) }));
+    try std.testing.expectEqual(@as(usize, 4), area.cursor);
+    try std.testing.expectEqual(TextArea.Position{ .row = 0, .col = 3 }, area.cursorPosition());
 }
