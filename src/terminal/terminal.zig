@@ -22,6 +22,7 @@ const windows_console = struct {
     const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
     const ENABLE_LINE_INPUT: u32 = 0x0002;
     const ENABLE_ECHO_INPUT: u32 = 0x0004;
+    const ENABLE_WINDOW_INPUT: u32 = 0x0008;
     const ENABLE_INSERT_MODE: u32 = 0x0020;
     const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
     const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
@@ -173,6 +174,10 @@ fn vtInputProtocolsAvailable(is_windows: bool, output_enabled: bool, input_enabl
 
 fn windowsVtInputModeEnabled(mode: u32) bool {
     return (mode & windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT) != 0;
+}
+
+fn windowsWindowInputModeEnabled(mode: u32) bool {
+    return (mode & windows_console.ENABLE_WINDOW_INPUT) != 0;
 }
 
 fn rememberFirstError(first_error: *?anyerror, err: anyerror) void {
@@ -448,18 +453,20 @@ pub const Terminal = struct {
             switch (self.original_termios) {
                 .windows => |info| {
                     // Strip line editing/echo while keeping extended flags so the console API is responsive.
-                    const sanitized_in_mode: u32 = (info.in_mode | windows_console.ENABLE_EXTENDED_FLAGS) &
+                    const raw_in_mode: u32 = (info.in_mode |
+                        windows_console.ENABLE_EXTENDED_FLAGS |
+                        windows_console.ENABLE_WINDOW_INPUT) &
                         ~(windows_console.ENABLE_ECHO_INPUT |
                             windows_console.ENABLE_LINE_INPUT |
                             windows_console.ENABLE_PROCESSED_INPUT |
                             windows_console.ENABLE_QUICK_EDIT_MODE |
                             windows_console.ENABLE_INSERT_MODE);
 
-                    const vt_input_mode = sanitized_in_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT;
+                    const vt_input_mode = raw_in_mode | windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT;
                     if (windows_console.SetConsoleMode(self.stdin_fd, vt_input_mode).toBool()) {
                         self.windows_vt_input_enabled = true;
                     } else {
-                        if (!windows_console.SetConsoleMode(self.stdin_fd, sanitized_in_mode).toBool()) {
+                        if (!windows_console.SetConsoleMode(self.stdin_fd, raw_in_mode).toBool()) {
                             return error.SetConsoleModeFailure;
                         }
                         self.windows_vt_input_enabled = false;
@@ -1201,6 +1208,21 @@ test "Windows VT input protocols require input and output modes" {
     try std.testing.expect(!windowsVtInputModeEnabled(windows_console.ENABLE_LINE_INPUT));
     try std.testing.expect(windowsVtOutputModeEnabled(windows_console.ENABLE_VIRTUAL_TERMINAL_PROCESSING));
     try std.testing.expect(!windowsVtOutputModeEnabled(windows_console.ENABLE_PROCESSED_OUTPUT));
+}
+
+test "Windows window-input mode detection covers ConPTY resize records" {
+    try std.testing.expect(
+        windowsWindowInputModeEnabled(windows_console.ENABLE_WINDOW_INPUT),
+    );
+    try std.testing.expect(
+        !windowsWindowInputModeEnabled(windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT),
+    );
+    try std.testing.expect(
+        windowsWindowInputModeEnabled(
+            windows_console.ENABLE_WINDOW_INPUT |
+                windows_console.ENABLE_VIRTUAL_TERMINAL_INPUT,
+        ),
+    );
 }
 
 test "SIGWINCH handler installation is reference counted" {

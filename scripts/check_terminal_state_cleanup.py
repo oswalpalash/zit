@@ -152,7 +152,12 @@ def validate_terminal_driver_ownership(root: Path) -> list[str]:
             if marker not in raw_mode_body:
                 failures.append(f"src/terminal/terminal.zig: enableRawMode missing Windows lifecycle marker {marker}")
 
-        input_setup_index = raw_mode_body.find("const vt_input_mode")
+        if "windows_console.ENABLE_WINDOW_INPUT" not in raw_mode_body:
+            failures.append(
+                "src/terminal/terminal.zig: enableRawMode must request ENABLE_WINDOW_INPUT for ConPTY resize/focus records"
+            )
+
+        input_setup_index = raw_mode_body.find("const raw_in_mode")
         raw_obligation_index = raw_mode_body.find("self.is_raw_mode = true;", input_setup_index)
         output_setup_index = raw_mode_body.find("const base_out_mode")
         if input_setup_index < 0 or raw_obligation_index < 0 or output_setup_index < 0 or raw_obligation_index > output_setup_index:
