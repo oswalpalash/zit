@@ -779,7 +779,10 @@ pub const Terminal = struct {
             return;
         }
         var buf: [32]u8 = undefined;
-        const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 });
+        const seq = try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{
+            @as(u32, y) + 1,
+            @as(u32, x) + 1,
+        });
         try compat.fileWriteAll(self.stdout_fd, seq);
     }
 
@@ -897,12 +900,84 @@ pub const Terminal = struct {
         return changedSize(old_width, old_height, self.width, self.height);
     }
 
-    /// Consume a pending SIGWINCH and refresh cached size.
+    /// Consume a pending SIGWINCH after refreshing cached size.
+    ///
+    /// The signal is acknowledged only after a successful refresh. If geometry
+    /// polling fails, retain the pending flag so the caller can retry instead of
+    /// silently waiting for another resize that may never arrive.
     pub fn takeResize(self: *Terminal) !?Size {
-        if (winch_signal_flag.swap(0, .acq_rel) == 0) return null;
-        return try self.pollResize();
+        return self.takeResizeWithPoller(pollResize);
+    }
+
+    fn takeResizeWithPoller(
+        self: *Terminal,
+        poll_fn: *const fn (*Terminal) anyerror!?Size,
+    ) !?Size {
+        if (winch_signal_flag.load(.acquire) == 0) return null;
+
+        const result = poll_fn(self);
+        if (result) |size| {
+            _ = winch_signal_flag.swap(0, .acq_rel);
+            return size;
+        } else |err| {
+            _ = winch_signal_flag.swap(1, .release);
+            return err;
+        }
     }
 };
+
+test "moveCursor formats the complete u16 coordinate range" {
+    if (comptime (builtin.os.tag == .windows or !builtin.link_libc or !@hasDecl(std.c, "pipe"))) {
+        return error.SkipZigTest;
+    }
+
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.SkipZigTest;
+    defer _ = std.c.close(fds[0]);
+
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = fds[1],
+        .original_termios = .none,
+        .width = std.math.maxInt(u16),
+        .height = std.math.maxInt(u16),
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+
+    try term.moveCursor(std.math.maxInt(u16), std.math.maxInt(u16));
+    _ = std.c.close(fds[1]);
+
+    var output: [64]u8 = undefined;
+    var output_len: usize = 0;
+    while (true) {
+        const read_len = try std.posix.read(fds[0], output[output_len..]);
+        if (read_len == 0) break;
+        output_len += read_len;
+    }
+
+    try std.testing.expectEqualStrings("\x1b[65536;65536H", output[0..output_len]);
+}
+
+fn failedResizePoll(_: *Terminal) anyerror!?Size {
+    return error.ResizeProbeFailed;
+}
+
+fn successfulResizePoll(term: *Terminal) anyerror!?Size {
+    term.width = 91;
+    term.height = 31;
+    return Size{ .width = term.width, .height = term.height };
+}
 
 test "changedSize reports only actual terminal geometry changes" {
     try std.testing.expect(changedSize(80, 24, 80, 24) == null);
@@ -914,6 +989,41 @@ test "changedSize reports only actual terminal geometry changes" {
     const taller = changedSize(80, 24, 80, 40).?;
     try std.testing.expectEqual(@as(u16, 80), taller.width);
     try std.testing.expectEqual(@as(u16, 40), taller.height);
+}
+
+test "SIGWINCH acknowledgement follows resize refresh result" {
+    if (!supportsSigwinch()) return error.SkipZigTest;
+
+    var term = Terminal{
+        .stdin_fd = std.Io.File.stdin().handle,
+        .stdout_fd = -1,
+        .original_termios = .none,
+        .width = 80,
+        .height = 24,
+        .is_raw_mode = false,
+        .is_cursor_visible = true,
+        .is_mouse_enabled = false,
+        .allocator = std.testing.allocator,
+        .capabilities = capabilities.CapabilityFlags{},
+        .is_sync_output = false,
+        .is_alt_screen = false,
+        .is_bracketed_paste = false,
+        .windows_vt_enabled = true,
+        .windows_vt_input_enabled = true,
+        .windows_output_mode_restore_pending = false,
+        .sigwinch_registered = false,
+    };
+
+    winch_signal_flag.store(1, .release);
+    try std.testing.expectError(error.ResizeProbeFailed, term.takeResizeWithPoller(failedResizePoll));
+    try std.testing.expectEqual(@as(u8, 1), winch_signal_flag.load(.acquire));
+
+    const size = try term.takeResizeWithPoller(successfulResizePoll);
+    try std.testing.expectEqual(@as(u16, 91), size.?.width);
+    try std.testing.expectEqual(@as(u16, 31), size.?.height);
+    try std.testing.expectEqual(@as(u8, 0), winch_signal_flag.load(.acquire));
+
+    try std.testing.expect(try term.takeResizeWithPoller(successfulResizePoll) == null);
 }
 
 test "Windows VT input protocols require input and output modes" {

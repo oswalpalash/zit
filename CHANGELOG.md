@@ -54,6 +54,7 @@ All notable changes to Zit are documented here. Add new entries under the `Unrel
 - Widget parent mutation checker (`scripts/check_widget_parent_attachment.py`, `zig build widget-parent-attachment`) requires production parent links to use `Widget.attachTo` and owner-checked `Widget.detachFrom`; it is enforced by quality, release, CI, and contribution gates.
 
 ### Fixed
+- Failed SIGWINCH geometry refreshes now retain the pending resize notification, and terminal cursor formatting accepts the full u16 coordinate range without overflow traps.
 - Replaced detached `Application.runAsync` worker threads with owned run-loop handles, preventing threads from racing application teardown and preventing lost event-loop failures.
 - Timer scheduling no longer traps on `u64` deadline/repeat overflow or wraps timer IDs after exhaustion.
 - POSIX raw mode no longer sets `O_NONBLOCK` on stdin. Input remains bounded through termios `VMIN`/`VTIME` and `poll`, while PTY renderer output stays blocking even when stdin and stdout share one open file description; the terminal-state gate now enforces this contract.
