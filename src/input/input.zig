@@ -12,6 +12,64 @@ const windows_sync = struct {
     extern "kernel32" fn SetEvent(hEvent: std.os.windows.HANDLE) std.os.windows.BOOL;
 };
 
+const windows_console_input = struct {
+    const KEY_EVENT: std.os.windows.WORD = 0x0001;
+    const MOUSE_EVENT: std.os.windows.WORD = 0x0002;
+    const WINDOW_BUFFER_SIZE_EVENT: std.os.windows.WORD = 0x0004;
+    const MENU_EVENT: std.os.windows.WORD = 0x0008;
+    const FOCUS_EVENT: std.os.windows.WORD = 0x0010;
+
+    const KeyEventRecord = extern struct {
+        key_down: c_int,
+        repeat_count: std.os.windows.WORD,
+        virtual_key_code: std.os.windows.WORD,
+        virtual_scan_code: std.os.windows.WORD,
+        unicode_char: std.os.windows.WCHAR,
+        control_key_state: std.os.windows.DWORD,
+    };
+
+    const MouseEventRecord = extern struct {
+        mouse_position: std.os.windows.COORD,
+        button_state: std.os.windows.DWORD,
+        control_key_state: std.os.windows.DWORD,
+        event_flags: std.os.windows.WORD,
+        event_flags_padding: std.os.windows.WORD = 0,
+    };
+
+    const MenuEventRecord = extern struct {
+        command_id: std.os.windows.WORD,
+        padding: std.os.windows.WORD = 0,
+    };
+
+    const FocusEventRecord = extern struct {
+        set_focus: c_int,
+    };
+
+    const EventData = extern union {
+        key: KeyEventRecord,
+        mouse: MouseEventRecord,
+        window_buffer_size: std.os.windows.COORD,
+        menu: MenuEventRecord,
+        focus: FocusEventRecord,
+    };
+
+    const InputRecord = extern struct {
+        event_type: std.os.windows.WORD,
+        event: EventData,
+    };
+
+    extern "kernel32" fn GetNumberOfConsoleInputEvents(hConsoleInput: std.os.windows.HANDLE, lpcNumberOfEvents: *std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn PeekConsoleInputW(hConsoleInput: std.os.windows.HANDLE, lpBuffer: *InputRecord, nLength: std.os.windows.DWORD, lpNumberOfEventsRead: *std.os.windows.DWORD) std.os.windows.BOOL;
+    extern "kernel32" fn ReadConsoleInputW(hConsoleInput: std.os.windows.HANDLE, lpBuffer: *InputRecord, nLength: std.os.windows.DWORD, lpNumberOfEventsRead: *std.os.windows.DWORD) std.os.windows.BOOL;
+
+    fn recordKind(record: InputRecord) enum { key_or_other, window_resize } {
+        return switch (record.event_type) {
+            WINDOW_BUFFER_SIZE_EVENT => .window_resize,
+            else => .key_or_other,
+        };
+    }
+};
+
 const default_resize_poll_interval_ms: u64 = 125;
 const default_sequence_timeout_ms: u16 = 25;
 
@@ -1360,6 +1418,43 @@ const FailingByteReader = struct {
     }
 };
 
+fn pendingWindowsInputCount(handle: std.os.windows.HANDLE) !u32 {
+    if (builtin.os.tag != .windows) return error.WaitForInputFailure;
+    var count: std.os.windows.DWORD = 0;
+    if (!windows_console_input.GetNumberOfConsoleInputEvents(handle, &count).toBool()) {
+        return error.WaitForInputFailure;
+    }
+    return count;
+}
+
+fn peekWindowsInputKind(handle: std.os.windows.HANDLE) !windows_console_input.InputRecord {
+    if (builtin.os.tag != .windows) return error.WaitForInputFailure;
+    var record: windows_console_input.InputRecord = undefined;
+    var read: std.os.windows.DWORD = 0;
+    if (!windows_console_input.PeekConsoleInputW(handle, &record, 1, &read).toBool() or read != 1) {
+        return error.WaitForInputFailure;
+    }
+    return record;
+}
+
+fn consumeLeadingWindowsResize(handle: std.os.windows.HANDLE) !bool {
+    if (builtin.os.tag != .windows) return error.WaitForInputFailure;
+    var record = try peekWindowsInputKind(handle);
+    if (windows_console_input.recordKind(record) != .window_resize) return false;
+
+    var consumed: std.os.windows.DWORD = 0;
+    if (!windows_console_input.ReadConsoleInputW(handle, &record, 1, &consumed).toBool() or consumed != 1) {
+        return error.WaitForInputFailure;
+    }
+    return true;
+}
+
+fn windowsHasReadableInput(handle: std.os.windows.HANDLE) !bool {
+    if ((try pendingWindowsInputCount(handle)) == 0) return false;
+    const record = try peekWindowsInputKind(handle);
+    return windows_console_input.recordKind(record) == .key_or_other;
+}
+
 /// Input handler for processing terminal input
 pub const InputHandler = struct {
     /// Allocator for input operations
@@ -1724,6 +1819,25 @@ pub const InputHandler = struct {
                 .ready => {},
                 .timeout => return try self.pollResizeIfDue(),
                 .failed => return error.WaitForInputFailure,
+            }
+
+            // A signaled console handle does not imply readable VT bytes:
+            // ConPTY reports WINDOW_BUFFER_SIZE_EVENT as an input record too.
+            // Drain consecutive resize records first so the following blocking
+            // byte read happens only when a real input record remains queued.
+            var saw_resize = false;
+            while (try consumeLeadingWindowsResize(self.term.stdin_fd)) {
+                saw_resize = true;
+            }
+
+            if (saw_resize) {
+                if (try self.term.pollResize()) |size| {
+                    return Event{ .resize = ResizeEvent.init(size.width, size.height) };
+                }
+            }
+
+            if (!(try windowsHasReadableInput(self.term.stdin_fd))) {
+                return try self.pollResizeIfDue();
             }
 
             return self.readEvent() catch |err| {
@@ -2415,6 +2529,30 @@ test "key names are allocator-owned for special keys" {
     const paste_start_name = try paste_start.getName(alloc);
     defer alloc.free(paste_start_name);
     try std.testing.expectEqualStrings("BracketedPasteStart", paste_start_name);
+}
+
+test "Windows input record geometry matches Win32 queue ABI" {
+    const wc = windows_console_input;
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(wc.EventData));
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(wc.InputRecord));
+
+    const resize = wc.InputRecord{
+        .event_type = wc.WINDOW_BUFFER_SIZE_EVENT,
+        .event = .{ .window_buffer_size = .{ .X = 91, .Y = 31 } },
+    };
+    try std.testing.expectEqual(
+        windows_console_input.recordKind(resize),
+        .window_resize,
+    );
+
+    const key = wc.InputRecord{
+        .event_type = wc.KEY_EVENT,
+        .event = undefined,
+    };
+    try std.testing.expectEqual(
+        windows_console_input.recordKind(key),
+        .key_or_other,
+    );
 }
 
 test "resize polling throttle handles first poll interval and clock movement" {
